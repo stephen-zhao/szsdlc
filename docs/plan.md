@@ -551,12 +551,33 @@ corrected call rather than a search.
 >   Windows and nowhere else. Fixture writes are now byte-exact and CRLF has
 >   dedicated coverage, so this is tested by design rather than by accident.
 
-### Task 5: Relation graph and derived attributes
-- [ ] **Step 1:** Implement `graph.py`: load every entity across all types into one graph keyed by canonical id. An edge is `(source, kind, target-string)` with the target held **as written** and resolved lazily — a dangling reference must be representable, or it could never be reported.
-- [ ] **Step 2:** Derive inverse edges from config — relations are authored on one side only and the reverse is never stored.
-- [ ] **Step 3:** Detect dangling references, cycles per relation kind, cardinality violations, and `parent` targets whose type is not `can_parent`.
-- [ ] **Step 4:** Evaluate **derived attributes**: requirement `covered`/`delivered`, epic aggregate progress, idea `refined_into`. Computed on demand, never written back — assert with a test that syncs twice and diffs every source file for zero change.
-- [ ] **Step 5:** Tests on a fixture spanning all six default types; commit.
+### Task 5: Relation graph and derived attributes — **DONE**
+- [x] **Step 1:** Implement `graph.py`: load every entity across all types into one graph keyed by canonical id. An edge is `(source, kind, target-string)` with the target held **as written** and resolved lazily — a dangling reference must be representable, or it could never be reported.
+- [x] **Step 2:** Derive inverse edges from config — relations are authored on one side only and the reverse is never stored.
+- [x] **Step 3:** Detect dangling references, cycles per relation kind, cardinality violations, and `parent` targets whose type is not `can_parent`.
+- [x] **Step 4:** Evaluate **derived attributes**: requirement `covered`/`delivered`, epic aggregate progress, idea `refined_into`. Computed on demand, never written back — asserted by hashing every source file, building the graph and deriving everything twice, and diffing for zero change. The equivalent assertion *through `sync`* lands with `sync` in Task 10.
+- [x] **Step 5:** Tests on a fixture spanning all six default types; commit.
+
+> **Decisions taken while implementing:**
+>
+> - **An epic's progress is measured in children completed, not checkboxes.**
+>   A child is the epic's unit of work. Counting tasks would let one
+>   meticulously planned work item outvote five delivered ones, and would move
+>   an epic's percentage whenever a child's plan was edited. Checkbox totals
+>   travel alongside as detail without deciding the number.
+> - **`refined_into` needs no derived declaration.** It is already the
+>   generated inverse of `refined_from`; declaring it as well would be a second
+>   home for one fact, and config now refuses that.
+> - **`all_incoming_terminal` is false with no sources.** An approved
+>   requirement nobody implements is emphatically not delivered.
+> - **A cycle finding carries its relation name,** so the `Fix:` line is a
+>   runnable `unlink` rather than a `<relation>` placeholder.
+> - **`trace` walks authored edges only.** Including generated inverses would
+>   report every relationship twice for no added information; direction is
+>   recoverable from the edge itself.
+> - **A dangling target produces no inverse but keeps its authored edge** —
+>   there is nothing to hang the reverse on, and dropping the forward edge
+>   would destroy the only evidence of the problem.
 
 ### Task 6: Roadmap scheduling
 - [ ] **Step 1:** Implement `roadmap.py`: load/validate roadmap records against the configured horizons; expose position lookups.
