@@ -1,0 +1,21 @@
+{# The decision log. Like the requirements register it is never pruned:
+   a superseded decision is the most useful kind to be able to look up. #}
+# Decisions
+
+{% set log_types = [] %}
+{% for entity_type in types_with('persistent') if not entity_type.derived %}
+{% set _ = log_types.append(entity_type) %}
+{% endfor %}
+{% for entity_type in log_types %}
+{% set rows = of_type(entity_type.name) %}
+{% if not rows %}
+No {{ entity_type.title | lower }} entries yet.
+{% else %}
+| Id | Status | Title | Tags |
+|---|---|---|---|
+{% for entity in rows %}
+| {{ entity.id.text }} | {{ entity.status }} | {{ entity.title }} | {{ entity.tags | join(', ') or '—' }} |
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% include "views/_broken.md.j2" %}

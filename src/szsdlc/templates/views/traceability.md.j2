@@ -1,0 +1,61 @@
+{# Two directions, because they answer two different questions: what satisfies
+   a requirement, and where did this entity come from.
+
+   A target that does not resolve renders as "(missing)" rather than being
+   dropped. Concealing it here is exactly the failure this view exists to
+   prevent. #}
+# Traceability
+
+## Definitions to delivery
+
+{% set definitional = types_with('persistent') %}
+{% for entity_type in definitional %}
+{% for entity in of_type(entity_type.name) %}
+### {{ entity.id.text }} — {{ entity.title }}
+
+{% set any_incoming = [] %}
+{% for relation in config.relations.values() %}
+{% for source in sources(entity, relation.name) %}
+{% set _ = any_incoming.append(source) %}
+- {{ relation.inverse }}: {{ source.id.text }} — {{ source.title }} _({{ source.status }})_
+{% endfor %}
+{% endfor %}
+{% if not any_incoming %}
+- _nothing implements this_
+{% endif %}
+
+{% endfor %}
+{% endfor %}
+## Provenance
+
+{% set spawned = [] %}
+{% for entity in entities %}
+{% for relation in config.relations_from(entity.type.name) %}
+{% for target in targets(entity, relation.name) %}
+{% if store.by_text(target.text) and store.by_text(target.text).type.intake %}
+{% set _ = spawned.append((entity, relation, target)) %}
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% endfor %}
+{% if not spawned %}
+Nothing has been refined from an idea yet.
+{% else %}
+| Entity | Relation | Origin |
+|---|---|---|
+{% for entity, relation, target in spawned %}
+| {{ entity.id.text }} — {{ entity.title }} | {{ relation.name }} | {{ target.label }} |
+{% endfor %}
+{% endif %}
+
+## Broken references
+
+{% set broken = graph.dangling() %}
+{% if not broken %}
+None.
+{% else %}
+{% for edge in broken %}
+- {{ edge.source.text }} {{ edge.kind }} → {{ edge.target.label }}
+{% endfor %}
+{% endif %}
+{% include "views/_broken.md.j2" %}

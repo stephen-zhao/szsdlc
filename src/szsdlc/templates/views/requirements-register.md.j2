@@ -1,0 +1,29 @@
+{# Every definitional entity, including retired ones — never pruned, because a
+   register you prune is a register you cannot audit.
+
+   `covered` and `delivered` are derived from the relation graph at this
+   moment. Nothing is written back to the requirement when work against it
+   starts or finishes; that is the whole point of the split. #}
+# Requirements register
+
+{% for entity_type in types_with('persistent') if entity_type.derived %}
+{% set rows = of_type(entity_type.name) %}
+{% if rows %}
+## {{ entity_type.title }}
+
+| Id | Status | Covered | Delivered | Implemented by | Title |
+|---|---|---|---|---|---|
+{% for entity in rows %}
+{% set facts = derived(entity) %}
+{% set implementers = [] %}
+{% for relation in config.relations.values() %}
+{% for source in sources(entity, relation.name) %}
+{% set _ = implementers.append(source.id.text) %}
+{% endfor %}
+{% endfor %}
+| {{ entity.id.text }} | {{ entity.status }} | {{ '✓' if facts.get('covered') else '**no**' }} | {{ '✓' if facts.get('delivered') else '—' }} | {{ implementers | join(', ') or '—' }} | {{ entity.title }} |
+{% endfor %}
+
+{% endif %}
+{% endfor %}
+{% include "views/_broken.md.j2" %}

@@ -1,0 +1,31 @@
+{# Work only — the `actionable` types — grouped by status, sub-grouped by the
+   parent relation. Nothing here names a type; the flag decides. #}
+# Board
+
+{% set work_types = types_with('actionable') %}
+{% for entity_type in work_types %}
+## {{ entity_type.title }}
+
+{% for status in entity_type.workflow.states %}
+{% set in_status = of_type(entity_type.name) | selectattr('status', 'equalto', status) | list %}
+{% if in_status %}
+### {{ status }} ({{ in_status | length }})
+
+{% set grouped = {} %}
+{% for entity in in_status %}
+{% set parent = entity.parent() or '(no parent)' %}
+{% set _ = grouped.setdefault(parent, []).append(entity) %}
+{% endfor %}
+{% for parent in grouped | sort %}
+{% set parent_entity = store.by_text(parent) %}
+**{{ parent_entity.title if parent_entity else parent }}**
+
+{% for entity in grouped[parent] | sort(attribute='id.number') %}
+- {{ entity.id.text }} — {{ entity.title }}{% if entity.progress %} _({{ entity.progress }})_{% endif %}
+
+{% endfor %}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% include "views/_broken.md.j2" %}

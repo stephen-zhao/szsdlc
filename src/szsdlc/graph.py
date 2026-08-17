@@ -209,25 +209,36 @@ class Graph:
     def edges(self) -> list[Edge]:
         return list(self._edges)
 
-    def outgoing(self, entity_id: EntityId, kind: str | None = None) -> list[Edge]:
-        edges = self._out.get(entity_id, [])
+    @staticmethod
+    def _key(ref: Entity | EntityId) -> EntityId:
+        """Accept an entity or its id.
+
+        Callers hold whichever is to hand — templates have entities, the CLI
+        has ids — and requiring the right one turns a query that finds nothing
+        into a silent wrong answer rather than an error.
+        """
+        return ref.id if isinstance(ref, Entity) else ref
+
+    def outgoing(self, ref: Entity | EntityId, kind: str | None = None) -> list[Edge]:
+        edges = self._out.get(self._key(ref), [])
         return [e for e in edges if kind is None or e.kind == kind]
 
-    def incoming(self, entity_id: EntityId, kind: str | None = None) -> list[Edge]:
+    def incoming(self, ref: Entity | EntityId, kind: str | None = None) -> list[Edge]:
         """Edges pointing at this entity, in the kind they were *authored* as."""
-        edges = self._in.get(entity_id, [])
+        edges = self._in.get(self._key(ref), [])
         return [e for e in edges if (kind is None or e.kind == kind) and not e.generated]
 
-    def sources(self, entity_id: EntityId, kind: str) -> list[Entity]:
+    def sources(self, ref: Entity | EntityId, kind: str) -> list[Entity]:
         """Entities that author `kind` pointing at this one, in id order."""
-        found = [self.store.get(e.source) for e in self.incoming(entity_id, kind)]
-        return sorted((e for e in found if e is not None), key=lambda e: (e.id.prefix, e.id.number))
+        found = [self.store.get(e.source) for e in self.incoming(ref, kind)]
+        return sorted((e for e in found if e is not None),
+                      key=lambda e: (e.id.prefix, e.id.number))
 
-    def targets(self, entity_id: EntityId, kind: str) -> list[Target]:
-        return [e.target for e in self.outgoing(entity_id, kind) if not e.generated]
+    def targets(self, ref: Entity | EntityId, kind: str) -> list[Target]:
+        return [e.target for e in self.outgoing(ref, kind) if not e.generated]
 
-    def children(self, entity_id: EntityId) -> list[Entity]:
-        return self.sources(entity_id, self.config.data["parent_relation"])
+    def children(self, ref: Entity | EntityId) -> list[Entity]:
+        return self.sources(ref, self.config.data["parent_relation"])
 
     def dangling(self) -> list[Edge]:
         return [e for e in self._edges if not e.generated and not e.target.resolved]

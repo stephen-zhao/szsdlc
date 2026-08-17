@@ -1,0 +1,18 @@
+{# Unrefined ideas, oldest first. Sorted oldest-first because an inbox sorted
+   newest-first is an inbox whose bottom never gets drained. #}
+# Inbox
+
+{% set open_ideas = [] %}
+{% for entity in entities if entity.type.intake and not entity.is_terminal %}
+{% set _ = open_ideas.append(entity) %}
+{% endfor %}
+{% if not open_ideas %}
+Nothing waiting.
+{% else %}
+| Id | Age | Thought |
+|---|---|---|
+{% for entity in open_ideas | sort(attribute='id.number') | sort(attribute='id.prefix') %}
+| {{ entity.id.text }} | {{ age_days(entity) if age_days(entity) is not none else '—' }}d | {{ entity.title }} |
+{% endfor %}
+{% endif %}
+{% include "views/_broken.md.j2" %}

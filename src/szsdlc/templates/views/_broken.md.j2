@@ -1,0 +1,16 @@
+{# Shared tail: everything the loader could not read.
+
+   Included by every view on purpose. A view that silently omitted a corrupt
+   file would be concealing exactly what `validate` exists to surface, and the
+   moment you most need an index is the moment something is wrong. #}
+{% if unparseable or duplicates %}
+
+## Not loaded
+
+{% for broken in unparseable %}
+- `{{ relative(broken.path) }}` — {{ broken.error }}
+{% endfor %}
+{% for entity_id, path in duplicates %}
+- `{{ relative(path) }}` — duplicate id {{ entity_id.text }}
+{% endfor %}
+{% endif %}

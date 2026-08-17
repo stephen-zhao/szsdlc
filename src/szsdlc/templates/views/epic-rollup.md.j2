@@ -1,0 +1,25 @@
+{# Each grouping entity with its children and derived aggregate progress.
+   Closed ones drop off — a rollup of finished work is a report, not a board.
+   The percentage is never stored anywhere; it is computed here every time. #}
+# Epic rollup
+
+{% set parents = types_with('can_parent') %}
+{% for entity_type in parents %}
+{% for entity in of_type(entity_type.name) if not entity.is_terminal %}
+{% set roll = derived(entity).get('progress') %}
+## {{ entity.id.text }} — {{ entity.title }}
+
+_{{ entity.status }}{% if roll %} · {{ roll }} children done ({{ roll.percent }}%) · {{ roll.tasks }} tasks{% endif %}_
+
+{% set kids = children(entity) %}
+{% if not kids %}
+No children yet.
+{% else %}
+{% for child in kids %}
+- {{ '[x]' if child.is_terminal else '[ ]' }} {{ child.id.text }} — {{ child.title }} _({{ child.status }})_
+{% endfor %}
+{% endif %}
+
+{% endfor %}
+{% endfor %}
+{% include "views/_broken.md.j2" %}

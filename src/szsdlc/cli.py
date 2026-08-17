@@ -87,6 +87,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("list [filters]", "by type, status, tag, parent, coverage, placement"),
     ("trace <ref> [--depth]", "relations both ways, back to the idea"),
     ("standards match <path>", "conventions governing these paths"),
+    ("sync", "regenerate every view and record; silent, never validates"),
 ]
 
 
@@ -227,6 +228,10 @@ def build_parser() -> Parser:
     standards.add_argument("--limit", type=int, default=STANDARDS_LIMIT)
     standards.add_argument("--json", action="store_true", dest="as_json")
     standards.set_defaults(run=cmd_standards)
+
+    sync = subparsers.add_parser("sync", prog="szsdlc sync")
+    sync.add_argument("--verbose", action="store_true")
+    sync.set_defaults(run=cmd_sync)
 
     return parser
 
@@ -1178,6 +1183,28 @@ def cmd_standards(args: argparse.Namespace) -> int:
         out(standard.name)
     if note:
         out(note)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# sync
+# ---------------------------------------------------------------------------
+
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    """Regenerate every view and record. Never validates.
+
+    C4 — silent on the happy path. This runs after every file write and at
+    every turn end; output there has no consumer and would reach context.
+    """
+    from . import render as render_module
+
+    session = Session(args.project)
+    changed = render_module.sync(session.config, session.store, _graph(session),
+                                 _roadmaps(session))
+    if args.verbose:
+        for item in changed:
+            out(_relative(session, item.path))
     return 0
 
 

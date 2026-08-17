@@ -1,0 +1,24 @@
+{# Every tag with its count and entities — "what touches DNS" without walking
+   a single relation. Tags are the axis that answers that question; the parent
+   relation answers a different one and neither substitutes for the other. #}
+# Tag index
+
+{% set index = {} %}
+{% for entity in entities %}
+{% for tag in entity.tags %}
+{% set _ = index.setdefault(tag, []).append(entity) %}
+{% endfor %}
+{% endfor %}
+{% if not index %}
+No tags yet.
+{% else %}
+{% for tag in index | sort %}
+## {{ tag }} ({{ index[tag] | length }})
+
+{% for entity in index[tag] %}
+- {{ entity.id.text }} — {{ entity.title }} _({{ entity.status }})_
+{% endfor %}
+
+{% endfor %}
+{% endif %}
+{% include "views/_broken.md.j2" %}
