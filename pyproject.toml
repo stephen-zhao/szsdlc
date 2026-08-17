@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "szsdlc"
+description = "Project-agnostic agentic SDLC framework: entities as the single source of truth, generated views, enforced consistency."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Stephen Zhao" }]
+keywords = ["sdlc", "agentic", "claude-code", "traceability", "backlog"]
+dynamic = ["version"]
+
+dependencies = [
+    "PyYAML>=6.0",
+    "Jinja2>=3.1",
+    "jsonschema>=4.20",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+szsdlc = "szsdlc.cli:main"
+
+# Single source of truth for the version: src/szsdlc/__init__.py
+[tool.hatch.version]
+path = "src/szsdlc/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/szsdlc"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
