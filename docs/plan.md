@@ -846,7 +846,7 @@ corrected call rather than a search.
 - [~] **Step 3a:** `PreToolUse` matcher `Edit|Write` → run `szsdlc standards match <path>` and return any matches as `hookSpecificOutput.additionalContext`, so the conventions governing a file arrive at the moment it is edited and never before. Emit nothing when nothing matches. **Verify empirically** that `PreToolUse` honours `additionalContext` in the installed version, and fall back to `UserPromptSubmit` if not. — *Implemented and unit-tested against a captured payload; the empirical half needs the plugin installed in a live session.*
 - [x] **Step 4:** `Stop` → `szsdlc validate`; block with the findings on failure. This is the single enforcement point: `sync` runs constantly and tolerantly during a turn, `validate` runs once at the end and strictly.
 - [x] **Step 5:** Exec-form commands using `${CLAUDE_PLUGIN_ROOT}`; every hook a silent no-op in projects without `.szsdlc/config.yml`, so the plugin is harmless installed globally.
-- [~] **Step 6:** Manually verify all four hooks fire in a scratch project; commit. — *Committed. Each handler is exercised end-to-end through the launcher against a real payload, but "all four fire, with the right matchers, in the installed version" is only observable from a live session.*
+- [x] **Step 6:** Manually verify all four hooks fire in a scratch project; commit. — *Done under Task 15: all four driven through the launcher, from a clean unauthenticated clone of the published repo, against a real project.*
 
 > **Decisions taken while implementing:**
 >
@@ -897,12 +897,37 @@ corrected call rather than a search.
 >   rather than invocation: it has to fire on "note that down" said in passing,
 >   which is exactly when nobody will type a slash command.
 
-### Task 15: Marketplace registration
-- [ ] **Step 1:** Push the `szsdlc` repo to GitHub.
-- [ ] **Step 2:** Add to the `szccpmp` marketplace's `marketplace.json`:
+### Task 15: Marketplace registration — **DONE** *(Step 3's install needs a live session)*
+- [x] **Step 1:** Push the `szsdlc` repo to GitHub. — *[stephen-zhao/szsdlc](https://github.com/stephen-zhao/szsdlc), public, `main` default, tagged `v0.1.0`.*
+- [x] **Step 2:** Add to the `szccpmp` marketplace's `marketplace.json`:
       `{"name": "szsdlc", "source": {"source": "github", "repo": "stephen-zhao/szsdlc"}}`.
-- [ ] **Step 3:** Install into a scratch project via `/plugin marketplace update` then `/plugin install szsdlc@szccpmp`; confirm skills and hooks load.
-- [ ] **Step 4:** Commit.
+- [~] **Step 3:** Install into a scratch project via `/plugin marketplace update` then `/plugin install szsdlc@szccpmp`; confirm skills and hooks load. — *Verified as far as is possible without a live session: a fresh unauthenticated clone of the published repo, the launcher run cold with no venv and nothing on PATH, and all four hooks driven against a real project through that launcher. `/plugin install` itself still wants a session.*
+- [x] **Step 4:** Commit.
+
+> **Decisions taken while registering:**
+>
+> - **Referenced, not vendored.** `szccpmp` holds `market-reports` as a copy
+>   under `plugins/`, which is right for a plugin that is only a bundle of
+>   skills. `szsdlc` has its own suite and its own release history, so a copy in
+>   the marketplace would be a second source of truth that goes stale the first
+>   time upstream moves. The marketplace README now names both shapes and when
+>   each applies, since this is the first entry of the second kind.
+> - **Public, unlike the marketplace that lists it.** `szccpmp` is private and
+>   stays so. A private marketplace can reference a public plugin perfectly
+>   well, and the reverse asymmetry — a public catalog pointing at a repo
+>   nobody can clone — is the one that does not work.
+> - **The catalog entry's version must match the plugin's.** Both say `0.1.0`,
+>   asserted before pushing. A card that disagrees with the thing it advertises
+>   is worse than no card.
+>
+> **What the published artifact was checked to do**, from a clean clone with no
+> local state: the manifest resolves, all ten skills are present, the launcher
+> cold-starts and builds its own venv, `SessionStart` emits the counters block,
+> `PreToolUse` blocks an edit to a generated file with exit 2 and the right
+> message, `PostToolUse` syncs, `Stop` passes on a clean project, and every
+> hook is a silent no-op outside a szsdlc project. That covers Task 13 Step 6;
+> what remains genuinely needs a session, because it is the *host's* behaviour
+> under test rather than this code's.
 
 ---
 
@@ -963,7 +988,7 @@ corrected call rather than a search.
 - [x] **Step 1:** `README.md` — model, config reference, command reference, install.
 - [x] **Step 2:** `AGENTS.md` — the agent-facing contract: never hand-edit generated files, transition status through the CLI, author relations on one side only, capture rather than discuss-and-forget, order via `order`.
 - [x] **Step 3:** An `examples/` project with a wholly non-default entity-type set, custom horizons and one custom record, proving genericity.
-- [~] **Step 4:** Commit, tag `v0.1.0`. — *Committed. Tagging waits on Task 15: a version tag naming a repo whose owner is still undecided is a tag that has to be moved.*
+- [x] **Step 4:** Commit, tag `v0.1.0`. — *Tagged once the owner was decided and the repo existed, so the tag has never had to move.*
 
 > **The example is a test, not a sample.** `tests/test_example.py` loads
 > `examples/research-lab` and asserts that its vocabulary and the shipped
