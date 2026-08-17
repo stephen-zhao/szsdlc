@@ -7,7 +7,9 @@ dist/
 .eggs/
 
 # Environments
-.venv/
+# Venvs are not portable across the Windows/WSL boundary — a separate one per
+# platform is normal here (e.g. .venv on Windows, .venv-wsl under Linux).
+.venv*/
 venv/
 env/
 

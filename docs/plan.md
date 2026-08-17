@@ -25,7 +25,7 @@ buckets, not as a field smeared across every entity. A `szsdlc` CLI performs
 every deterministic operation; Claude Code hooks make those operations
 automatic and the gates non-optional; skills carry only judgment.
 
-**Tech stack:** Python 3.10+ (PyYAML, Jinja2, jsonschema), Claude Code plugin
+**Tech stack:** Python 3.12+ (PyYAML, Jinja2, jsonschema), Claude Code plugin
 (skills + hooks), JSON Schema.
 
 **Research basis:** [`research.md`](research.md) (Plan C).
@@ -448,11 +448,15 @@ corrected call rather than a search.
 - [x] **Step 2:** Create `src/szsdlc/__init__.py` with `__version__` and `tests/` with a passing smoke test.
 - [x] **Step 3:** Commit.
 
-> **Deviation:** targets Python **>=3.10**, not the >=3.11 stated below. Nothing
-> in the design needs 3.11, and hooks invoke this CLI through the host's Python,
-> which on the development machine is 3.10 — requiring 3.11 would block the tool
-> where it has to run. The version has a single home in `src/szsdlc/__init__.py`
-> and is read from there by the build backend.
+> **Resolved:** the scaffold briefly targeted `>=3.10` because the Windows host
+> had only 3.10.5, and hooks invoke this CLI through the *host's* Python — not
+> WSL's — so the floor has to be whatever Windows can run. Windows was upgraded
+> to **3.14.7** (WSL has 3.12.3), so the floor is now **`>=3.12`**, satisfied by
+> both. Develop in either environment; venvs are not portable across the
+> boundary, so keep one per platform.
+>
+> The version has a single home in `src/szsdlc/__init__.py` and is read from
+> there by the build backend.
 
 ### Task 2: Config schema and loader
 - [ ] **Step 1:** Write `schemas/config.schema.json` covering `paths`, `entity_types` (prefix, dir, layout, extra fields, workflow, artifacts, allowed relations, **capability flags**, **derived attribute** declarations), `relations` (name, inverse, allowed source/target types, cardinality), `roadmaps` (names, horizons, which statuses must be scheduled), `views`, `records`, `standards`, and `id` (`pattern`, optional `key`, `padding`).

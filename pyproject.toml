@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "szsdlc"
 description = "Project-agnostic agentic SDLC framework: entities as the single source of truth, generated views, enforced consistency."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = { file = "LICENSE" }
 authors = [{ name = "Stephen Zhao" }]
 keywords = ["sdlc", "agentic", "claude-code", "traceability", "backlog"]
