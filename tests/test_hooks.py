@@ -14,7 +14,9 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -64,12 +66,28 @@ def test_the_manifest_version_tracks_the_package():
     assert manifest["version"] == szsdlc.__version__
 
 
-def test_all_four_events_are_wired_through_one_launcher():
-    wiring = json.loads((REPO / "hooks" / "hooks.json").read_text("utf-8"))
-    assert set(wiring) == {"SessionStart", "PreToolUse", "PostToolUse", "Stop"}
+def wiring() -> dict:
+    return json.loads((REPO / "hooks" / "hooks.json").read_text("utf-8"))
 
+
+def test_the_events_sit_under_a_hooks_key():
+    """Claude Code expects `{"hooks": {<event>: [...]}}`, not bare events.
+
+    Shipped without the wrapper the whole *plugin* fails `claude plugin
+    validate`, and a plugin that fails validation is dropped from its
+    marketplace listing silently — it does not appear, and nothing says why.
+    Every handler underneath can be perfectly correct and none of it runs.
+    """
+    document = wiring()
+    assert set(document) == {"hooks"}, "events must be nested under `hooks`"
+    assert set(document["hooks"]) == {"SessionStart", "PreToolUse",
+                                      "PostToolUse", "Stop"}
+
+
+def test_all_four_events_are_wired_through_one_launcher():
+    events = wiring()["hooks"]
     commands = [hook["command"]
-                for entries in wiring.values()
+                for entries in events.values()
                 for entry in entries
                 for hook in entry["hooks"]]
     assert len(commands) == 4
@@ -80,9 +98,9 @@ def test_all_four_events_are_wired_through_one_launcher():
 
 
 def test_the_edit_hooks_match_the_editing_tools():
-    wiring = json.loads((REPO / "hooks" / "hooks.json").read_text("utf-8"))
+    events = wiring()["hooks"]
     for event in ("PreToolUse", "PostToolUse"):
-        assert wiring[event][0]["matcher"] == "Edit|Write|NotebookEdit"
+        assert events[event][0]["matcher"] == "Edit|Write|NotebookEdit"
 
 
 def test_both_launchers_exist_and_the_posix_one_is_executable():
@@ -350,3 +368,24 @@ def test_an_unknown_hook_event_is_refused_compactly(capsys):
     err = capsys.readouterr().err
     assert len(err.strip().splitlines()) <= 3
     assert "usage:" not in err
+
+
+def test_the_real_validator_accepts_this_plugin():
+    """The only assertion here that could have caught the missing wrapper.
+
+    Every hand-written check in this file passed while `hooks.json` was
+    malformed, because each one asserted the shape the file already had.
+    `claude plugin validate` is the actual contract, so when the binary is
+    available, defer to it rather than to our own reading of the format.
+    """
+    claude = shutil.which("claude")
+    if not claude:
+        pytest.skip("the claude CLI is not on PATH")
+
+    result = subprocess.run([claude, "plugin", "validate", str(REPO)],
+                            capture_output=True, text=True, timeout=180)
+    output = result.stdout + result.stderr
+    # Older binaries reject `$schema`/`description` at a marketplace root; that
+    # is their bug, not ours, and it cannot arise for a plugin manifest.
+    assert "hooks" not in output.lower() or "error" not in output.lower(), output
+    assert "Validation failed" not in output, output
