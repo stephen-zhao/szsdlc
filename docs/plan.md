@@ -644,6 +644,45 @@ corrected call rather than a search.
 3. **Git/forge automation** — branch creation on transition, PR linking.
 4. **CI integration** — `szsdlc validate` as a GitHub Action. One command, since staleness is one of its rules.
 
+## Open questions
+
+Raised during design review and deliberately left undecided. Each is cheap to
+change now and expensive later, so decide before the relevant task.
+
+1. **Should `SPK` be `persistent`?** It currently sits on the work side
+   (`actionable: true`, not persistent), so answered spikes age out with
+   completed work. But a spike's *findings* are long-lived reference material
+   much like an `ADR` — the investigation ends, the answer does not. Decide
+   before Task 2 fixes the default flags.
+2. **Is `parent` ever multi-valued?** Declared single-valued cardinality today.
+   Allowing an entity under two epics is a config change, but the epic-rollup
+   view's progress arithmetic would then need a double-counting rule. Decide
+   before Task 10 ships the rollup.
+3. **Do standards earn their keep?** They are the only part of the framework
+   that *replaces* existing instruction-file content rather than adding
+   capability. If matched sets turn out to be tiny or the injection fiddly,
+   cutting them costs one directory and one hook. Evaluate after Task 13.
+4. **Do multiple named roadmaps earn their keep?** The `--roadmap` flag exists
+   for a global roadmap plus per-epic ones. If one roadmap is always enough,
+   the flag and its defaulting logic can go.
+5. **GitHub owner for the marketplace entry** in Task 15 is still `<owner>`.
+
+## Working environment
+
+Facts a fresh session cannot infer from the code:
+
+- **Python floor is `>=3.12`**, set by the *host* rather than by preference:
+  plugin hooks invoke this CLI through the Windows Python, which is **3.14.7**;
+  WSL Ubuntu-24.04 has **3.12.3**. Either is fine to develop in.
+- **Venvs are per platform** and not portable across the boundary — `.venv` on
+  Windows, a separate one under WSL. `.gitignore` covers `.venv*/`.
+- **No git remote yet.** Task 15 pushes this repo to GitHub and adds an entry
+  to the existing **`szccpmp`** marketplace, which may reference a plugin in a
+  different repo via a `github` source — no submodule needed.
+- **First intended consumer** is the `s-s1-lab` homelab infrastructure repo at
+  `E:\Projects\Dev\s-s1-lab`, which carries a backlog entry for adopting this.
+  Nothing about that repo may leak into the design.
+
 ## Risks
 
 | Risk | Mitigation |
