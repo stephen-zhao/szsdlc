@@ -441,7 +441,8 @@ corrected call rather than a search.
 | `src/szsdlc/defaults/config.yml` | The six default entity types, relations, horizons and views, entirely as data |
 | `src/szsdlc/templates/` | Default entity, view, record templates (same packaging reason) |
 | `tests/` | pytest suite with fixture projects |
-| `README.md`, `AGENTS.md` | Framework docs and agent entry point |
+| `README.md`, `AGENTS.md` | Landing page (description + install) and agent entry point |
+| `docs/reference.md` | Model, command surface, configuration, hooks, development |
 
 ---
 
@@ -939,7 +940,7 @@ corrected call rather than a search.
 - [x] **Step 3:** Schedule the results onto the roadmap, reorder twice, then drive one work item to done through the skills.
 - [x] **Step 4:** Confirm: capture never took more than one command; the inbox view shows exactly the unrefined idea; `trace` walks from the finished work item back to its originating idea; rescheduling touched only the roadmap file; no generated file was hand-edited; no view went stale; every gate refused at least once when it should have; `szsdlc validate` ends green.
 - [x] **Step 5:** Assert the definitional/delivery boundary: completing the work item flips the requirement's derived `covered`/`delivered` in the register **without a single byte changing in the requirement's own file**, verified by `git diff` over that directory across the whole run.
-- [x] **Step 6:** Record **measured** token cost in the README for `szsdlc context`, `next`, `inbox`, and `list --unscheduled` at both 20 and 200 entities, so the efficiency claim is evidenced rather than asserted. Include the counters-vs-listing comparison: the `context` counter for unscheduled work against the full listing it replaces. — *Recorded in [docs/measurements.md](measurements.md); Task 17 quotes the headline in the README.*
+- [x] **Step 6:** Record **measured** token cost in the README for `szsdlc context`, `next`, `inbox`, and `list --unscheduled` at both 20 and 200 entities, so the efficiency claim is evidenced rather than asserted. Include the counters-vs-listing comparison: the `context` counter for unscheduled work against the full listing it replaces. — *Recorded in [docs/measurements.md](measurements.md). The step says "in the README", but the README was later cut back to install-plus-description, and a table maintained in two places is a table that disagrees with itself.*
 - [x] **Step 7:** Benchmark full-graph load time at 200 and 2000 entities. **Do not add an index cache unless the benchmark demands it** — a cache keyed on mtime introduces exactly the stale-state failure mode this framework exists to eliminate, and is only worth that risk against measured pain.
 - [x] **Step 8:** Commit.
 
@@ -985,7 +986,7 @@ corrected call rather than a search.
 > register shows the requirement flipping to covered.
 
 ### Task 17: Documentation — **DONE** *(bar the tag, which waits on Task 15)*
-- [x] **Step 1:** `README.md` — model, config reference, command reference, install.
+- [x] **Step 1:** `README.md` — model, config reference, command reference, install. — *Later split: the README keeps the description and install only, and everything else moved to [`docs/reference.md`](reference.md). The `Why` and cost sections were dropped outright rather than moved, being verbatim duplicates of `research.md` and `measurements.md` — a landing page that restates four other documents is one that goes stale in four places at once.*
 - [x] **Step 2:** `AGENTS.md` — the agent-facing contract: never hand-edit generated files, transition status through the CLI, author relations on one side only, capture rather than discuss-and-forget, order via `order`.
 - [x] **Step 3:** An `examples/` project with a wholly non-default entity-type set, custom horizons and one custom record, proving genericity.
 - [x] **Step 4:** Commit, tag `v0.1.0`. — *Tagged once the owner was decided and the repo existed, so the tag has never had to move.*
