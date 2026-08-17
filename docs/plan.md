@@ -500,7 +500,7 @@ corrected call rather than a search.
 - [x] **Step 2:** Allocate the next id per type by scanning that type's directory for the maximum existing number — **no counter file**, so two worktrees cannot disagree with a stored value.
 - [x] **Step 3:** Reject unknown prefixes with the configured list; resolve tombstoned ids to their successor.
 - [x] **Step 4:** Tags are free-form and need no declaration. **Normalize on write**: trim, lowercase, collapse internal whitespace to hyphens, de-duplicate. Normalizing at the single write path is what stops `dns`, `DNS` and ` dns ` becoming three tags.
-- [ ] **Step 5:** `szsdlc tag <ref> <tag>...` and `szsdlc untag <ref> <tag>...` — list-valued fields are never edited through `set` (C3), so tagging gets its own verb, like `link`. **Deferred to Task 8:** the operations (`add_tags`/`remove_tags`) exist and are tested, but the verbs write frontmatter, which needs Task 4's model. Shipping half a command that cannot persist would be worse than shipping it next to `set` and `link`.
+- [x] **Step 5:** `szsdlc tag <ref> <tag>...` and `szsdlc untag <ref> <tag>...` — list-valued fields are never edited through `set` (C3), so tagging gets its own verb, like `link`. **Deferred to Task 8:** the operations (`add_tags`/`remove_tags`) exist and are tested, but the verbs write frontmatter, which needs Task 4's model. Shipping half a command that cannot persist would be worse than shipping it next to `set` and `link`. — *Landed in Task 8 as planned: both verbs registered in `cli.py`, five cases in `tests/test_cli_entities.py`.*
 - [x] **Step 6:** Tests: padding tolerance, sequence gaps, case folding, empty directory, tag normalization across whitespace/case/duplicate input, retagging leaves the id untouched.
 - [x] **Step 7:** Commit.
 
@@ -718,7 +718,7 @@ corrected call rather than a search.
 - [x] **Step 2:** Implement C2/C7 — a shared error type carrying `problem`, `fix` and `exit_code`, rendered to stderr in the fixed three-line shape. `fix` must be a runnable command. Suppress argparse usage dumps and convert every internal exception, so no traceback can escape.
 - [x] **Step 2a:** **Two-shot recovery tests.** For every error class, assert mechanically that (a) stderr is ≤3 lines, (b) it contains a `Fix:` line, (c) the fix line parses as a valid invocation, and (d) **executing that suggested command actually succeeds** against the same fixture.
 - [x] **Step 3:** Implement C3 — `set` rejects `relations`, list-valued and nested fields, naming the correct command instead.
-- [ ] **Step 4:** Implement C4 — `sync` and `validate` are silent on success, `--verbose` opts in. **Lands with those commands in Tasks 10 and 11**; there is nothing to assert byte-count zero on until they exist.
+- [x] **Step 4:** Implement C4 — `sync` and `validate` are silent on success, `--verbose` opts in. **Lands with those commands in Tasks 10 and 11**; there is nothing to assert byte-count zero on until they exist. — *Landed as planned: both carry `--verbose`, and both are asserted silent on the happy path.*
 - [x] **Step 5:** Implement nearest-match suggestions for unknown references (edit distance over known ids, best single suggestion only).
 - [x] **Step 6:** Compact `--help`: one line per command, deep help behind `<command> --help`.
 - [x] **Step 7:** **Golden output-budget tests**: for every command in the audit table, assert the success output stays within its stated budget against both a 20-entity and a 200-entity fixture.
@@ -1032,6 +1032,41 @@ corrected call rather than a search.
 > whereas not finished yet is not news.
 
 ---
+
+## Completion audit
+
+Every checkbox above was re-verified against the repo rather than trusted,
+because a plan is exactly the kind of document that drifts from what shipped.
+What was checked mechanically, and passes:
+
+- **Every path in the file map exists** (35 of them).
+- **The command audit table and the parser agree in both directions** — no row
+  names a command that does not exist, and no command is missing a row.
+  `--help` and the table are separately reconciled by `tests/test_contract.py`.
+- **The exit codes C7 assigns are the codes the code uses**: 2 bad input,
+  3 refused, 4 validation failed, 5 config error, 1 internal error.
+- **`--help` is inside its 25-line budget**, all ten skills inside their
+  50-line one.
+- **The example project still validates clean and its generated files are
+  current**, so the genericity claim is live rather than historical.
+
+Two boxes were unticked and should not have been. Both were deferred-to-a-later-
+task notes whose work landed and was never marked: `tag`/`untag` (Task 3 Step 5,
+landed in Task 8) and C4's silent-on-success with `--verbose` (Task 9 Step 4,
+landed with Tasks 10 and 11). Both are verified and ticked.
+
+**One finding, left for a decision rather than fixed.** `--help` is at *exactly*
+25 lines, so the budget has no headroom and the next command added breaks it.
+The test guarding this is named `test_help_fits_the_budget_with_room_to_grow`
+and its docstring says "a budget with no headroom is a budget that breaks on
+the next command" — but it asserts `<= 25`, so it cannot detect the very
+condition it was written for, and that condition is now true. Either the budget
+rises, or the pairing trick that put `tag|untag` on one row gets applied again,
+or the test is renamed to match what it actually checks. Changing the 25-line
+budget is a design decision, so it is recorded here rather than taken.
+
+The three `[~]` boxes are genuinely blocked on a live Claude Code session: they
+test the *host's* behaviour, not this code's. See Tasks 13, 14 and 15.
 
 ## Out of scope (separate items, after this lands)
 
