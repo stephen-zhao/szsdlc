@@ -21,9 +21,19 @@ fi
 SZSDLC_LAUNCHER=1
 export SZSDLC_LAUNCHER
 
-# 1. An installed console script.
-if command -v szsdlc >/dev/null 2>&1; then
-    exec szsdlc "$@"
+# 1. An installed console script — but never this launcher itself.
+#
+# The plugin puts this directory on PATH, so a bare `command -v szsdlc` finds
+# *us*, execs us, and the recursion guard above fires on every hook invocation.
+# Compare directories rather than exact paths so a sibling `szsdlc.exe` in this
+# same bin/ is excluded too.
+self_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+found="$(command -v szsdlc 2>/dev/null || true)"
+if [ -n "$found" ] && [ -x "$found" ]; then
+    found_dir="$(CDPATH= cd -- "$(dirname -- "$found")" 2>/dev/null && pwd || true)"
+    if [ "$found_dir" != "$self_dir" ]; then
+        exec "$found" "$@"
+    fi
 fi
 
 plugin_root="${CLAUDE_PLUGIN_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}"
