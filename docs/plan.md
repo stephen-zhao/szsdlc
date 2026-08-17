@@ -865,11 +865,37 @@ corrected call rather than a search.
 >   there is none, so the no-op in Step 5 is a property of the handlers rather
 >   than of the shell wrapper.
 
-### Task 14: Skills
-- [ ] **Step 1:** Author the ten skills. Each follows the same shape: read state via `szsdlc`, apply judgment, record via `szsdlc`. **Hard budget: 50 lines each** — procedure belongs in the CLI, not in prose the model re-reads every turn.
-- [ ] **Step 2:** `capture` must be usable mid-conversation without derailing it: recognise "note that down" style asides, call `szsdlc capture`, report the id, and return to the prior task.
-- [ ] **Step 3:** `disable-model-invocation: true` on the mutating skills (`execute`, `close`); leave advisory ones model-invocable.
-- [ ] **Step 4:** Verify each resolves as `/szsdlc:<name>`; commit.
+### Task 14: Skills — **DONE** *(Step 4 needs an installed plugin)*
+- [x] **Step 1:** Author the ten skills. Each follows the same shape: read state via `szsdlc`, apply judgment, record via `szsdlc`. **Hard budget: 50 lines each** — procedure belongs in the CLI, not in prose the model re-reads every turn.
+- [x] **Step 2:** `capture` must be usable mid-conversation without derailing it: recognise "note that down" style asides, call `szsdlc capture`, report the id, and return to the prior task.
+- [x] **Step 3:** `disable-model-invocation: true` on the mutating skills (`execute`, `close`); leave advisory ones model-invocable.
+- [~] **Step 4:** Verify each resolves as `/szsdlc:<name>`; commit. — *Committed. Names, cross-references and frontmatter are asserted; resolution itself is only observable once the plugin is installed, which is Task 15.*
+
+> **Decisions taken while implementing:**
+>
+> - **The budget is asserted, not aspired to.** All ten came in over 50 lines
+>   on the first draft and were cut back. A budget nothing enforces is a
+>   comment.
+> - **The skills are the one layer that is allowed to be opinionated.** The
+>   CLI names no type and the templates select by capability flag, but
+>   `refine`'s table of what-becomes-what is a judgment about the *shipped*
+>   type set. A project that replaces `entity_types` wholesale replaces these
+>   skills too — which is the correct seam, because the judgment is the part
+>   that was never generic.
+> - **Every `szsdlc …` line in every skill is parsed by the real parser** in
+>   `tests/test_skills.py`. Prose drifts silently; a skill that tells the model
+>   to run a command that was renamed costs a wasted turn and a little of the
+>   model's trust in the next instruction.
+> - **A command count of 12 per skill is asserted** as a proxy for procedure
+>   leaking back out of the CLI. A skill listing twenty commands has become a
+>   shell script written in English.
+> - **No skill mentions `sync`.** The `PostToolUse` hook already runs it on
+>   every edit, so a skill that suggests it teaches a redundant habit — and a
+>   model reaching for `sync` where `validate` was wanted hides findings
+>   rather than reporting them.
+> - **`capture` is the one skill whose description is tuned for interruption**
+>   rather than invocation: it has to fire on "note that down" said in passing,
+>   which is exactly when nobody will type a slash command.
 
 ### Task 15: Marketplace registration
 - [ ] **Step 1:** Push the `szsdlc` repo to GitHub.
@@ -929,6 +955,9 @@ change now and expensive later, so decide before the relevant task.
    for a global roadmap plus per-epic ones. If one roadmap is always enough,
    the flag and its defaulting logic can go.
 5. **GitHub owner for the marketplace entry** in Task 15 is still `<owner>`.
+   `.claude-plugin/plugin.json` currently carries a *provisional* `homepage`
+   of `github.com/StephenZhao/szsdlc`; it is a guess and needs confirming
+   alongside the marketplace entry, since both name the same repo.
 
 ## Working environment
 
