@@ -1,0 +1,21 @@
+# Line endings are load-bearing here, in three separate ways:
+#
+#   1. `bin/szsdlc` is a POSIX shell script. A CRLF checkout makes its shebang
+#      `#!/bin/sh\r`, which fails with a message naming a program nobody typed.
+#   2. Generated views carry a content-hash of their own rendered body. If the
+#      bundled templates checked out CRLF on one machine and LF on another, the
+#      same project would render two different hashes and every generated file
+#      would read as hand-edited on the other side of a sync.
+#   3. `bin/szsdlc.cmd` is the one file that wants the opposite: older cmd.exe
+#      mis-parses LF-only batch files.
+#
+# So: LF everywhere, CRLF for the batch launcher. The frontmatter editor still
+# preserves whatever endings a *project's* files actually have — that is a
+# property of the code, and its tests write bytes rather than relying on this.
+
+* text=auto eol=lf
+
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+bin/szsdlc text eol=lf

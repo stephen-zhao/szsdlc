@@ -1,0 +1,82 @@
+#!/bin/sh
+# szsdlc launcher — POSIX sh, for WSL, Linux, macOS and Git Bash on Windows.
+#
+# Hooks invoke this on every file write and every turn end, so it has to
+# resolve an interpreter without asking anyone anything. The order is:
+#
+#   1. an installed `szsdlc` already on PATH — a developer's own venv wins;
+#   2. a venv this launcher previously created under the plugin's data dir;
+#   3. create that venv from the plugin source, once, on first run.
+#
+# Failure is silent-ish by design: a hook that dies noisily in a project which
+# does not even use szsdlc is worse than one that does nothing.
+
+set -u
+
+# Guard against resolving to ourselves if this directory is on PATH.
+if [ "${SZSDLC_LAUNCHER:-}" = "1" ]; then
+    echo "szsdlc: launcher recursion; is bin/ on PATH?" >&2
+    exit 5
+fi
+SZSDLC_LAUNCHER=1
+export SZSDLC_LAUNCHER
+
+# 1. An installed console script.
+if command -v szsdlc >/dev/null 2>&1; then
+    exec szsdlc "$@"
+fi
+
+plugin_root="${CLAUDE_PLUGIN_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}"
+data_dir="${CLAUDE_PLUGIN_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/szsdlc}"
+venv="$data_dir/venv"
+
+for candidate in "$venv/bin/python" "$venv/Scripts/python.exe"; do
+    if [ -x "$candidate" ]; then
+        exec "$candidate" -m szsdlc.cli "$@"
+    fi
+done
+
+# 3. First run: build the venv.
+#
+# Candidates are *probed*, not merely found. Under Git Bash on Windows,
+# `python3` resolves to the Microsoft Store stub in WindowsApps — present on
+# PATH, on the front of it, and unable to run anything. Taking the first name
+# that exists picks the stub every time and the hook silently does nothing.
+# Running each candidate also enforces the 3.12 floor for free.
+probe='import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)'
+interpreter=""
+for candidate in python3 python py; do
+    command -v "$candidate" >/dev/null 2>&1 || continue
+    if "$candidate" -c "$probe" >/dev/null 2>&1; then
+        interpreter="$candidate"
+        break
+    fi
+done
+if [ -z "$interpreter" ]; then
+    echo "szsdlc: no working Python 3.12+ found (tried python3, python, py)." >&2
+    echo "Fix: install Python 3.12 or later and rerun" >&2
+    exit 5
+fi
+
+mkdir -p "$data_dir" || exit 5
+"$interpreter" -m venv "$venv" >/dev/null 2>&1 || {
+    echo "szsdlc: could not create a virtualenv at $venv." >&2
+    echo "Fix: pip install $plugin_root" >&2
+    exit 5
+}
+
+for candidate in "$venv/bin/python" "$venv/Scripts/python.exe"; do
+    if [ -x "$candidate" ]; then
+        "$candidate" -m pip install --quiet --disable-pip-version-check \
+            "$plugin_root" >/dev/null 2>&1 || {
+            echo "szsdlc: could not install szsdlc into $venv." >&2
+            echo "Fix: $candidate -m pip install $plugin_root" >&2
+            exit 5
+        }
+        exec "$candidate" -m szsdlc.cli "$@"
+    fi
+done
+
+echo "szsdlc: virtualenv at $venv has no python executable." >&2
+echo "Fix: rm -rf $venv and rerun" >&2
+exit 5

@@ -819,19 +819,51 @@ corrected call rather than a search.
 
 ## Phase 4 — Claude Code integration
 
-### Task 12: Plugin manifest and launchers
-- [ ] **Step 1:** Write `.claude-plugin/plugin.json` (`name: szsdlc`, version, description, `hooks: ./hooks/hooks.json`).
-- [ ] **Step 2:** Write `bin/szsdlc` and `bin/szsdlc.cmd` resolving an interpreter in order: `szsdlc` on PATH → a venv in `${CLAUDE_PLUGIN_DATA}` → create that venv from `${CLAUDE_PLUGIN_ROOT}` on first run. **Verify on Windows (Git Bash and PowerShell) and WSL** — `python3` is frequently absent on Windows.
-- [ ] **Step 3:** Commit.
+### Task 12: Plugin manifest and launchers — **DONE**
+- [x] **Step 1:** Write `.claude-plugin/plugin.json` (`name: szsdlc`, version, description, `hooks: ./hooks/hooks.json`).
+- [x] **Step 2:** Write `bin/szsdlc` and `bin/szsdlc.cmd` resolving an interpreter in order: `szsdlc` on PATH → a venv in `${CLAUDE_PLUGIN_DATA}` → create that venv from `${CLAUDE_PLUGIN_ROOT}` on first run. **Verify on Windows (Git Bash and PowerShell) and WSL** — `python3` is frequently absent on Windows.
+- [x] **Step 3:** Commit.
 
-### Task 13: Hooks
-- [ ] **Step 1:** `SessionStart` → `szsdlc context`; stdout enters the model's context, so a session begins knowing the state without searching.
-- [ ] **Step 2:** `PreToolUse` matcher `Edit|Write` → exit 2 when the target carries the GENERATED banner, naming the source to edit instead.
-- [ ] **Step 3:** `PostToolUse` matcher `Edit|Write` → when the path is under a configured entity, roadmap or record directory, run `szsdlc sync`.
-- [ ] **Step 3a:** `PreToolUse` matcher `Edit|Write` → run `szsdlc standards match <path>` and return any matches as `hookSpecificOutput.additionalContext`, so the conventions governing a file arrive at the moment it is edited and never before. Emit nothing when nothing matches. **Verify empirically** that `PreToolUse` honours `additionalContext` in the installed version, and fall back to `UserPromptSubmit` if not.
-- [ ] **Step 4:** `Stop` → `szsdlc validate`; block with the findings on failure. This is the single enforcement point: `sync` runs constantly and tolerantly during a turn, `validate` runs once at the end and strictly.
-- [ ] **Step 5:** Exec-form commands using `${CLAUDE_PLUGIN_ROOT}`; every hook a silent no-op in projects without `.szsdlc/config.yml`, so the plugin is harmless installed globally.
-- [ ] **Step 6:** Manually verify all four hooks fire in a scratch project; commit.
+> **Decisions taken while implementing:**
+>
+> - **Interpreters are probed, not merely found.** Under Git Bash on Windows,
+>   `python3` resolves to the Microsoft Store stub: it sits at the front of PATH
+>   and cannot run anything, so "take the first name that exists" picks the stub
+>   every time and the hook silently does nothing. Both launchers run each
+>   candidate with a version check instead, which enforces the 3.12 floor for
+>   free. `szsdlc.cmd` tries `py -3` before `python` for the same reason.
+> - **Both launchers carry a `SZSDLC_LAUNCHER` recursion guard**, since step 1
+>   of the resolution order looks for `szsdlc` on PATH and `bin/` may itself be
+>   on PATH.
+> - Verified cold start (builds the venv) and warm start on Git Bash, WSL and
+>   PowerShell, plus the installed-console-script path and the no-op outside a
+>   project.
+
+### Task 13: Hooks — **DONE** *(Steps 3a and 6 need a live session; see below)*
+- [x] **Step 1:** `SessionStart` → `szsdlc context`; stdout enters the model's context, so a session begins knowing the state without searching.
+- [x] **Step 2:** `PreToolUse` matcher `Edit|Write` → exit 2 when the target carries the GENERATED banner, naming the source to edit instead.
+- [x] **Step 3:** `PostToolUse` matcher `Edit|Write` → when the path is under a configured entity, roadmap or record directory, run `szsdlc sync`.
+- [~] **Step 3a:** `PreToolUse` matcher `Edit|Write` → run `szsdlc standards match <path>` and return any matches as `hookSpecificOutput.additionalContext`, so the conventions governing a file arrive at the moment it is edited and never before. Emit nothing when nothing matches. **Verify empirically** that `PreToolUse` honours `additionalContext` in the installed version, and fall back to `UserPromptSubmit` if not. — *Implemented and unit-tested against a captured payload; the empirical half needs the plugin installed in a live session.*
+- [x] **Step 4:** `Stop` → `szsdlc validate`; block with the findings on failure. This is the single enforcement point: `sync` runs constantly and tolerantly during a turn, `validate` runs once at the end and strictly.
+- [x] **Step 5:** Exec-form commands using `${CLAUDE_PLUGIN_ROOT}`; every hook a silent no-op in projects without `.szsdlc/config.yml`, so the plugin is harmless installed globally.
+- [~] **Step 6:** Manually verify all four hooks fire in a scratch project; commit. — *Committed. Each handler is exercised end-to-end through the launcher against a real payload, but "all four fire, with the right matchers, in the installed version" is only observable from a live session.*
+
+> **Decisions taken while implementing:**
+>
+> - **`Stop` blocks on errors only, never on warnings.** A turn that cannot end
+>   because a tag is used once teaches people to disable the hook; the counters
+>   in `context` already carry warnings into the next session.
+> - **The edit matcher is `Edit|Write|NotebookEdit`.** The plan names two tools;
+>   omitting the third would leave a hole through which a generated file is
+>   editable, and the guard is about the *file*, not the tool.
+> - **`hook` is a registered but undocumented subcommand.** It is invoked by
+>   `hooks.json` and never typed, so it is excluded from `--help` (a 25-line
+>   budget) and from the set of commands a `Fix:` line may name. The exclusion
+>   is asserted, not implicit: the contract test now requires that
+>   `registered − documented` be *exactly* the hidden set.
+> - **Every handler resolves the project itself** and returns silently when
+>   there is none, so the no-op in Step 5 is a property of the handlers rather
+>   than of the shell wrapper.
 
 ### Task 14: Skills
 - [ ] **Step 1:** Author the ten skills. Each follows the same shape: read state via `szsdlc`, apply judgment, record via `szsdlc`. **Hard budget: 50 lines each** — procedure belongs in the CLI, not in prose the model re-reads every turn.

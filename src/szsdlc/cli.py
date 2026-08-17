@@ -28,7 +28,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Callable
 
-from . import __version__, config as config_module
+from . import __version__, config as config_module, hooks as hooks_module
 from .errors import EXIT_ERROR, EXIT_INVALID, BadInput, InternalError, SzsdlcError
 from .ids import IdSpace
 from .model import Entity, EntityStore, create_entity, load_all
@@ -90,6 +90,11 @@ COMMANDS: list[tuple[str, str]] = [
     ("sync", "regenerate every view and record; silent, never validates"),
     ("validate", "every consistency rule; silent when clean"),
 ]
+
+#: Registered but not listed: invoked by hooks.json, never typed by anyone.
+#: Spending a line of a 25-line budget on it would cost tokens in every
+#: session to document something no reader can use.
+HIDDEN_COMMANDS = {"hook"}
 
 
 def compact_help() -> str:
@@ -239,6 +244,12 @@ def build_parser() -> Parser:
     validate.add_argument("--verbose", action="store_true")
     validate.add_argument("--json", action="store_true", dest="as_json")
     validate.set_defaults(run=cmd_validate)
+
+    # Hidden: invoked by hooks.json, never typed. It lives on this parser so
+    # there is exactly one interpreter-resolution path to get wrong on Windows.
+    hook = subparsers.add_parser("hook", prog="szsdlc hook")
+    hook.add_argument("event", choices=sorted(hooks_module.HANDLERS))
+    hook.set_defaults(run=cmd_hook)
 
     return parser
 
@@ -1256,6 +1267,15 @@ def cmd_validate(args: argparse.Namespace) -> int:
     # Exit 4, not 1: C7 gives validation failure its own code so a caller can
     # branch on it without parsing text.
     return EXIT_INVALID if errors else 0
+
+
+# ---------------------------------------------------------------------------
+# hook (hidden)
+# ---------------------------------------------------------------------------
+
+
+def cmd_hook(args: argparse.Namespace) -> int:
+    return hooks_module.dispatch(args.event, cwd=args.project)
 
 
 # ---------------------------------------------------------------------------

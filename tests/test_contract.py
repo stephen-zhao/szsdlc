@@ -22,7 +22,7 @@ import pytest
 import yaml
 
 from szsdlc import config as C
-from szsdlc.cli import COMMANDS, build_parser, main
+from szsdlc.cli import COMMANDS, HIDDEN_COMMANDS, build_parser, main
 from szsdlc.errors import (
     EXIT_BAD_INPUT,
     EXIT_CONFIG,
@@ -35,7 +35,14 @@ PLACEHOLDER = re.compile(r"<[^>]+>")
 
 
 def registered_commands() -> set[str]:
-    return set(build_parser()._subparsers._group_actions[0].choices)
+    """Commands a person can type.
+
+    Hidden commands are excluded deliberately: `hook` is reachable from the
+    parser but is invoked by hooks.json, so it is neither documented in
+    `--help` nor ever legitimate to name in a `Fix:` line.
+    """
+    choices = set(build_parser()._subparsers._group_actions[0].choices)
+    return choices - HIDDEN_COMMANDS
 
 
 # ---------------------------------------------------------------------------
