@@ -424,6 +424,7 @@ corrected call rather than a search.
 | `skills/trace/SKILL.md` | Answer "what satisfies REQ-x / where did WI-y come from" |
 | `bin/szsdlc`, `bin/szsdlc.cmd` | Cross-platform launchers resolving the interpreter |
 | `src/szsdlc/cli.py` | Argument parsing and dispatch |
+| `src/szsdlc/errors.py` | The single error channel: C2 shape, exit codes, and the project/model split |
 | `src/szsdlc/config.py` | Load/validate `.szsdlc/config.yml`, apply defaults |
 | `src/szsdlc/ids.py` | Id pattern, prefix/key registry, per-(type,key) counters, tombstone resolution |
 | `src/szsdlc/model.py` | Entity parsing for both layouts, frontmatter round-trip, progress parsing |
@@ -434,8 +435,9 @@ corrected call rather than a search.
 | `src/szsdlc/validate.py` | All consistency rules |
 | `src/szsdlc/context.py` | Compact state for `SessionStart` and `show --context` |
 | `src/szsdlc/standards.py` | Glob matching for standards injection |
-| `schemas/*.schema.json` | Config, entity, roadmap, record schemas |
-| `templates/` | Default entity, view, record templates |
+| `src/szsdlc/schemas/*.schema.json` | Config, entity, roadmap, record schemas — **inside the package**, so they survive `pip install` |
+| `src/szsdlc/defaults/config.yml` | The six default entity types, relations, horizons and views, entirely as data |
+| `src/szsdlc/templates/` | Default entity, view, record templates (same packaging reason) |
 | `tests/` | pytest suite with fixture projects |
 | `README.md`, `AGENTS.md` | Framework docs and agent entry point |
 
@@ -458,12 +460,37 @@ corrected call rather than a search.
 > The version has a single home in `src/szsdlc/__init__.py` and is read from
 > there by the build backend.
 
-### Task 2: Config schema and loader
-- [ ] **Step 1:** Write `schemas/config.schema.json` covering `paths`, `entity_types` (prefix, dir, layout, extra fields, workflow, artifacts, allowed relations, **capability flags**, **derived attribute** declarations), `relations` (name, inverse, allowed source/target types, cardinality), `roadmaps` (names, horizons, which statuses must be scheduled), `views`, `records`, `standards`, and `id` (`pattern`, optional `key`, `padding`).
-- [ ] **Step 2:** Implement `config.py`: locate `.szsdlc/config.yml` by walking up from cwd, deep-merge over built-in defaults, validate, and fail with a message naming the offending key.
-- [ ] **Step 3:** Ship the six default entity types, their workflows and the default horizons **entirely as data**, so a project can replace them wholesale.
-- [ ] **Step 4:** Tests: valid config, unknown key, duplicate prefix, illegal transition target, relation naming an unknown type, roadmap referencing a non-`schedulable` type, full custom entity-type set.
-- [ ] **Step 5:** Commit.
+### Task 2: Config schema and loader — **DONE**
+- [x] **Step 1:** Write `schemas/config.schema.json` covering `paths`, `entity_types` (prefix, dir, layout, extra fields, workflow, artifacts, allowed relations, **capability flags**, **derived attribute** declarations), `relations` (name, inverse, allowed source/target types, cardinality), `roadmaps` (names, horizons, which statuses must be scheduled), `views`, `records`, `standards`, and `id` (`pattern`, optional `key`, `padding`).
+- [x] **Step 2:** Implement `config.py`: locate `.szsdlc/config.yml` by walking up from cwd, deep-merge over built-in defaults, validate, and fail with a message naming the offending key.
+- [x] **Step 3:** Ship the six default entity types, their workflows and the default horizons **entirely as data**, so a project can replace them wholesale.
+- [x] **Step 4:** Tests: valid config, unknown key, duplicate prefix, illegal transition target, relation naming an unknown type, roadmap referencing a non-`schedulable` type, full custom entity-type set.
+- [x] **Step 5:** Commit.
+
+> **Decisions taken while implementing:**
+>
+> - **"Allowed relations" has one home: `relations.<name>.source_types`.** The
+>   step text lists it under both `entity_types` and `relations`; storing it in
+>   both would be the exact duplication the framework exists to remove, so the
+>   per-type list is a derivation (`config.relations_from(type)`). What an
+>   entity type *does* declare is `required_on` — a different fact.
+> - **`parent`'s legal targets are derived from `can_parent`.** The shipped
+>   default leaves `relations.parent.target_types` null; a config that states
+>   them explicitly is checked against the flags rather than trusted. Which
+>   relation carries the grouping axis is itself config (`parent_relation`), so
+>   no code names it.
+> - **Merge semantics:** mappings merge key by key; `_replace: true` swaps a
+>   subtree wholesale (how the six defaults get replaced); `null` deletes a
+>   declared *block* but is an ordinary assignment for a scalar, or `id.key:
+>   null` would delete the key rather than clear it. Lists always replace.
+> - **`errors.py` landed early.** Config needs an exit code and the C2 shape
+>   immediately; Task 9a now enforces a contract that already exists rather
+>   than introducing one. Config's `Fix:` lines name the key and its legal
+>   values instead of a command, because config is the one hand-authored
+>   surface in the framework.
+> - **Bundled data lives under `src/szsdlc/`,** not at the repo root, so it
+>   survives `pip install`. Verified present in a built wheel.
+> - Suite runs green on **both** interpreters: WSL 3.12.3 and Windows 3.14.7.
 
 ### Task 3: Identifiers and tags
 - [ ] **Step 1:** Implement `ids.py`. Ids are **opaque `<TYPE>-<NNNN>`**, one form everywhere, one counter per type. Parsing accepts any padding and any case.
@@ -649,11 +676,11 @@ corrected call rather than a search.
 Raised during design review and deliberately left undecided. Each is cheap to
 change now and expensive later, so decide before the relevant task.
 
-1. **Should `SPK` be `persistent`?** It currently sits on the work side
-   (`actionable: true`, not persistent), so answered spikes age out with
-   completed work. But a spike's *findings* are long-lived reference material
-   much like an `ADR` — the investigation ends, the answer does not. Decide
-   before Task 2 fixes the default flags.
+1. ~~**Should `SPK` be `persistent`?**~~ **Decided (Task 2): no.** A spike stays
+   on the work side, so an answered spike ages out with completed work, and
+   `actionable` and `persistent` remain opposites across every shipped type. If
+   findings turn out to be long-lived reference material in practice, promoting
+   the flag is one line of `defaults/config.yml` and an ADR.
 2. **Is `parent` ever multi-valued?** Declared single-valued cardinality today.
    Allowing an entity under two epics is a config change, but the epic-rollup
    view's progress arithmetic would then need a double-counting rule. Decide

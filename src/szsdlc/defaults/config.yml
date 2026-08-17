@@ -1,0 +1,395 @@
+# szsdlc built-in defaults — data, not code.
+#
+# Every entity type, relation, workflow and horizon below is a *replaceable
+# default*. A project's .szsdlc/config.yml is deep-merged over this file, so it
+# may adjust one flag, delete a type it does not want (`spike: null`), or
+# replace a whole section outright (`entity_types: {_replace: true, ...}`).
+# Nothing in the framework's code names any of these types; behaviour follows
+# the capability flags.
+#
+# The six shipped types are generic SDLC concepts. Note that `requirement` and
+# `decision` land on identical flags — both are long-lived definitions rather
+# than work — which is the sign the flags carve at the joint rather than
+# encoding type names.
+
+version: 1
+
+paths:
+  entities: .
+  roadmaps: roadmaps
+  views: views
+  records: records
+  standards: standards
+  templates: .szsdlc/templates
+  entity_file: entity.md
+
+id:
+  # Opaque by design: a type prefix and a sequential number, and nothing else.
+  # Anything embedded that can change or be got wrong invalidates every
+  # published reference to it.
+  pattern: "{prefix}-{number}"
+  key: null
+  padding: 4
+
+parent_relation: parent
+
+tags:
+  normalize: true
+
+standards:
+  enabled: true
+
+validate:
+  tag_near_duplicate_distance: 1
+  tag_singleton_threshold: 20
+  inbox_stale_days: 30
+
+# ---------------------------------------------------------------------------
+# Entity types
+# ---------------------------------------------------------------------------
+
+entity_types:
+
+  idea:
+    prefix: IDEA
+    title: Idea
+    dir: ideas
+    # A one-line thought should not cost a directory.
+    layout: file
+    intake: true
+    actionable: false
+    tracks_progress: false
+    can_parent: false
+    schedulable: false
+    persistent: false
+    fields:
+      captured:
+        type: date
+        required: true
+        description: Date this thought was captured.
+      dropped_reason:
+        type: text
+        required: false
+        description: Why this went nowhere. Written by `drop`; ideas are never deleted.
+    workflow:
+      initial: inbox
+      states:
+        inbox:
+          to: [refining, refined, dropped]
+        refining:
+          to: [refined, dropped]
+        refined:
+          terminal: true
+          description: At least one typed entity was spawned from this idea.
+        dropped:
+          terminal: true
+          description: Deliberately killed, with a reason, so the same thought arriving twice is recognisable.
+    # No `derived` block: the entities spawned from an idea already arrive as
+    # `refined_into`, the generated inverse of `refined_from`. Declaring a
+    # derived attribute of the same name would state one fact twice.
+
+  epic:
+    prefix: EPIC
+    title: Epic
+    dir: epics
+    layout: directory
+    intake: false
+    actionable: false
+    tracks_progress: false
+    can_parent: true
+    schedulable: true
+    persistent: false
+    fields:
+      opened:
+        type: date
+        required: true
+    artifacts: [journal.md]
+    journal_artifact: journal.md
+    workflow:
+      initial: open
+      states:
+        open:
+          to: [active, closed]
+        active:
+          to: [closed]
+        closed:
+          terminal: true
+    derived:
+      # Aggregate, never stored — an epic must not hold a percentage that can
+      # go stale the moment a child moves.
+      progress:
+        kind: aggregate_progress
+        relation: parent
+        description: Rolled up over children.
+
+  requirement:
+    prefix: REQ
+    title: Requirement
+    dir: requirements
+    layout: directory
+    intake: false
+    # A requirement is a definition, not a unit of work: no progress states,
+    # never in `next`, never a parent, never scheduled, never archived. Its
+    # lifecycle describes the validity of the *statement*, never its delivery.
+    actionable: false
+    tracks_progress: false
+    can_parent: false
+    schedulable: false
+    persistent: true
+    fields:
+      opened:
+        type: date
+        required: true
+    workflow:
+      initial: draft
+      states:
+        draft:
+          to: [reviewed, retired]
+        reviewed:
+          to: [approved, draft, retired]
+        approved:
+          to: [superseded, retired]
+        superseded:
+          terminal: true
+        retired:
+          terminal: true
+    derived:
+      # Coverage and delivery are computed from traceability links rather than
+      # stored, so nothing is written to a requirement when work against it
+      # starts or finishes.
+      covered:
+        kind: has_incoming
+        relation: implements
+        description: At least one entity implements this.
+      delivered:
+        kind: all_incoming_terminal
+        relation: implements
+        description: Every implementing entity has reached a terminal status.
+
+  spike:
+    prefix: SPK
+    title: Spike
+    dir: spikes
+    layout: directory
+    intake: false
+    actionable: true
+    tracks_progress: false
+    can_parent: false
+    schedulable: true
+    # Sits on the work side: an answered spike ages out with completed work.
+    # Promoting this to true is a one-line change if findings turn out to be
+    # long-lived reference material in practice.
+    persistent: false
+    fields:
+      opened:
+        type: date
+        required: true
+      question:
+        type: text
+        required: false
+        description: The question this investigation must answer.
+    artifacts: [findings.md, journal.md]
+    journal_artifact: journal.md
+    workflow:
+      initial: open
+      states:
+        open:
+          to: [researching, answered]
+        researching:
+          to: [answered]
+        answered:
+          terminal: true
+          requires_artifact: [findings.md]
+
+  work_item:
+    prefix: WI
+    title: Work item
+    dir: work-items
+    layout: directory
+    intake: false
+    actionable: true
+    tracks_progress: true
+    can_parent: false
+    schedulable: true
+    persistent: false
+    fields:
+      opened:
+        type: date
+        required: true
+    artifacts: [design.md, plan.md, journal.md]
+    progress_artifact: plan.md
+    journal_artifact: journal.md
+    workflow:
+      initial: idea
+      states:
+        idea:
+          to: [groomed, dropped]
+        groomed:
+          to: [ready, dropped]
+        ready:
+          to: [designing, dropped]
+        designing:
+          to: [planned, dropped]
+        planned:
+          to: [executing, dropped]
+          requires_artifact: [design.md]
+        executing:
+          to: [review, dropped]
+          requires_artifact: [plan.md]
+        review:
+          to: [done, executing, dropped]
+        done:
+          terminal: true
+          requires_tasks_complete: true
+        dropped:
+          terminal: true
+
+  decision:
+    prefix: ADR
+    title: Decision
+    dir: decisions
+    layout: directory
+    intake: false
+    actionable: false
+    tracks_progress: false
+    can_parent: false
+    schedulable: false
+    persistent: true
+    fields:
+      opened:
+        type: date
+        required: true
+      decided:
+        type: date
+        required: false
+    workflow:
+      initial: proposed
+      states:
+        proposed:
+          to: [accepted, superseded]
+        accepted:
+          to: [superseded]
+        superseded:
+          terminal: true
+
+# ---------------------------------------------------------------------------
+# Relations
+#
+# Authored on one side only; every inverse below is generated at render time
+# and never written to a file. `source_types` doubles as the per-type list of
+# allowed relations — stated once, here.
+# ---------------------------------------------------------------------------
+
+relations:
+
+  parent:
+    inverse: children
+    # target_types omitted on purpose: the legal targets are exactly the types
+    # flagged can_parent, and that fact already has a home.
+    target_types: null
+    source_types: [work_item, spike, epic]
+    cardinality: one
+    acyclic: true
+    required_on: [work_item]
+    description: Toward what outcome this work sits. One deliberate bundle, with its own lifecycle.
+
+  implements:
+    inverse: implemented_by
+    source_types: [work_item, spike, epic]
+    target_types: [requirement]
+    cardinality: many
+    description: Which product definitions this delivers against. Coverage is derived from these edges.
+
+  depends_on:
+    inverse: blocks
+    source_types: [work_item, spike, epic]
+    target_types: [work_item, spike, epic]
+    cardinality: many
+    acyclic: true
+    description: Must be terminal before this is actionable.
+
+  refined_from:
+    inverse: refined_into
+    source_types: [epic, requirement, spike, work_item, decision]
+    target_types: [idea]
+    cardinality: one
+    description: Provenance, written on the child at spawn. One idea may yield several entities.
+
+  supersedes:
+    inverse: superseded_by
+    source_types: [requirement, decision, epic, spike, work_item]
+    target_types: [requirement, decision, epic, spike, work_item]
+    cardinality: one
+    acyclic: true
+    description: Replaces an earlier statement or a converted entity. Nothing is renamed or deleted.
+
+  informed_by:
+    inverse: informs
+    source_types: [work_item, epic, decision, requirement]
+    target_types: [spike, decision]
+    cardinality: many
+    description: What an investigation or a decision fed into.
+
+# ---------------------------------------------------------------------------
+# Roadmaps
+#
+# Placement is a fact about a *set*, not about a member, so it lives here and
+# not as a field on every entity. Rescheduling then edits one file, not N.
+# ---------------------------------------------------------------------------
+
+roadmaps:
+  roadmap:
+    title: Roadmap
+    horizons: [now, next, later]
+    # type -> the status at which an entity of that type must appear on this
+    # roadmap. `validate` enforces exactly once, nothing dangling, and no
+    # non-schedulable type leaking in.
+    requires_scheduling:
+      work_item: ready
+      spike: open
+      epic: open
+
+# ---------------------------------------------------------------------------
+# Views — generated markdown, written only by `sync`.
+#
+# "List my ideas", "list all requirements" and "list all epics" are genuinely
+# different questions, so they get different views rather than one index with
+# filters.
+# ---------------------------------------------------------------------------
+
+views:
+  inbox:
+    title: Inbox
+    template: views/inbox.md.j2
+    output: inbox.md
+  roadmap:
+    title: Roadmap
+    template: views/roadmap.md.j2
+    output: roadmap.md
+  board:
+    title: Board
+    template: views/board.md.j2
+    output: board.md
+  tag-index:
+    title: Tag index
+    template: views/tag-index.md.j2
+    output: tag-index.md
+  epic-rollup:
+    title: Epic rollup
+    template: views/epic-rollup.md.j2
+    output: epic-rollup.md
+  requirements-register:
+    title: Requirements register
+    template: views/requirements-register.md.j2
+    output: requirements-register.md
+  traceability:
+    title: Traceability
+    template: views/traceability.md.j2
+    output: traceability.md
+  decisions:
+    title: Decision log
+    template: views/decisions.md.j2
+    output: decisions.md
+
+# Nothing project-specific ships built in.
+records: {}

@@ -1,0 +1,445 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/StephenZhao/szsdlc/schemas/config.schema.json",
+  "title": "szsdlc project configuration",
+  "description": "The shape of .szsdlc/config.yml after it has been deep-merged over the shipped defaults. Every entity type, relation, workflow and horizon in szsdlc is data validated by this schema, never code — a project may replace all of it. Unknown keys are rejected everywhere, because a silently ignored key is a configuration that does not do what it says.",
+
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "paths", "id", "parent_relation", "entity_types", "relations"],
+
+  "properties": {
+    "version": {
+      "description": "Config format version. Bumped only for a breaking change to this schema.",
+      "const": 1
+    },
+
+    "project": {
+      "description": "Descriptive only. Nothing in the framework branches on these.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string" }
+      }
+    },
+
+    "paths": {
+      "description": "Where things live, all relative to the project root (the directory containing .szsdlc).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entities", "roadmaps", "views", "records", "standards", "templates", "entity_file"],
+      "properties": {
+        "entities": {
+          "description": "Base directory each entity type's `dir` is resolved against.",
+          "$ref": "#/$defs/relpath"
+        },
+        "roadmaps": { "$ref": "#/$defs/relpath" },
+        "views": {
+          "description": "Where generated views are written. Every view's `output` is relative to this.",
+          "$ref": "#/$defs/relpath"
+        },
+        "records": { "$ref": "#/$defs/relpath" },
+        "standards": { "$ref": "#/$defs/relpath" },
+        "templates": {
+          "description": "Project template overrides. A template not found here falls back to the bundled default.",
+          "$ref": "#/$defs/relpath"
+        },
+        "entity_file": {
+          "description": "Filename holding the frontmatter of a `directory`-layout entity.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$"
+        }
+      }
+    },
+
+    "id": {
+      "description": "Identifiers are opaque: a type prefix plus a sequential number, and nothing else. Anything embedded that can change or be got wrong invalidates published references.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pattern", "padding"],
+      "properties": {
+        "pattern": {
+          "description": "Format string for a rendered id. Must contain {prefix} and {number}; may contain {key} only when `key` is set.",
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "description": "Optional project key woven into every id, for projects that share an id space across repos.",
+          "type": ["string", "null"],
+          "pattern": "^[A-Z][A-Z0-9]*$"
+        },
+        "padding": {
+          "description": "Zero-padding width for the number. Lookups accept any padding and any case regardless.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9
+        }
+      }
+    },
+
+    "parent_relation": {
+      "description": "Which relation name expresses the grouping axis governed by the `can_parent` flag. Named here rather than hardcoded so a project may call it something else.",
+      "type": "string",
+      "minLength": 1
+    },
+
+    "entity_types": {
+      "description": "Every trackable thing. Keys are snake_case type names used on the command line; each declares its own prefix, storage, workflow and capability flags. Behaviour follows the flags, never the name.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/identifier" },
+      "additionalProperties": { "$ref": "#/$defs/entity_type" }
+    },
+
+    "relations": {
+      "description": "Typed edges between entities. Authored on one side only; the inverse is generated and never stored.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/identifier" },
+      "additionalProperties": { "$ref": "#/$defs/relation" }
+    },
+
+    "roadmaps": {
+      "description": "Horizon buckets of ids — the single home for both ordering and placement. More than one is allowed so a global roadmap can coexist with per-epic ones.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/slug" },
+      "additionalProperties": { "$ref": "#/$defs/roadmap" }
+    },
+
+    "views": {
+      "description": "Generated markdown, written only by `sync`. Never hand-edited.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/slug" },
+      "additionalProperties": { "$ref": "#/$defs/view" }
+    },
+
+    "records": {
+      "description": "The generic mechanism for a project-specific tracked table: a YAML dataset rendered through a template. Empty by default — nothing project-specific ships built in.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/slug" },
+      "additionalProperties": { "$ref": "#/$defs/record" }
+    },
+
+    "standards": {
+      "description": "Conventions matched against an edited path and injected at that moment, rather than preloaded into every session.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    },
+
+    "tags": {
+      "description": "Tags are free-form and need no declaration; hygiene comes from normalizing at the single write path.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "normalize": {
+          "description": "Trim, lowercase, collapse internal whitespace to hyphens, de-duplicate.",
+          "type": "boolean"
+        }
+      }
+    },
+
+    "validate": {
+      "description": "Thresholds for the warning-level rules. Errors are never configurable.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tag_near_duplicate_distance": {
+          "description": "Two tags within this edit distance are reported as a likely typo (dns vs dsn). 0 disables the rule.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "tag_singleton_threshold": {
+          "description": "Once the project has more than this many distinct tags, a tag used exactly once is reported as sprawl. 0 disables the rule.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "inbox_stale_days": {
+          "description": "An intake entity sitting in its initial status longer than this is reported — an inbox nobody drains is a graveyard. 0 disables the rule.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "snake_case name, typed on the command line."
+    },
+
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "kebab-case name, usable as a filename."
+    },
+
+    "relpath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/|[A-Za-z]:)[^\\\\]*$",
+      "description": "A project-relative POSIX path. Absolute paths and backslashes are rejected so a config is portable across platforms."
+    },
+
+    "entity_type": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prefix", "dir", "layout", "workflow"],
+      "properties": {
+        "prefix": {
+          "description": "The type half of every id of this type. Unique across types.",
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9]*$"
+        },
+        "dir": {
+          "description": "Directory holding this type's entities, relative to paths.entities.",
+          "$ref": "#/$defs/relpath"
+        },
+        "title": {
+          "description": "Human label for views. Defaults to the type name with underscores replaced.",
+          "type": "string"
+        },
+        "layout": {
+          "description": "`file` for a low-fidelity type — a one-line thought should not cost a directory. `directory` for types that carry artifacts.",
+          "enum": ["file", "directory"]
+        },
+
+        "intake": {
+          "description": "Accepts typeless capture and appears in the inbox view. Type is discovered by refinement, not asserted at capture.",
+          "type": "boolean"
+        },
+        "actionable": {
+          "description": "Appears in `szsdlc next`.",
+          "type": "boolean"
+        },
+        "tracks_progress": {
+          "description": "Has a checkbox artifact parsed for progress.",
+          "type": "boolean"
+        },
+        "can_parent": {
+          "description": "Is a legal target of the parent relation.",
+          "type": "boolean"
+        },
+        "schedulable": {
+          "description": "May be placed on a roadmap.",
+          "type": "boolean"
+        },
+        "persistent": {
+          "description": "A long-lived definition rather than work: never archived when the work around it completes.",
+          "type": "boolean"
+        },
+
+        "fields": {
+          "description": "Extra frontmatter fields beyond the core set (id, title, tags, status, relations).",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/identifier" },
+          "additionalProperties": { "$ref": "#/$defs/field" }
+        },
+
+        "artifacts": {
+          "description": "Files that may live alongside entity_file in a `directory` entity. Anything else there is an orphan.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "progress_artifact": {
+          "description": "The checkbox file counted for progress. Required when tracks_progress is true.",
+          "type": ["string", "null"]
+        },
+        "journal_artifact": {
+          "description": "Append-only log written solely by `szsdlc log`.",
+          "type": ["string", "null"]
+        },
+
+        "workflow": { "$ref": "#/$defs/workflow" },
+
+        "derived": {
+          "description": "Attributes computed from the relation graph at render time and never written back. Storing them would recreate the stale-state bug this framework exists to remove.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/identifier" },
+          "additionalProperties": { "$ref": "#/$defs/derived" }
+        }
+      }
+    },
+
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["string", "text", "date", "integer", "number", "boolean", "array"] },
+        "required": { "type": "boolean" },
+        "enum": { "type": "array", "minItems": 1 },
+        "default": {},
+        "description": { "type": "string" }
+      }
+    },
+
+    "workflow": {
+      "description": "The states this type may hold and the moves between them. A status outside this graph still loads — a hand-edited file must be readable — but `set` refuses to create one.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["initial", "states"],
+      "properties": {
+        "initial": { "type": "string", "minLength": 1 },
+        "states": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "#/$defs/slug" },
+          "additionalProperties": { "$ref": "#/$defs/state" }
+        }
+      }
+    },
+
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "to": {
+          "description": "States reachable from here.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "terminal": {
+          "description": "Work here is finished. Terminal entities leave `next` and the roadmap.",
+          "type": "boolean"
+        },
+        "requires_artifact": {
+          "description": "Gate checked on ENTERING this state: each named artifact must exist and be non-empty.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "requires_tasks_complete": {
+          "description": "Gate checked on ENTERING this state: every checkbox in progress_artifact is ticked.",
+          "type": "boolean"
+        },
+        "description": { "type": "string" }
+      }
+    },
+
+    "derived": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "relation"],
+      "properties": {
+        "kind": {
+          "description": "has_incoming: something points here via `relation`. all_incoming_terminal: every such source is terminal (false when there are none). incoming_refs: the list of sources. aggregate_progress: rolled-up progress over the sources.",
+          "enum": ["has_incoming", "all_incoming_terminal", "incoming_refs", "aggregate_progress"]
+        },
+        "relation": {
+          "description": "The relation, named as authored. Derivation always walks incoming edges, because the authored side is the one that exists on disk.",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": { "type": "string" }
+      }
+    },
+
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inverse", "source_types", "cardinality"],
+      "properties": {
+        "inverse": {
+          "description": "Name of the generated back-link. Never authored, never stored.",
+          "$ref": "#/$defs/identifier"
+        },
+        "source_types": {
+          "description": "Types that may author this relation. This doubles as the per-type list of allowed relations — stated once, here.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        },
+        "target_types": {
+          "description": "Types this relation may point at. Omit on the parent relation to derive it from the `can_parent` flags.",
+          "type": ["array", "null"],
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        },
+        "cardinality": {
+          "description": "`one` — at most a single target, written as a scalar. `many` — a list.",
+          "enum": ["one", "many"]
+        },
+        "acyclic": {
+          "description": "Following this relation must never return to its start.",
+          "type": "boolean"
+        },
+        "required_on": {
+          "description": "Types for which this relation must be present. A work item with no epic is a finding, not a shrug.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        },
+        "description": { "type": "string" }
+      }
+    },
+
+    "roadmap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["horizons"],
+      "properties": {
+        "horizons": {
+          "description": "Bucket names in order. `now / next / later` by default, or release names, or dated milestones — the framework does not care.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/slug" },
+          "uniqueItems": true
+        },
+        "requires_scheduling": {
+          "description": "type name -> the status at which an entity of that type must appear on this roadmap. Per-roadmap, so a per-epic roadmap can demand nothing while the global one demands everything ready.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/identifier" },
+          "additionalProperties": { "type": "string", "minLength": 1 }
+        },
+        "title": { "type": "string" }
+      }
+    },
+
+    "view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["template", "output"],
+      "properties": {
+        "template": {
+          "description": "Template path, looked up under paths.templates first and in the bundled defaults second.",
+          "$ref": "#/$defs/relpath"
+        },
+        "output": {
+          "description": "Generated file, relative to paths.views.",
+          "$ref": "#/$defs/relpath"
+        },
+        "title": { "type": "string" }
+      }
+    },
+
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["data", "template", "output"],
+      "properties": {
+        "data": {
+          "description": "The hand-authored YAML dataset.",
+          "$ref": "#/$defs/relpath"
+        },
+        "schema": {
+          "description": "Optional JSON Schema the dataset is validated against.",
+          "type": ["string", "null"]
+        },
+        "template": { "$ref": "#/$defs/relpath" },
+        "output": {
+          "description": "Generated file, relative to paths.records.",
+          "$ref": "#/$defs/relpath"
+        },
+        "title": { "type": "string" }
+      }
+    }
+  }
+}
