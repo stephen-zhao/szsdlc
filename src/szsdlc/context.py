@@ -18,12 +18,7 @@ from dataclasses import dataclass, field
 from .config import Config
 from .graph import Graph
 from .model import Entity, EntityStore
-from .roadmap import (
-    Roadmap,
-    has_reached,
-    load_all as load_roadmaps,
-    scheduling_findings,
-)
+from .roadmap import Roadmap, has_reached, load_all as load_roadmaps
 
 #: Hard cap on the rendered context block. Deterministic, so a session's first
 #: tokens cost the same whether the project has twenty entities or two thousand.
@@ -41,7 +36,8 @@ class Counters:
     unscheduled: int = 0
     uncovered_requirements: int = 0
     unparseable: int = 0
-    findings: int = 0
+    errors: int = 0
+    warnings: int = 0
 
     def rows(self) -> list[tuple[str, int, str]]:
         """(label, value, the command that shows the detail)."""
@@ -51,7 +47,8 @@ class Counters:
             ("unscheduled", self.unscheduled, "szsdlc list --unscheduled"),
             ("uncovered reqs", self.uncovered_requirements, "szsdlc list --uncovered"),
             ("unparseable", self.unparseable, "szsdlc validate"),
-            ("findings", self.findings, "szsdlc validate"),
+            ("errors", self.errors, "szsdlc validate"),
+            ("warnings", self.warnings, "szsdlc validate"),
         ]
 
 
@@ -154,8 +151,11 @@ def build(config: Config, store: EntityStore, graph: Graph,
                 uncovered += 1
                 break
 
-    findings = len(graph.structural_findings()) + len(
-        scheduling_findings(config, store, roadmaps))
+    # Imported here rather than at module scope: validate reads this module for
+    # `age_days`, and a session's first call should not pay for a cycle.
+    from .validate import run as run_validate, summary
+
+    errors, warnings = summary(run_validate(config, store, graph, roadmaps))
 
     flight = in_flight(store, scheduling_thresholds(roadmaps))
     current_entity = next((e for e in flight if first_unchecked(e)), None)
@@ -168,7 +168,8 @@ def build(config: Config, store: EntityStore, graph: Graph,
             unscheduled=len(unscheduled),
             uncovered_requirements=uncovered,
             unparseable=len(store.unparseable),
-            findings=findings,
+            errors=errors,
+            warnings=warnings,
         ),
         in_flight=flight,
         current_entity=current_entity.id.text if current_entity else None,

@@ -74,12 +74,23 @@ class Edge:
 
 @dataclass(frozen=True)
 class Finding:
-    """A structural problem, stated about the project rather than raised."""
+    """A problem *with the project*, stated rather than raised.
+
+    Never a broken model invariant: that is a szsdlc bug and travels on the
+    internal-error channel instead. Conflating the two would tell a user their
+    work is inconsistent when the program is.
+    """
 
     kind: str
     ref: str
     message: str
     fix: str | None = None
+    #: "error" blocks; "warning" is a signal the user may reasonably ignore.
+    level: str = "error"
+
+    @property
+    def is_error(self) -> bool:
+        return self.level == "error"
 
     def __str__(self) -> str:
         return f"{self.ref}: {self.message}"

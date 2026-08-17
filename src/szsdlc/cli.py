@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import __version__, config as config_module
-from .errors import EXIT_ERROR, BadInput, InternalError, SzsdlcError
+from .errors import EXIT_ERROR, EXIT_INVALID, BadInput, InternalError, SzsdlcError
 from .ids import IdSpace
 from .model import Entity, EntityStore, create_entity, load_all
 from .text import add_tags, nearest, remove_tags
@@ -88,6 +88,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("trace <ref> [--depth]", "relations both ways, back to the idea"),
     ("standards match <path>", "conventions governing these paths"),
     ("sync", "regenerate every view and record; silent, never validates"),
+    ("validate", "every consistency rule; silent when clean"),
 ]
 
 
@@ -232,6 +233,12 @@ def build_parser() -> Parser:
     sync = subparsers.add_parser("sync", prog="szsdlc sync")
     sync.add_argument("--verbose", action="store_true")
     sync.set_defaults(run=cmd_sync)
+
+    validate = subparsers.add_parser("validate", prog="szsdlc validate")
+    validate.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
+    validate.add_argument("--verbose", action="store_true")
+    validate.add_argument("--json", action="store_true", dest="as_json")
+    validate.set_defaults(run=cmd_validate)
 
     return parser
 
@@ -1206,6 +1213,49 @@ def cmd_sync(args: argparse.Namespace) -> int:
         for item in changed:
             out(_relative(session, item.path))
     return 0
+
+
+# ---------------------------------------------------------------------------
+# validate
+# ---------------------------------------------------------------------------
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    """Every consistency rule. Silent when clean; findings when not.
+
+    The single enforcement point: `sync` runs constantly and tolerantly during
+    a turn, this runs once at the end and strictly.
+    """
+    from . import validate as validate_module
+
+    session = Session(args.project)
+    findings = validate_module.run(session.config, session.store, _graph(session),
+                                   _roadmaps(session))
+    errors, warnings = validate_module.summary(findings)
+
+    if args.as_json:
+        emit_json([{"level": f.level, "kind": f.kind, "ref": f.ref,
+                    "message": f.message, "fix": f.fix} for f in findings])
+        return EXIT_INVALID if errors else 0
+
+    if not findings:
+        # C4 — nothing on the happy path. This runs at every turn end.
+        if args.verbose:
+            out("clean")
+        return 0
+
+    rows, note = truncate(findings, args.limit)
+    for finding in rows:
+        out(f"{finding.level:<7} {finding.ref}  {finding.message}"
+            + (f" — {finding.fix}" if finding.fix else ""))
+    if note:
+        out(note)
+    out(f"{errors} error{'s' if errors != 1 else ''}, "
+        f"{warnings} warning{'s' if warnings != 1 else ''}")
+
+    # Exit 4, not 1: C7 gives validation failure its own code so a caller can
+    # branch on it without parsing text.
+    return EXIT_INVALID if errors else 0
 
 
 # ---------------------------------------------------------------------------

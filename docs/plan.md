@@ -780,8 +780,8 @@ corrected call rather than a search.
 >   flag, so a project that replaces the six defaults still gets a board, a
 >   register and a rollup.
 
-### Task 11: Validation rules
-- [ ] **Step 1:** Implement `validate.py`, one function per rule, each returning `(level, ref, message, fix_hint)`:
+### Task 11: Validation rules — **DONE**
+- [x] **Step 1:** Implement `validate.py`, one function per rule, each returning `(level, ref, message, fix_hint)`:
   - unparseable entity files, reported with path and parse error
   - frontmatter schema violations; duplicate ids; id not matching its filename/directory; id not matching the configured pattern or key
   - dangling relation targets; cycles (including `parent`); disallowed relations; cardinality violations
@@ -794,10 +794,26 @@ corrected call rather than a search.
   - **warning:** an `approved` requirement nothing implements; a work item implementing a `draft` or `retired` requirement
   - broken `[[wikilinks]]` and relative markdown links; orphan files in entity directories
   - stale generated files — a first-class rule like any other, implemented with the render module's `compare()` primitive. `validate` is the umbrella; rendering is a mechanism it borrows
-- [ ] **Step 2:** Every finding is a statement about the **project**. A broken *model* invariant is a `szsdlc` bug, so it raises an internal error on the C7 channel instead of appearing as a finding — the two must never be conflated in output.
-- [ ] **Step 3:** `szsdlc validate [--json]`; exit 1 on errors, 0 on warnings only.
-- [ ] **Step 4:** Fixture project exercising every rule passing and failing.
-- [ ] **Step 5:** Commit.
+- [x] **Step 2:** Every finding is a statement about the **project**. A broken *model* invariant is a `szsdlc` bug, so it raises an internal error on the C7 channel instead of appearing as a finding — the two must never be conflated in output.
+- [x] **Step 3:** `szsdlc validate [--json]`; **exit 4** on errors, 0 on warnings only. *This step said exit 1, but C7 assigns validation failure its own code (4) precisely so a caller can branch on it without parsing text. The more specific contract wins; 1 stays reserved for an internal error.*
+- [x] **Step 4:** Fixture project exercising every rule passing and failing.
+- [x] **Step 5:** Commit. **(Task 9a Step 4 for `validate`: silent when clean, `--verbose` opts in.)**
+
+> **Decisions taken while implementing:**
+>
+> - **"Approved" is read off the workflow as the last non-terminal status,** so
+>   "a settled definition nobody implements" and "work against an unsettled
+>   definition" both work for a project that calls it `ratified`. No rule names
+>   a status.
+> - **A hand-edited generated file is a distinct finding from a stale one.**
+>   Both say "run sync", but only one of them loses work when you do, and the
+>   content-hash in the banner is what makes them distinguishable at all.
+> - **The `context` counters now come from this module**, so the scalar at
+>   session start and the listing behind it can never disagree — asserted by a
+>   test that compares the two.
+> - **No tag rule is ever an error**, asserted as a property rather than
+>   per-rule: taxonomy hygiene is a signal, and a build that fails on a typo'd
+>   tag teaches people to stop tagging.
 
 ---
 
