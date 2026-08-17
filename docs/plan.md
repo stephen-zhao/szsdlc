@@ -640,15 +640,39 @@ corrected call rather than a search.
 >   dumps suppressed, every exception converted, exit codes per class. Task 9a
 >   now hardens and tests a contract that exists rather than introducing one.
 
-### Task 8: Entity commands
-- [ ] **Step 1:** `szsdlc init` — scaffold `.szsdlc/config.yml`, directories, an empty roadmap and starter templates.
-- [ ] **Step 2:** `szsdlc new <TYPE> --title "..."`, for entities created directly rather than via refinement.
-- [ ] **Step 3:** `szsdlc set <ref> <field>=<value>...` — enforce the type's transition graph and gates (`requires_artifact`, `requires_tasks_complete`), refusing with the reason.
-- [ ] **Step 4:** `szsdlc link` / `unlink` — write the edge on the authoring side only, enforcing allowed types and cardinality.
-- [ ] **Step 5:** `szsdlc convert <ref> <TYPE>` — mint the new id, move contents, map or reset status, write `supersedes`/`superseded_by`, leave a resolving tombstone.
-- [ ] **Step 6:** `szsdlc log <ref> "msg"` — append a dated line to the journal artifact. Sole writer of that file.
-- [ ] **Step 7:** `szsdlc schedule` / `unschedule` exposing Task 6's operations.
-- [ ] **Step 8:** Tests for each including every refusal path, and a convert round-trip asserting old references still resolve; commit.
+### Task 8: Entity commands — **DONE**
+- [x] **Step 1:** `szsdlc init` — scaffold `.szsdlc/config.yml`, directories, an empty roadmap and starter templates.
+- [x] **Step 2:** `szsdlc new <TYPE> --title "..."`, for entities created directly rather than via refinement.
+- [x] **Step 3:** `szsdlc set <ref> <field>=<value>...` — enforce the type's transition graph and gates (`requires_artifact`, `requires_tasks_complete`), refusing with the reason.
+- [x] **Step 4:** `szsdlc link` / `unlink` — write the edge on the authoring side only, enforcing allowed types and cardinality.
+- [x] **Step 5:** `szsdlc convert <ref> <TYPE>` — mint the new id, move contents, map or reset status, **leave a resolving tombstone** (see below).
+- [x] **Step 6:** `szsdlc log <ref> "msg"` — append a dated line to the journal artifact. Sole writer of that file.
+- [x] **Step 7:** `szsdlc schedule` / `unschedule` exposing Task 6's operations.
+- [x] **Step 8:** Tests for each including every refusal path, and a convert round-trip asserting old references still resolve; commit.
+- [x] **Task 3 Step 5, deferred here:** `szsdlc tag` / `untag`.
+
+> **`convert` writes no `supersedes` edge.** Step 5 asked for one, but the old
+> entity is *moved*, not kept, so `supersedes: WI-0042` would point at an id
+> that no longer names an entity — and since relation targets resolve through
+> tombstones, it would resolve to the converted entity itself and register as
+> an acyclic-relation cycle. The tombstone record *is* the supersession fact,
+> and `validate`'s "reference to a tombstoned id" rule already carries the
+> rewrite as its fix. `supersedes` stays for genuine supersession between two
+> live entities, which is what a superseded requirement or ADR needs.
+>
+> **Other decisions taken while implementing:**
+>
+> - **A gate refusal never suggests abandoning the work.** The first draft
+>   answered "design.md is missing" with `Fix: szsdlc set WI-0001
+>   status=dropped`, because dropping was a legal ungated transition. That is
+>   worse than no advice and an agent might follow it, so `abandoned` states
+>   are excluded from the alternatives offered.
+> - **A gate lives on the state being entered,** not on each transition into
+>   it, so the requirement has one home.
+> - **`init` writes an almost-empty config** — two non-comment lines. Anything
+>   more would be a second copy of the defaults, drifting from the moment it is
+>   written; a test asserts the file declares nothing but the project name.
+> - **`log` prints nothing** (C4) and is the sole writer of the journal.
 
 ### Task 9: Query commands (the token-saving surface)
 

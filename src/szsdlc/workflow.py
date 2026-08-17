@@ -1,0 +1,155 @@
+"""Status transitions and the gates guarding them.
+
+A gate is checked on *entering* a status, so the requirement lives in one place
+— the state being entered — rather than being restated on every transition into
+it. Two gates ship: an artifact must exist and be non-empty, and every checkbox
+in the progress artifact must be ticked.
+
+Every refusal here has to end in something the caller can run, because an agent
+that gets "blocked" without a next move spends its next three calls guessing.
+Where a legal alternative transition exists, that is the fix; where the fix is
+writing a file, the refusal names the path.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from .config import State
+from .errors import Refused
+from .model import Entity
+
+
+@dataclass(frozen=True)
+class Transition:
+    entity: str
+    before: str | None
+    after: str
+
+    def __str__(self) -> str:
+        return f"{self.entity}: status {self.before} → {self.after}"
+
+
+@dataclass(frozen=True)
+class Gate:
+    """One unmet entry condition, with the way to meet it."""
+
+    reason: str
+    remedy: str
+
+    def __str__(self) -> str:
+        return self.reason
+
+
+def unmet_gates(entity: Entity, status: str) -> list[Gate]:
+    """Which entry conditions of `status` this entity does not yet meet."""
+    state: State | None = entity.type.workflow.states.get(status)
+    if state is None:
+        return []
+
+    gates: list[Gate] = []
+
+    for artifact in state.requires_artifact:
+        if entity.has_artifact(artifact):
+            continue
+        path = entity.artifact_path(artifact)
+        where = str(path) if path else f"{artifact} (this type has no directory)"
+        gates.append(Gate(
+            reason=f"{artifact} is missing or empty",
+            remedy=f"write {where}, then rerun",
+        ))
+
+    if state.requires_tasks_complete:
+        progress = entity.progress
+        if progress is None:
+            gates.append(Gate(
+                reason=f"{entity.type.name} declares no progress artifact to check",
+                remedy=f"set entity_types.{entity.type.name}.progress_artifact",
+            ))
+        elif not progress.complete:
+            unchecked = progress.remaining if progress.total else "no"
+            gates.append(Gate(
+                reason=f"{progress} tasks complete, {unchecked} unchecked",
+                remedy=f"tick the remaining boxes in "
+                       f"{entity.type.progress_artifact}, then rerun",
+            ))
+
+    return gates
+
+
+def _alternative(entity: Entity, blocked: str) -> str | None:
+    """A legal transition from here that is not blocked — the best fix line.
+
+    Offering the move the caller *can* make turns a refusal into a next action
+    rather than a dead end. Abandoning is excluded: "your design is missing, so
+    drop the work item" is worse advice than no advice at all, and a suggestion
+    an agent might actually follow.
+    """
+    workflow = entity.type.workflow
+    current = workflow.states.get(entity.status or "")
+    if current is None:
+        return None
+    for candidate in current.to:
+        state = workflow.states.get(candidate)
+        if candidate == blocked or state is None or state.abandoned:
+            continue
+        if not unmet_gates(entity, candidate):
+            return candidate
+    return None
+
+
+def check(entity: Entity, status: str) -> None:
+    """Refuse the move to `status`, or return silently."""
+    workflow = entity.type.workflow
+    ref = entity.id.text
+
+    if status not in workflow.states:
+        raise Refused(
+            f"{ref}: {status!r} is not a status of {entity.type.name}.",
+            fix=f"szsdlc set {ref} status={workflow.initial}",
+            see=f"statuses: {', '.join(workflow.states)}",
+        )
+
+    if entity.status == status:
+        raise Refused(
+            f"{ref}: already {status}.",
+            fix=f"szsdlc show {ref}",
+        )
+
+    if entity.status not in workflow.states:
+        # A hand-edited status loads, but `set` will not move from one: there is
+        # no transition graph to consult.
+        raise Refused(
+            f"{ref}: current status {entity.status!r} is not in the "
+            f"{entity.type.name} workflow, so no transition from it is defined.",
+            fix=f"szsdlc set {ref} status={workflow.initial}",
+            see=f"statuses: {', '.join(workflow.states)}",
+        )
+
+    if not workflow.can_move(entity.status or "", status):
+        legal = workflow.states[entity.status or ""].to
+        raise Refused(
+            f"{ref}: {entity.status} → {status} is not a legal transition.",
+            fix=(f"szsdlc set {ref} status={legal[0]}" if legal
+                 else f"szsdlc show {ref}"),
+            see=(f"from {entity.status}: {', '.join(legal)}" if legal
+                 else f"{entity.status} is terminal"),
+        )
+
+    gates = unmet_gates(entity, status)
+    if gates:
+        alternative = _alternative(entity, status)
+        raise Refused(
+            f"{ref}: status {entity.status} → {status} blocked, {gates[0].reason}.",
+            fix=(f"szsdlc set {ref} status={alternative}" if alternative
+                 else gates[0].remedy),
+            see=None if len(gates) == 1 else f"also: {gates[1].reason}",
+        )
+
+
+def move(entity: Entity, status: str) -> Transition:
+    """Check, then write. The single path a status may change through."""
+    check(entity, status)
+    before = entity.status
+    entity.set_status(status)
+    return Transition(entity=entity.id.text, before=before, after=status)

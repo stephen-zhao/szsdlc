@@ -32,6 +32,7 @@ from . import __version__, config as config_module
 from .errors import EXIT_ERROR, BadInput, InternalError, SzsdlcError
 from .ids import IdSpace
 from .model import Entity, EntityStore, create_entity, load_all
+from .text import add_tags, nearest, remove_tags
 
 #: C6 — every listing is bounded, and the bound is the same everywhere.
 DEFAULT_LIMIT = 20
@@ -60,10 +61,21 @@ class Parser(argparse.ArgumentParser):
 
 
 COMMANDS: list[tuple[str, str, str]] = [
+    ("init", "", "scaffold a project: config, directories, an empty roadmap"),
     ("capture", "[text]", "capture an idea from an argument, stdin or $EDITOR"),
     ("refine", "<ref> --into TYPE", "spawn a typed entity from an idea"),
     ("inbox", "", "unrefined ideas, oldest first"),
     ("drop", "<ref> --reason ...", "close an idea that went nowhere, with a reason"),
+    ("new", "<TYPE> --title ...", "create a typed entity directly"),
+    ("set", "<ref> field=value ...", "set scalar fields; enforces the workflow"),
+    ("tag", "<ref> <tag>...", "add tags, normalized on write"),
+    ("untag", "<ref> <tag>...", "remove tags"),
+    ("link", "<ref> <rel> <ref>", "author one edge; the inverse is generated"),
+    ("unlink", "<ref> <rel> <ref>", "remove one authored edge"),
+    ("convert", "<ref> <TYPE>", "reclassify, leaving a resolving tombstone"),
+    ("log", "<ref> [msg]", "append a dated line to the journal artifact"),
+    ("schedule", "<ref> --horizon H", "place on a roadmap; --after/--before/--top"),
+    ("unschedule", "<ref>", "take off the roadmap"),
 ]
 
 
@@ -109,6 +121,57 @@ def build_parser() -> Parser:
     drop.add_argument("ref")
     drop.add_argument("--reason", default=None)
     drop.set_defaults(run=cmd_drop)
+
+    init = subparsers.add_parser("init", prog="szsdlc init")
+    init.add_argument("--name", default=None)
+    init.set_defaults(run=cmd_init)
+
+    new = subparsers.add_parser("new", prog="szsdlc new")
+    new.add_argument("type_name", metavar="TYPE")
+    new.add_argument("--title", required=True)
+    new.set_defaults(run=cmd_new)
+
+    setter = subparsers.add_parser("set", prog="szsdlc set")
+    setter.add_argument("ref")
+    setter.add_argument("assignments", nargs="+", metavar="field=value")
+    setter.set_defaults(run=cmd_set)
+
+    for verb, runner in (("tag", cmd_tag), ("untag", cmd_untag)):
+        tagger = subparsers.add_parser(verb, prog=f"szsdlc {verb}")
+        tagger.add_argument("ref")
+        tagger.add_argument("tags", nargs="+", metavar="tag")
+        tagger.set_defaults(run=runner, adding=(verb == "tag"))
+
+    for verb, runner in (("link", cmd_link), ("unlink", cmd_unlink)):
+        linker = subparsers.add_parser(verb, prog=f"szsdlc {verb}")
+        linker.add_argument("ref")
+        linker.add_argument("relation")
+        linker.add_argument("target")
+        linker.set_defaults(run=runner)
+
+    convert = subparsers.add_parser("convert", prog="szsdlc convert")
+    convert.add_argument("ref")
+    convert.add_argument("type_name", metavar="TYPE")
+    convert.set_defaults(run=cmd_convert)
+
+    log = subparsers.add_parser("log", prog="szsdlc log")
+    log.add_argument("ref")
+    log.add_argument("message", nargs="?", default=None)
+    log.set_defaults(run=cmd_log)
+
+    schedule = subparsers.add_parser("schedule", prog="szsdlc schedule")
+    schedule.add_argument("ref")
+    schedule.add_argument("--horizon", required=True)
+    schedule.add_argument("--after", default=None)
+    schedule.add_argument("--before", default=None)
+    schedule.add_argument("--top", action="store_true")
+    schedule.add_argument("--roadmap", default=None)
+    schedule.set_defaults(run=cmd_schedule)
+
+    unschedule = subparsers.add_parser("unschedule", prog="szsdlc unschedule")
+    unschedule.add_argument("ref")
+    unschedule.add_argument("--roadmap", default=None)
+    unschedule.set_defaults(run=cmd_unschedule)
 
     return parser
 
@@ -405,6 +468,420 @@ def cmd_drop(args: argparse.Namespace) -> int:
     entity.save()
 
     out(f"{entity.id.text}: {before} → {status}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# init
+# ---------------------------------------------------------------------------
+
+
+STARTER_CONFIG = """\
+# szsdlc project configuration.
+#
+# This file is deep-merged over the built-in defaults, so everything below is
+# optional and an empty file is already a valid project. Adjust one flag:
+#
+#   entity_types: {{spike: {{persistent: true}}}}
+#
+# drop a type you do not want (`entity_types: {{spike: null}}`), or replace a
+# whole section outright (`entity_types: {{_replace: true, ...}}`).
+
+project:
+  name: {name}
+"""
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    root = Path(args.project or Path.cwd()).resolve()
+    config_path = config_module.config_path_for(root)
+    if config_path.exists():
+        raise BadInput(
+            f"{config_path} already exists.",
+            fix="szsdlc validate",
+        )
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_bytes(
+        STARTER_CONFIG.format(name=args.name or root.name).encode("utf-8"))
+
+    config = config_module.load(root)
+    created = [config_path]
+
+    for entity_type in config.entity_types.values():
+        directory = config.dir_for(entity_type)
+        directory.mkdir(parents=True, exist_ok=True)
+        created.append(directory)
+
+    for directory in (config.roadmaps_dir, config.views_dir, config.records_dir,
+                      config.standards_dir, config.templates_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+        created.append(directory)
+
+    from .roadmap import Roadmap
+
+    for name in config.roadmaps:
+        roadmap = Roadmap.load(config, name)
+        roadmap.save()
+        created.append(roadmap.path)
+
+    for path in created:
+        out(str(path.relative_to(root)).replace("\\", "/"))
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# new
+# ---------------------------------------------------------------------------
+
+
+def cmd_new(args: argparse.Namespace) -> int:
+    session = Session(args.project)
+    entity_type = session.config.type_for(args.type_name)
+    entity = create_entity(session.config, session.ids, entity_type, title=args.title)
+    out(f"{entity.id.text}  {_relative(session, entity.path)}")
+    return 0
+
+
+def _relative(session: Session, path: Path) -> str:
+    try:
+        return str(path.relative_to(session.config.root)).replace("\\", "/")
+    except ValueError:  # pragma: no cover - paths are always under the root
+        return str(path)
+
+
+# ---------------------------------------------------------------------------
+# set
+# ---------------------------------------------------------------------------
+
+
+#: C3 — one job per command. These have their own verbs, and composing them on
+#: a command line is exactly the input that takes an agent three attempts.
+DELEGATED_FIELDS = {
+    "relations": "szsdlc link {ref} <relation> <ref>",
+    "tags": "szsdlc tag {ref} <tag>",
+    "id": "szsdlc convert {ref} <TYPE>",
+}
+
+
+def _coerce(session: Session, entity: Entity, field: str, raw: str) -> Any:
+    spec = entity.type.fields.get(field)
+    if spec is None:
+        return raw
+    try:
+        if spec.type == "date":
+            return dt.date.fromisoformat(raw)
+        if spec.type == "integer":
+            return int(raw)
+        if spec.type == "number":
+            return float(raw)
+        if spec.type == "boolean":
+            if raw.lower() not in {"true", "false"}:
+                raise ValueError(raw)
+            return raw.lower() == "true"
+    except ValueError:
+        raise BadInput(
+            f"{entity.id.text}: {field}={raw!r} is not a valid {spec.type}.",
+            fix=f"szsdlc set {entity.id.text} {field}=<{spec.type}>",
+        ) from None
+    if spec.type == "array":
+        raise BadInput(
+            f"set: {field!r} is list-valued and is never edited through `set`.",
+            fix=f"edit {field} in the entity's frontmatter directly",
+        )
+    if spec.enum and raw not in [str(v) for v in spec.enum]:
+        raise BadInput(
+            f"{entity.id.text}: {field}={raw!r} is not one of "
+            f"{', '.join(str(v) for v in spec.enum)}.",
+            fix=f"szsdlc set {entity.id.text} {field}={spec.enum[0]}",
+        )
+    return raw
+
+
+def cmd_set(args: argparse.Namespace) -> int:
+    from . import workflow as workflow_module
+
+    session = Session(args.project)
+    entity = session.entity(args.ref)
+    settable = ["title", "status", *entity.type.fields]
+    reported: list[str] = []
+
+    for assignment in args.assignments:
+        field, separator, raw = assignment.partition("=")
+        if not separator:
+            raise BadInput(
+                f"set: {assignment!r} is not field=value.",
+                fix=f"szsdlc set {entity.id.text} status={entity.type.workflow.initial}",
+            )
+
+        field = field.strip()
+        if field in DELEGATED_FIELDS:
+            raise BadInput(
+                f"set: {field!r} is not settable.",
+                fix=DELEGATED_FIELDS[field].format(ref=entity.id.text),
+            )
+        if field not in settable:
+            suggestion = nearest(field, settable)
+            raise BadInput(
+                f"set: {entity.type.name} has no field {field!r}"
+                + (f"; did you mean {suggestion}?" if suggestion else "."),
+                fix=f"szsdlc set {entity.id.text} {suggestion or settable[0]}=<value>",
+            )
+
+        if field == "status":
+            transition = workflow_module.move(entity, raw)
+            reported.append(f"status {transition.before} → {transition.after}")
+        else:
+            before = entity.field(field)
+            entity.set_field(field, _coerce(session, entity, field, raw))
+            reported.append(f"{field} {before} → {entity.field(field)}")
+
+    entity.save()
+    # C1 — the resulting state, one line, so no confirming `show` is needed.
+    out(f"{entity.id.text}: " + "; ".join(reported))
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# tag / untag
+# ---------------------------------------------------------------------------
+
+
+def _apply_tags(args: argparse.Namespace, adding: bool) -> int:
+    session = Session(args.project)
+    entity = session.entity(args.ref)
+    before = entity.tags
+    entity.set_tags(add_tags(before, args.tags) if adding
+                    else remove_tags(before, args.tags))
+    entity.save()
+    out(f"{entity.id.text}: {', '.join(entity.tags) or '(no tags)'}")
+    return 0
+
+
+def cmd_tag(args: argparse.Namespace) -> int:
+    return _apply_tags(args, adding=True)
+
+
+def cmd_untag(args: argparse.Namespace) -> int:
+    return _apply_tags(args, adding=False)
+
+
+# ---------------------------------------------------------------------------
+# link / unlink
+# ---------------------------------------------------------------------------
+
+
+def _relation_for(session: Session, entity: Entity, name: str):
+    allowed = [r.name for r in session.config.relations_from(entity.type.name)]
+    if name in allowed:
+        return session.config.relations[name]
+
+    inverse = session.config.relation_for_inverse(name)
+    if inverse is not None:
+        raise BadInput(
+            f"link: {name!r} is a generated inverse and is never authored.",
+            fix=f"szsdlc link <ref> {inverse.name} {entity.id.text}",
+        )
+
+    suggestion = nearest(name, allowed)
+    raise BadInput(
+        f"link: a {entity.type.name} cannot author {name!r}"
+        + (f"; did you mean {suggestion}?" if suggestion else "."),
+        fix=f"szsdlc link {entity.id.text} {suggestion or (allowed or ['<relation>'])[0]} <ref>",
+    )
+
+
+def cmd_link(args: argparse.Namespace) -> int:
+    session = Session(args.project)
+    entity = session.entity(args.ref)
+    relation = _relation_for(session, entity, args.relation)
+    target = session.entity(args.target)
+
+    if relation.target_types and target.type.name not in relation.target_types:
+        raise BadInput(
+            f"link: {relation.name} may not point at a {target.type.name}.",
+            fix=f"szsdlc list --type {sorted(relation.target_types)[0]}",
+            see=f"allowed: {', '.join(sorted(relation.target_types))}",
+        )
+    if target.id == entity.id:
+        raise BadInput(
+            f"link: {entity.id.text} cannot {relation.name} itself.",
+            fix=f"szsdlc show {entity.id.text}",
+        )
+
+    existing = entity.targets(relation.name)
+    if target.id.text in existing:
+        raise BadInput(
+            f"link: {entity.id.text} already {relation.name} {target.id.text}.",
+            fix=f"szsdlc show {entity.id.text}",
+        )
+
+    updated = [target.id.text] if relation.is_single else [*existing, target.id.text]
+    entity.set_relation(relation.name, updated)
+    entity.save()
+
+    # C1 — and the generated inverse, so the back-link never has to be looked up.
+    out(f"{entity.id.text} {relation.name} {target.id.text}  "
+        f"({target.id.text} {relation.inverse} {entity.id.text})")
+    return 0
+
+
+def cmd_unlink(args: argparse.Namespace) -> int:
+    session = Session(args.project)
+    entity = session.entity(args.ref)
+    relation = _relation_for(session, entity, args.relation)
+
+    existing = entity.targets(relation.name)
+    # Resolve tolerantly, but fall back to the literal text: unlinking a
+    # dangling edge is exactly when the target cannot be resolved.
+    try:
+        wanted = session.ids.parse(args.target).text
+    except BadInput:
+        wanted = args.target
+
+    if wanted not in existing:
+        raise BadInput(
+            f"unlink: {entity.id.text} does not {relation.name} {wanted}.",
+            fix=f"szsdlc show {entity.id.text}",
+            see=f"{relation.name}: {', '.join(existing) or '(none)'}",
+        )
+
+    entity.set_relation(relation.name, [t for t in existing if t != wanted])
+    entity.save()
+    remaining = entity.targets(relation.name)
+    out(f"{entity.id.text} {relation.name}: {', '.join(remaining) or '(none)'}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# convert
+# ---------------------------------------------------------------------------
+
+
+def cmd_convert(args: argparse.Namespace) -> int:
+    import shutil
+
+    session = Session(args.project)
+    entity = session.entity(args.ref)
+    target_type = session.config.type_for(args.type_name)
+
+    if target_type.name == entity.type.name:
+        raise BadInput(
+            f"convert: {entity.id.text} is already a {target_type.name}.",
+            fix=f"szsdlc show {entity.id.text}",
+        )
+    if entity.home is not None and not target_type.is_directory_layout:
+        extra = [p.name for p in entity.artifact_files()]
+        if extra:
+            raise BadInput(
+                f"convert: {target_type.name} is a file layout, but "
+                f"{entity.id.text} carries {', '.join(extra)}.",
+                fix=f"remove those artifacts, then rerun",
+            )
+
+    new_id = session.ids.next_id(target_type)
+    # A status that exists in both workflows is kept; otherwise the entity
+    # restarts, because a status from another workflow means nothing here.
+    status = (entity.status if entity.status in target_type.workflow.states
+              else target_type.workflow.initial)
+
+    child = create_entity(
+        session.config, session.ids, target_type,
+        title=entity.title, body=entity.body, status=status,
+        tags=entity.tags,
+        relations={k: (v[0] if session.config.relations[k].is_single else v)
+                   for k, v in entity.relations.items()
+                   if k in {r.name for r in session.config.relations_from(target_type.name)}},
+    )
+    assert child.id == new_id
+
+    if entity.home is not None and child.home is not None:
+        for artifact in entity.artifact_files():
+            shutil.copy2(artifact, child.home / artifact.name)
+
+    if entity.home is not None:
+        shutil.rmtree(entity.home)
+    else:
+        entity.path.unlink()
+
+    tombstones = session.ids.tombstones
+    tombstones.record(entity.id.text, child.id.text)
+    tombstones.save()
+
+    out(f"{child.id.text}  ({entity.id.text} → {child.id.text}, status {status})")
+    out(f"{entity.id.text} is tombstoned; existing references still resolve.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# log
+# ---------------------------------------------------------------------------
+
+
+def cmd_log(args: argparse.Namespace) -> int:
+    session = Session(args.project)
+    entity = session.entity(args.ref)
+
+    artifact = entity.type.journal_artifact
+    if not artifact or entity.home is None:
+        raise BadInput(
+            f"{entity.type.name} declares no journal artifact, so there is "
+            f"nowhere to log to.",
+            fix=f"set entity_types.{entity.type.name}.journal_artifact",
+        )
+
+    message = args.message
+    if message is None and not sys.stdin.isatty():
+        message = sys.stdin.read()
+    message = (message or "").strip()
+    if not message:
+        raise BadInput(
+            f"log: nothing to write.",
+            fix=f'szsdlc log {entity.id.text} "what happened"',
+        )
+
+    path = entity.artifact_path(artifact)
+    assert path is not None
+    stamp = dt.date.today().isoformat()
+    body = "".join(f"- {stamp} {line}\n" for line in message.splitlines() if line.strip())
+
+    existing = path.read_bytes().decode("utf-8") if path.is_file() else ""
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    path.write_bytes((existing + body).encode("utf-8"))
+    # C4 — the audit budgets this at zero lines. It runs constantly.
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# schedule / unschedule
+# ---------------------------------------------------------------------------
+
+
+def cmd_schedule(args: argparse.Namespace) -> int:
+    from .roadmap import Scheduler
+
+    session = Session(args.project)
+    scheduler = Scheduler(session.config, session.store, args.roadmap, session.ids)
+    placement = scheduler.schedule(args.ref, args.horizon, after=args.after,
+                                   before=args.before, top=args.top)
+    out(str(placement))
+    return 0
+
+
+def cmd_unschedule(args: argparse.Namespace) -> int:
+    from .roadmap import Scheduler
+
+    session = Session(args.project)
+    scheduler = Scheduler(session.config, session.store, args.roadmap, session.ids)
+    entity_id = session.ids.resolve(args.ref)
+    if not scheduler.unschedule(entity_id):
+        raise BadInput(
+            f"{entity_id.text} is not on roadmap {scheduler.roadmap.name!r}.",
+            fix=f"szsdlc schedule {entity_id.text} --horizon "
+                f"{scheduler.roadmap.spec.horizons[-1]}",
+        )
+    out(f"{entity_id.text}: off {scheduler.roadmap.name}")
     return 0
 
 
