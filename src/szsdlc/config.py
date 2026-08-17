@@ -71,6 +71,10 @@ class State:
     name: str
     to: tuple[str, ...] = ()
     terminal: bool = False
+    #: Deliberately given up on rather than completed — the status `drop` moves
+    #: to. Declared rather than inferred, so a project that renames its statuses
+    #: still gets a working `drop`.
+    abandoned: bool = False
     requires_artifact: tuple[str, ...] = ()
     requires_tasks_complete: bool = False
     description: str | None = None
@@ -96,6 +100,17 @@ class Workflow:
     @property
     def terminal_states(self) -> tuple[str, ...]:
         return tuple(n for n, s in self.states.items() if s.terminal)
+
+    @property
+    def abandoned_status(self) -> str | None:
+        """Where `drop` puts things. Declared in config, never guessed."""
+        return next((n for n, s in self.states.items() if s.abandoned), None)
+
+    @property
+    def completed_status(self) -> str | None:
+        """The terminal status that means finished rather than given up on."""
+        return next((n for n, s in self.states.items()
+                     if s.terminal and not s.abandoned), None)
 
 
 @dataclass(frozen=True)
@@ -573,6 +588,10 @@ def _check_workflow(name: str, spec: dict[str, Any], artifacts: set[str]) -> Non
             _fail(f"{skey}", "a terminal state cannot have outgoing transitions.",
                   f"remove {skey}.to, or set {skey}.terminal to false")
 
+        if state.get("abandoned") and not state.get("terminal"):
+            _fail(f"{skey}.abandoned", "only a terminal state can be abandoned.",
+                  f"set {skey}.terminal to true")
+
         for artifact in state.get("requires_artifact") or ():
             if artifact not in artifacts:
                 _fail(f"{skey}.requires_artifact", f"{artifact!r} is not an artifact of {name}.",
@@ -591,6 +610,11 @@ def _check_workflow(name: str, spec: dict[str, Any], artifacts: set[str]) -> Non
             if target not in reachable:
                 reachable.add(target)
                 frontier.append(target)
+    abandoned = [n for n, s in states.items() if (s or {}).get("abandoned")]
+    if len(abandoned) > 1:
+        _fail(f"{base}.states", f"more than one abandoned status: {', '.join(abandoned)}.",
+              f"mark exactly one terminal state of {name} as abandoned")
+
     orphans = sorted(set(states) - reachable)
     if orphans:
         _fail(f"{base}.states", f"unreachable from {workflow['initial']!r}: {', '.join(orphans)}.",
@@ -743,6 +767,7 @@ def _build_workflow(spec: dict[str, Any]) -> Workflow:
             name=name,
             to=tuple(raw.get("to") or ()),
             terminal=bool(raw.get("terminal", False)),
+            abandoned=bool(raw.get("abandoned", False)),
             requires_artifact=tuple(raw.get("requires_artifact") or ()),
             requires_tasks_complete=bool(raw.get("requires_tasks_complete", False)),
             description=raw.get("description"),

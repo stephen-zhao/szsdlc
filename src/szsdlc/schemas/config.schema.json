@@ -310,6 +310,10 @@
           "description": "Work here is finished. Terminal entities leave `next` and the roadmap.",
           "type": "boolean"
         },
+        "abandoned": {
+          "description": "This terminal status means deliberately given up on rather than completed — the status `drop` moves to. Naming it here is what lets `drop` and `refine` work on a project that renamed its statuses.",
+          "type": "boolean"
+        },
         "requires_artifact": {
           "description": "Gate checked on ENTERING this state: each named artifact must exist and be non-empty.",
           "type": "array",

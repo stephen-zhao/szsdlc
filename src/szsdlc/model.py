@@ -15,6 +15,7 @@ loading, and you cannot report a problem you refused to represent.
 
 from __future__ import annotations
 
+import datetime as _dt
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -402,6 +403,75 @@ def load_entity(config: Config, entity_id: EntityId, entity_type: EntityType,
                                  entity_id=entity_id, entity_type=entity_type)
 
     return Entity(entity_id, entity_type, config, path, document, home)
+
+
+def create_entity(config: Config, ids: IdSpace, entity_type: EntityType, *,
+                  title: str | None = None, body: str = "", status: str | None = None,
+                  tags: list[str] | None = None,
+                  fields: dict[str, Any] | None = None,
+                  relations: dict[str, Any] | None = None) -> Entity:
+    """Mint the next id and write one entity in its type's layout.
+
+    Frontmatter is built in a fixed order — id, title, tags, status, relations,
+    then the type's own fields — so two entities created a month apart still
+    diff cleanly against each other.
+
+    A required `date` field with no value given defaults to today. That is the
+    whole point of capture costing one command: the framework knows when it is.
+    """
+    entity_id = ids.next_id(entity_type)
+    basename = ids.basename(entity_id, title or _first_line(body))
+
+    directory = config.dir_for(entity_type)
+    directory.mkdir(parents=True, exist_ok=True)
+
+    if entity_type.is_directory_layout:
+        home: Path | None = directory / basename
+        home.mkdir(parents=True, exist_ok=False)
+        path = home / config.entity_filename
+    else:
+        home = None
+        path = directory / f"{basename}.md"
+
+    if path.exists():  # pragma: no cover - allocation scans the directory first
+        raise InternalError(f"{path} already exists for a freshly allocated id")
+
+    document = frontmatter.parse("---\n---\n" + body)
+    document.set("id", entity_id.text)
+    if title:
+        document.set("title", title)
+    if tags:
+        document.set("tags", normalize_tags(tags), flow=True)
+    document.set("status", status or entity_type.workflow.initial)
+    if relations:
+        document.set("relations", dict(relations), flow=False)
+
+    given = dict(fields or {})
+    for name, spec in entity_type.fields.items():
+        if name in given:
+            document.set(name, given.pop(name))
+        elif spec.required and spec.type == "date":
+            document.set(name, _today())
+        elif spec.required and spec.default is not None:
+            document.set(name, spec.default)
+    for name, value in given.items():
+        document.set(name, value)
+
+    entity = Entity(entity_id, entity_type, config, path, document, home)
+    entity.save()
+    return entity
+
+
+def _first_line(text: str) -> str:
+    for line in text.splitlines():
+        stripped = _HEADING.sub("", line).strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+def _today() -> _dt.date:
+    return _dt.date.today()
 
 
 @dataclass

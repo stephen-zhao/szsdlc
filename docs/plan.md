@@ -607,12 +607,38 @@ corrected call rather than a search.
 
 ## Phase 2 — CLI
 
-### Task 7: Capture and refinement
-- [ ] **Step 1:** `szsdlc capture [text]` — accepting an argument, stdin, or `$EDITOR`; creates one `intake` entity with minimal frontmatter. Must complete in a single command with no prompts, since capture cost is the whole point.
-- [ ] **Step 2:** `szsdlc refine <idea-ref> --into <TYPE> [--title ...]` — create the typed entity, write `refined_from` on the child only, and advance the idea to `refining`/`refined` per config.
-- [ ] **Step 3:** `szsdlc inbox [--json]` — unrefined ideas, oldest first.
-- [ ] **Step 4:** `szsdlc drop <idea-ref> --reason "..."` — terminal, never deletes.
-- [ ] **Step 5:** Tests: capture from all three input modes, multi-spawn from one idea, drop-with-reason, refusal to refine an already-refined idea; commit.
+### Task 7: Capture and refinement — **DONE**
+- [x] **Step 1:** `szsdlc capture [text]` — accepting an argument, stdin, or `$EDITOR`; creates one `intake` entity with minimal frontmatter. Must complete in a single command with no prompts, since capture cost is the whole point.
+- [x] **Step 2:** `szsdlc refine <idea-ref> --into <TYPE> [--title ...]` — create the typed entity, write `refined_from` on the child only, and advance the idea to `refining`/`refined` per config.
+- [x] **Step 3:** `szsdlc inbox [--json]` — unrefined ideas, oldest first.
+- [x] **Step 4:** `szsdlc drop <idea-ref> --reason "..."` — terminal, never deletes.
+- [x] **Step 5:** Tests: capture from all three input modes, multi-spawn from one idea, drop-with-reason, **refusal to refine a *dropped* idea** (see below); commit.
+
+> **Contradiction resolved.** Step 5 asked for both "multi-spawn from one idea"
+> and "refusal to refine an already-refined idea", but the first spawn is what
+> advances an idea to `refined`, so refusing there would make the plan's own
+> two-command example (`--into SPK` then `--into WI`) impossible. Refining a
+> `refined` idea therefore adds another child — one idea yielding several
+> entities is the documented normal case — and the refusal is for a **dropped**
+> idea, where somebody has decided the thought goes nowhere and reviving it
+> should be deliberate.
+>
+> **Other decisions taken while implementing:**
+>
+> - **A new state flag, `abandoned`,** marks the terminal status `drop` moves
+>   to. Without it, `drop` and `refine` would have had to pick between terminal
+>   statuses by declaration order — a hidden coupling that breaks the moment a
+>   project reorders its workflow. Config now enforces at most one per type,
+>   and only on a terminal state.
+> - **Provenance is found by shape, not by name.** `refine` looks for the
+>   single-valued relation the target type may author that points at the intake
+>   type, so `refined_from` stays a configured relation rather than becoming a
+>   framework concept.
+> - **A required `date` field defaults to today at creation.** Capture costing
+>   one command means the framework fills in what it already knows.
+> - **`cli.py` carries the C2/C7 machinery from the start** — argparse usage
+>   dumps suppressed, every exception converted, exit codes per class. Task 9a
+>   now hardens and tests a contract that exists rather than introducing one.
 
 ### Task 8: Entity commands
 - [ ] **Step 1:** `szsdlc init` — scaffold `.szsdlc/config.yml`, directories, an empty roadmap and starter templates.

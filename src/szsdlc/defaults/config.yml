@@ -83,6 +83,7 @@ entity_types:
           description: At least one typed entity was spawned from this idea.
         dropped:
           terminal: true
+          abandoned: true
           description: Deliberately killed, with a reason, so the same thought arriving twice is recognisable.
     # No `derived` block: the entities spawned from an idea already arrive as
     # `refined_into`, the generated inverse of `refined_from`. Declaring a
@@ -243,6 +244,7 @@ entity_types:
           requires_tasks_complete: true
         dropped:
           terminal: true
+          abandoned: true
 
   decision:
     prefix: ADR
