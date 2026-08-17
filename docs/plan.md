@@ -427,6 +427,7 @@ corrected call rather than a search.
 | `src/szsdlc/errors.py` | The single error channel: C2 shape, exit codes, and the project/model split |
 | `src/szsdlc/config.py` | Load/validate `.szsdlc/config.yml`, apply defaults |
 | `src/szsdlc/ids.py` | Id pattern, prefix/key registry, per-(type,key) counters, tombstone resolution |
+| `src/szsdlc/text.py` | Every normalization in one place: slugs, tags, edit distance, nearest-match |
 | `src/szsdlc/model.py` | Entity parsing for both layouts, frontmatter round-trip, progress parsing |
 | `src/szsdlc/graph.py` | Relation graph, inverse derivation, derived attributes, cycle detection |
 | `src/szsdlc/roadmap.py` | Roadmap records, horizons, placement operations |
@@ -492,14 +493,30 @@ corrected call rather than a search.
 >   survives `pip install`. Verified present in a built wheel.
 > - Suite runs green on **both** interpreters: WSL 3.12.3 and Windows 3.14.7.
 
-### Task 3: Identifiers and tags
-- [ ] **Step 1:** Implement `ids.py`. Ids are **opaque `<TYPE>-<NNNN>`**, one form everywhere, one counter per type. Parsing accepts any padding and any case.
-- [ ] **Step 2:** Allocate the next id per type by scanning that type's directory for the maximum existing number — **no counter file**, so two worktrees cannot disagree with a stored value.
-- [ ] **Step 3:** Reject unknown prefixes with the configured list; resolve tombstoned ids to their successor.
-- [ ] **Step 4:** Tags are free-form and need no declaration. **Normalize on write**: trim, lowercase, collapse internal whitespace to hyphens, de-duplicate. Normalizing at the single write path is what stops `dns`, `DNS` and ` dns ` becoming three tags.
-- [ ] **Step 5:** `szsdlc tag <ref> <tag>...` and `szsdlc untag <ref> <tag>...` — list-valued fields are never edited through `set` (C3), so tagging gets its own verb, like `link`.
-- [ ] **Step 6:** Tests: padding tolerance, sequence gaps, case folding, empty directory, tag normalization across whitespace/case/duplicate input, retagging leaves the id untouched.
-- [ ] **Step 7:** Commit.
+### Task 3: Identifiers and tags — **DONE** (Step 5 wired in Task 8)
+- [x] **Step 1:** Implement `ids.py`. Ids are **opaque `<TYPE>-<NNNN>`**, one form everywhere, one counter per type. Parsing accepts any padding and any case.
+- [x] **Step 2:** Allocate the next id per type by scanning that type's directory for the maximum existing number — **no counter file**, so two worktrees cannot disagree with a stored value.
+- [x] **Step 3:** Reject unknown prefixes with the configured list; resolve tombstoned ids to their successor.
+- [x] **Step 4:** Tags are free-form and need no declaration. **Normalize on write**: trim, lowercase, collapse internal whitespace to hyphens, de-duplicate. Normalizing at the single write path is what stops `dns`, `DNS` and ` dns ` becoming three tags.
+- [ ] **Step 5:** `szsdlc tag <ref> <tag>...` and `szsdlc untag <ref> <tag>...` — list-valued fields are never edited through `set` (C3), so tagging gets its own verb, like `link`. **Deferred to Task 8:** the operations (`add_tags`/`remove_tags`) exist and are tested, but the verbs write frontmatter, which needs Task 4's model. Shipping half a command that cannot persist would be worse than shipping it next to `set` and `link`.
+- [x] **Step 6:** Tests: padding tolerance, sequence gaps, case folding, empty directory, tag normalization across whitespace/case/duplicate input, retagging leaves the id untouched.
+- [x] **Step 7:** Commit.
+
+> **Decisions taken while implementing:**
+>
+> - **Tombstones live in `.szsdlc/tombstones.yml`** — one file, one entry per
+>   line, written only by `convert`, so a concurrent add resolves as a
+>   line-level merge exactly like the roadmap. Allocation reads it as well as
+>   the directory, which is what makes "never reissue a number" true even after
+>   the old directory has moved away. Resolution follows chains and is *total*:
+>   a hand-edited cycle stops the walk rather than hanging, because reporting
+>   the cycle belongs to `validate`.
+> - **Distance is Damerau (OSA), not Levenshtein.** The plan's own example of a
+>   near-duplicate tag is `dns` vs `dsn` at a configured distance of 1, and
+>   plain Levenshtein scores that transposition as 2 — the rule would have
+>   missed the single case it was written for.
+> - **`text.py` holds every normalization** — slugs, tags, distance. One
+>   module, because normalization only works if it happens at one place.
 
 ### Task 4: Entity model
 - [ ] **Step 1:** Implement `model.py` supporting **both layouts** — a `file` entity is a single markdown file, a `directory` entity is `entity.md` plus artifacts — behind one interface so nothing downstream branches on layout.
