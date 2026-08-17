@@ -908,15 +908,56 @@ corrected call rather than a search.
 
 ## Phase 5 — Proof and documentation
 
-### Task 16: Dogfood on a throwaway project
-- [ ] **Step 1:** `szsdlc init` with a project key. Capture five ideas of varying fidelity — one bullet, one paragraph, one page of related thoughts, one duplicate, one that should die.
-- [ ] **Step 2:** Refine them: the page spawns an epic plus two work items and a requirement; the bullet spawns a spike; the duplicate is dropped with a reason; one stays in the inbox.
-- [ ] **Step 3:** Schedule the results onto the roadmap, reorder twice, then drive one work item to done through the skills.
-- [ ] **Step 4:** Confirm: capture never took more than one command; the inbox view shows exactly the unrefined idea; `trace` walks from the finished work item back to its originating idea; rescheduling touched only the roadmap file; no generated file was hand-edited; no view went stale; every gate refused at least once when it should have; `szsdlc validate` ends green.
-- [ ] **Step 5:** Assert the definitional/delivery boundary: completing the work item flips the requirement's derived `covered`/`delivered` in the register **without a single byte changing in the requirement's own file**, verified by `git diff` over that directory across the whole run.
-- [ ] **Step 6:** Record **measured** token cost in the README for `szsdlc context`, `next`, `inbox`, and `list --unscheduled` at both 20 and 200 entities, so the efficiency claim is evidenced rather than asserted. Include the counters-vs-listing comparison: the `context` counter for unscheduled work against the full listing it replaces.
-- [ ] **Step 7:** Benchmark full-graph load time at 200 and 2000 entities. **Do not add an index cache unless the benchmark demands it** — a cache keyed on mtime introduces exactly the stale-state failure mode this framework exists to eliminate, and is only worth that risk against measured pain.
-- [ ] **Step 8:** Commit.
+### Task 16: Dogfood on a throwaway project — **DONE**
+- [x] **Step 1:** `szsdlc init` with a project key. Capture five ideas of varying fidelity — one bullet, one paragraph, one page of related thoughts, one duplicate, one that should die.
+- [x] **Step 2:** Refine them: the page spawns an epic plus two work items and a requirement; the bullet spawns a spike; the duplicate is dropped with a reason; one stays in the inbox.
+- [x] **Step 3:** Schedule the results onto the roadmap, reorder twice, then drive one work item to done through the skills.
+- [x] **Step 4:** Confirm: capture never took more than one command; the inbox view shows exactly the unrefined idea; `trace` walks from the finished work item back to its originating idea; rescheduling touched only the roadmap file; no generated file was hand-edited; no view went stale; every gate refused at least once when it should have; `szsdlc validate` ends green.
+- [x] **Step 5:** Assert the definitional/delivery boundary: completing the work item flips the requirement's derived `covered`/`delivered` in the register **without a single byte changing in the requirement's own file**, verified by `git diff` over that directory across the whole run.
+- [x] **Step 6:** Record **measured** token cost in the README for `szsdlc context`, `next`, `inbox`, and `list --unscheduled` at both 20 and 200 entities, so the efficiency claim is evidenced rather than asserted. Include the counters-vs-listing comparison: the `context` counter for unscheduled work against the full listing it replaces. — *Recorded in [docs/measurements.md](measurements.md); Task 17 quotes the headline in the README.*
+- [x] **Step 7:** Benchmark full-graph load time at 200 and 2000 entities. **Do not add an index cache unless the benchmark demands it** — a cache keyed on mtime introduces exactly the stale-state failure mode this framework exists to eliminate, and is only worth that risk against measured pain.
+- [x] **Step 8:** Commit.
+
+> **What the dogfood run actually found.** Every one of these was invisible in
+> the tests and obvious within a minute of real use, which is the whole reason
+> the step exists.
+>
+> - **Titles were unbounded.** Capture costs one command precisely so a
+>   paragraph can be captured without ceremony — and a captured paragraph then
+>   becomes the entity's *derived* title, appearing in full in every listing
+>   and every markdown table that mentions it. One such entity cost more
+>   context than the twenty rows around it and turned each table into a single
+>   unreadable line. `text.clip` now bounds every human-facing render, visibly;
+>   `--json` is exempt, because its consumer wants the value and not a
+>   rendering of it. C6 was written as a bound on row *count*; it is really a
+>   bound on output, and row width was the axis nobody had checked.
+> - **A fresh project reported eight identical errors.** Every view being
+>   absent is one fact — nobody has run `sync` — and reported per file it
+>   filled nearly half a 20-row budget with the same instruction, which trains
+>   a reader to skim exactly the output that must not be skimmed. Repeated
+>   generated-file findings now collapse into one row above a threshold.
+>   Hand-edited files stay itemised at any count: *which* file lost work is the
+>   entire content of that finding.
+> - **Every close cost two commands with a validation failure between them.**
+>   Reaching a terminal status left the entity on the roadmap, which `validate`
+>   correctly calls an error — so `set … status=done` was followed by a failing
+>   validate until `unschedule` followed it. Since the `Stop` hook blocks on
+>   errors, finishing a work item would have ended every session by refusing to
+>   end. Terminal transitions now retire the entity from every roadmap and say
+>   so on the same line. Scheduling stays manual in the other direction on
+>   purpose: deciding *when* something is worked is judgment about the whole
+>   set, while noticing that a finished thing is finished is bookkeeping, and
+>   bookkeeping is what this framework exists to stop charging people for.
+> - **Listing columns were ragged.** Ids are `<PREFIX>-<NNNN>` and prefixes
+>   differ in length, so any listing mixing types had a jagged status column —
+>   including the `context` block prepended to a model's window at the start of
+>   every session. The column is now measured per call.
+>
+> **What held up.** Every gate refused exactly once when it should have, each
+> naming a runnable next command; `next` unblocked the dependent work item the
+> moment its blocker reached `done`; and Step 5's invariant held exactly —
+> `git diff` over `requirements/` across the entire run is empty while the
+> register shows the requirement flipping to covered.
 
 ### Task 17: Documentation
 - [ ] **Step 1:** `README.md` — model, config reference, command reference, install.

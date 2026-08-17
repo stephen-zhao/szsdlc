@@ -19,7 +19,7 @@ _empty_
 {% for id_text in roadmap.entries(horizon) %}
 {% set entity = store.by_text(id_text) %}
 {% if entity %}
-- {{ entity.id.text }} — {{ entity.title }} _({{ entity.status }})_
+- {{ entity.id.text }} — {{ entity.title | clip }} _({{ entity.status }})_
 {% else %}
 - {{ id_text }} (missing)
 {% endif %}

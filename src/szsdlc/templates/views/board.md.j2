@@ -18,10 +18,10 @@
 {% endfor %}
 {% for parent in grouped | sort %}
 {% set parent_entity = store.by_text(parent) %}
-**{{ parent_entity.title if parent_entity else parent }}**
+**{{ (parent_entity.title | clip) if parent_entity else parent }}**
 
 {% for entity in grouped[parent] | sort(attribute='id.number') %}
-- {{ entity.id.text }} — {{ entity.title }}{% if entity.progress %} _({{ entity.progress }})_{% endif %}
+- {{ entity.id.text }} — {{ entity.title | clip }}{% if entity.progress %} _({{ entity.progress }})_{% endif %}
 
 {% endfor %}
 {% endfor %}

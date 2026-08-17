@@ -14,7 +14,7 @@ No {{ entity_type.title | lower }} entries yet.
 | Id | Status | Title | Tags |
 |---|---|---|---|
 {% for entity in rows %}
-| {{ entity.id.text }} | {{ entity.status }} | {{ entity.title }} | {{ entity.tags | join(', ') or '—' }} |
+| {{ entity.id.text }} | {{ entity.status }} | {{ entity.title | clip }} | {{ entity.tags | join(', ') or '—' }} |
 {% endfor %}
 {% endif %}
 {% endfor %}

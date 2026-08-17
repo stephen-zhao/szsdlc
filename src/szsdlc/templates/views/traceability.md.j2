@@ -11,13 +11,13 @@
 {% set definitional = types_with('persistent') %}
 {% for entity_type in definitional %}
 {% for entity in of_type(entity_type.name) %}
-### {{ entity.id.text }} — {{ entity.title }}
+### {{ entity.id.text }} — {{ entity.title | clip }}
 
 {% set any_incoming = [] %}
 {% for relation in config.relations.values() %}
 {% for source in sources(entity, relation.name) %}
 {% set _ = any_incoming.append(source) %}
-- {{ relation.inverse }}: {{ source.id.text }} — {{ source.title }} _({{ source.status }})_
+- {{ relation.inverse }}: {{ source.id.text }} — {{ source.title | clip }} _({{ source.status }})_
 {% endfor %}
 {% endfor %}
 {% if not any_incoming %}
@@ -44,7 +44,7 @@ Nothing has been refined from an idea yet.
 | Entity | Relation | Origin |
 |---|---|---|
 {% for entity, relation, target in spawned %}
-| {{ entity.id.text }} — {{ entity.title }} | {{ relation.name }} | {{ target.label }} |
+| {{ entity.id.text }} — {{ entity.title | clip }} | {{ relation.name }} | {{ target.label }} |
 {% endfor %}
 {% endif %}
 

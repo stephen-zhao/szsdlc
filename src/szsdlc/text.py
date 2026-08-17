@@ -13,6 +13,9 @@ Three primitives, each protecting a different invariant:
   mistyped references, and the near-duplicate tag warning. Transposition
   counts as one edit, because ``dns`` versus ``dsn`` is *the* typo this is
   meant to catch and plain Levenshtein scores it as two.
+- :func:`clip` — the display bound. A title may be derived from body text,
+  so it is only as short as whoever captured it felt like being; every
+  human-facing row goes through here and no ``--json`` field does.
 """
 
 from __future__ import annotations
@@ -37,6 +40,29 @@ def slugify(text: str, *, max_length: int = SLUG_MAX_LENGTH) -> str:
     if len(slug) > max_length:
         slug = slug[:max_length].rsplit("-", 1)[0] or slug[:max_length]
     return slug.strip("-")
+
+
+#: One row of a listing. Titles are derived from body text when nothing was
+#: named explicitly, so a paragraph-length capture — the cheapest kind, and
+#: therefore the common kind — otherwise arrives as a single row wider than
+#: the terminal and more expensive than the twenty rows around it.
+TITLE_MAX_LENGTH = 56
+
+
+def clip(text: str, max_length: int = TITLE_MAX_LENGTH, *, marker: str = "…") -> str:
+    """Bound one field for display, visibly.
+
+    The marker is not decoration: a silently cut title reads as the whole
+    title, which is the same failure C6 forbids for silently capped lists.
+    Never used on ``--json`` output, where the consumer wants the value and
+    not a rendering of it.
+    """
+    collapsed = _WHITESPACE.sub(" ", text).strip()
+    if len(collapsed) <= max_length:
+        return collapsed
+    kept = collapsed[:max_length - len(marker)]
+    head, _, _ = kept.rpartition(" ")
+    return (head or kept).rstrip(" ,;:.-") + marker
 
 
 def normalize_tag(tag: str) -> str:

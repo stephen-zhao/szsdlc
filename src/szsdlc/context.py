@@ -19,6 +19,7 @@ from .config import Config
 from .graph import Graph
 from .model import Entity, EntityStore
 from .roadmap import Roadmap, has_reached, load_all as load_roadmaps
+from .text import clip
 
 #: Hard cap on the rendered context block. Deterministic, so a session's first
 #: tokens cost the same whether the project has twenty entities or two thousand.
@@ -183,8 +184,13 @@ def render(context: Context, *, cap: int = CONTEXT_CHAR_CAP, limit: int = 8) -> 
 
     if context.in_flight:
         lines.append("in flight:")
-        for entity in context.in_flight[:limit]:
-            lines.append(f"  {entity.id.text}  {entity.status}  {entity.title}")
+        shown = context.in_flight[:limit]
+        # In-flight work mixes types by construction, and ids differ in width
+        # with the prefix, so the column is measured rather than assumed.
+        width = max(len(entity.id.text) for entity in shown)
+        for entity in shown:
+            lines.append(f"  {entity.id.text:<{width}}  {entity.status}  "
+                         f"{clip(entity.title)}")
         if len(context.in_flight) > limit:
             lines.append(f"  … {len(context.in_flight) - limit} more — szsdlc next")
 
@@ -205,7 +211,7 @@ def bundle(config: Config, graph: Graph, entity: Entity,
     Budgeted rather than complete: a design document pasted in full is how a
     context window gets spent on something the model will re-read anyway.
     """
-    lines: list[str] = [f"{entity.id.text}  {entity.status}  {entity.title}"]
+    lines: list[str] = [f"{entity.id.text}  {entity.status}  {clip(entity.title)}"]
 
     if entity.tags:
         lines.append(f"tags: {', '.join(entity.tags)}")

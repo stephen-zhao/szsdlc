@@ -16,7 +16,7 @@ No tags yet.
 ## {{ tag }} ({{ index[tag] | length }})
 
 {% for entity in index[tag] %}
-- {{ entity.id.text }} — {{ entity.title }} _({{ entity.status }})_
+- {{ entity.id.text }} — {{ entity.title | clip }} _({{ entity.status }})_
 {% endfor %}
 
 {% endfor %}

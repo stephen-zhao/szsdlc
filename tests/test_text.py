@@ -10,7 +10,9 @@ from __future__ import annotations
 import pytest
 
 from szsdlc.text import (
+    TITLE_MAX_LENGTH,
     add_tags,
+    clip,
     edit_distance,
     near_duplicates,
     nearest,
@@ -146,3 +148,39 @@ def test_near_duplicates_finds_likely_typos_and_ignores_distinct_tags():
 
 def test_near_duplicate_distance_zero_disables_the_rule():
     assert near_duplicates(["dns", "dsn"], max_distance=0) == []
+
+
+# ---------------------------------------------------------------------------
+# clip
+# ---------------------------------------------------------------------------
+
+
+def test_short_text_is_returned_unchanged():
+    assert clip("search is slow") == "search is slow"
+
+
+def test_long_text_is_bounded_and_says_so():
+    #: The failure this exists for: capture costs one command precisely so
+    #: that a paragraph can be captured, and a paragraph then arrives as a
+    #: derived title in every listing that mentions the entity.
+    paragraph = ("People keep pasting the same three-line disclaimer into every "
+                 "export. It should be a template we own, so legal can change it "
+                 "once instead of chasing twelve teams.")
+    clipped = clip(paragraph)
+    assert len(clipped) <= TITLE_MAX_LENGTH
+    assert clipped.endswith("…")
+    assert paragraph.startswith(clipped[:20])
+
+
+def test_clipping_breaks_on_a_word():
+    assert clip("alpha beta gamma delta", 12) == "alpha beta…"
+
+
+def test_a_single_long_word_is_still_bounded():
+    assert len(clip("x" * 200)) <= TITLE_MAX_LENGTH
+
+
+def test_newlines_collapse_rather_than_breaking_the_row():
+    # A markdown table cell containing a newline is not a table cell.
+    assert "\n" not in clip("first line\nsecond line", 100)
+    assert clip("first line\nsecond line", 100) == "first line second line"

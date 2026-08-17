@@ -404,7 +404,44 @@ def stale_generated(config: Config, store: EntityStore, graph: Graph,
                 message=f"{item.path.name} is out of date",
                 fix="szsdlc sync",
             ))
-    return findings
+    return _collapse_by_kind(findings)
+
+
+#: Below this, naming each file is more useful than counting them.
+COLLAPSE_THRESHOLD = 3
+
+
+def _collapse_by_kind(findings: list[Finding]) -> list[Finding]:
+    """Fold a repeated generated-file finding into one row.
+
+    Every view being absent is *one* fact about the project — nobody has run
+    `sync` yet — and a fresh project has eight of them. Reported one per file
+    they fill nearly half a 20-row budget with the same instruction, which
+    trains a reader to skim exactly the output that must not be skimmed.
+    Hand-edited files stay itemised at any count: which file lost work is the
+    whole content of that finding.
+    """
+    kept: list[Finding] = []
+    by_kind: dict[str, list[Finding]] = {}
+    for finding in findings:
+        if finding.kind in ("missing-generated", "stale-generated"):
+            by_kind.setdefault(finding.kind, []).append(finding)
+        else:
+            kept.append(finding)
+
+    for kind, group in by_kind.items():
+        if len(group) < COLLAPSE_THRESHOLD:
+            kept.extend(group)
+            continue
+        state = "have never been generated" if kind == "missing-generated" \
+            else "are out of date"
+        kept.append(Finding(
+            kind=kind, ref="generated",
+            message=f"{len(group)} generated files {state} "
+                    f"({', '.join(f.ref for f in group[:3])}, …)",
+            fix="szsdlc sync",
+        ))
+    return kept
 
 
 # ---------------------------------------------------------------------------

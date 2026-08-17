@@ -190,10 +190,23 @@ def test_context_reports_in_flight_work_and_the_current_task(run, world):
     code, output, _ = run("context")
     assert code == 0
     assert "in flight:" in output
-    assert "WI-0001  executing  Add config" in output
+    assert "WI-0001" in output and "executing" in output and "Add config" in output
     assert "current task (WI-0001): two" in output
     # WI-0002 is `ready` — the front of the workflow, so backlog, not in flight.
     assert "WI-0002" not in output
+
+
+def test_in_flight_ids_share_a_column(run, world):
+    """`SPK-0001` and `WI-0001` differ in width; the status column must not.
+
+    Ragged columns are cheap to produce and expensive to read, and this block
+    is prepended to a model's context at the start of every single session.
+    """
+    _, output, _ = run("context")
+    rows = [line for line in output.splitlines() if line.startswith("  ")]
+    assert len(rows) >= 2
+    starts = {line.index(line.strip().split()[1]) for line in rows}
+    assert len(starts) == 1, rows
 
 
 def test_context_ends_in_a_counters_line_of_scalars(run, world):

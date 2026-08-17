@@ -21,7 +21,7 @@
 {% set _ = implementers.append(source.id.text) %}
 {% endfor %}
 {% endfor %}
-| {{ entity.id.text }} | {{ entity.status }} | {{ '✓' if facts.get('covered') else '**no**' }} | {{ '✓' if facts.get('delivered') else '—' }} | {{ implementers | join(', ') or '—' }} | {{ entity.title }} |
+| {{ entity.id.text }} | {{ entity.status }} | {{ '✓' if facts.get('covered') else '**no**' }} | {{ '✓' if facts.get('delivered') else '—' }} | {{ implementers | join(', ') or '—' }} | {{ entity.title | clip }} |
 {% endfor %}
 
 {% endif %}

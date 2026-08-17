@@ -367,6 +367,21 @@ def test_a_hand_edited_generated_file_is_distinguished_from_staleness(clean):
 
 def test_a_never_generated_view_is_reported(project, write_entity):
     write_entity("epic", 1, "title: E\nstatus: open\nopened: 2026-08-01\n")
+    found = findings(project, "missing-generated")
+    # Collapsed: every view being absent is one fact — nobody has run `sync`.
+    # Eight rows of the same instruction is how a reader learns to skim.
+    assert len(found) == 1
+    assert str(len(project.views)) in found[0].message
+    assert found[0].fix == "szsdlc sync"
+
+
+def test_a_couple_of_missing_views_are_still_named_individually(project, write_entity,
+                                                               monkeypatch):
+    """Below the threshold, which file is more useful than how many."""
+    from szsdlc import validate as V
+
+    monkeypatch.setattr(V, "COLLAPSE_THRESHOLD", 99)
+    write_entity("epic", 1, "title: E\nstatus: open\nopened: 2026-08-01\n")
     assert len(findings(project, "missing-generated")) == len(project.views)
 
 

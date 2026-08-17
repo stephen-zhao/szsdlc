@@ -15,6 +15,7 @@ real command. A fix hint that does not work fails CI.
 from __future__ import annotations
 
 import io
+import json
 import re
 import shlex
 
@@ -406,3 +407,42 @@ def test_set_never_edits_a_list_valued_field(tmp_path, invoke):
     code, _, err = invoke(config.root, "set", "WI-0001", "reviewers=a,b")
     assert code == EXIT_BAD_INPUT
     assert "list-valued" in err
+
+
+# ---------------------------------------------------------------------------
+# C6 — a bounded listing is bounded in both directions
+# ---------------------------------------------------------------------------
+
+
+PARAGRAPH = (
+    "People keep pasting the same three-line disclaimer into every export. It "
+    "should be a template we own, so legal can change it once instead of "
+    "chasing twelve teams, which is what happens today and is why the wording "
+    "in the PDF writer has been wrong since March."
+)
+
+
+def test_no_listing_row_is_unbounded(tmp_path, invoke):
+    """Row *count* was capped from the start; row *width* was not.
+
+    Capture costs one command precisely so a paragraph can be captured
+    without ceremony, and a captured paragraph becomes the entity's derived
+    title. Unclipped, that single entity costs more context than the twenty
+    rows around it and turns every markdown table it appears in into one
+    unreadable line — the same failure C6 forbids, along the other axis.
+    """
+    config = build_project(tmp_path)
+    invoke(config.root, "capture", PARAGRAPH)
+
+    for argv in (["inbox"], ["list"], ["next"], ["context"]):
+        _, output, _ = invoke(config.root, *argv)
+        for line in output.splitlines():
+            assert len(line) <= 100, f"{argv[0]}: {len(line)} chars"
+
+
+def test_json_output_is_never_clipped(tmp_path, invoke):
+    """`--json` has a consumer that wants the value, not a rendering of it."""
+    config = build_project(tmp_path)
+    invoke(config.root, "capture", PARAGRAPH)
+    _, output, _ = invoke(config.root, "inbox", "--json")
+    assert PARAGRAPH.split(". ")[0] in json.dumps(json.loads(output))

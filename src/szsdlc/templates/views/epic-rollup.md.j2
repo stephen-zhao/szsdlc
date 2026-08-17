@@ -7,7 +7,7 @@
 {% for entity_type in parents %}
 {% for entity in of_type(entity_type.name) if not entity.is_terminal %}
 {% set roll = derived(entity).get('progress') %}
-## {{ entity.id.text }} — {{ entity.title }}
+## {{ entity.id.text }} — {{ entity.title | clip }}
 
 _{{ entity.status }}{% if roll %} · {{ roll }} children done ({{ roll.percent }}%) · {{ roll.tasks }} tasks{% endif %}_
 
@@ -16,7 +16,7 @@ _{{ entity.status }}{% if roll %} · {{ roll }} children done ({{ roll.percent }
 No children yet.
 {% else %}
 {% for child in kids %}
-- {{ '[x]' if child.is_terminal else '[ ]' }} {{ child.id.text }} — {{ child.title }} _({{ child.status }})_
+- {{ '[x]' if child.is_terminal else '[ ]' }} {{ child.id.text }} — {{ child.title | clip }} _({{ child.status }})_
 {% endfor %}
 {% endif %}
 

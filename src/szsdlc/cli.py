@@ -32,7 +32,7 @@ from . import __version__, config as config_module, hooks as hooks_module
 from .errors import EXIT_ERROR, EXIT_INVALID, BadInput, InternalError, SzsdlcError
 from .ids import IdSpace
 from .model import Entity, EntityStore, create_entity, load_all
-from .text import add_tags, nearest, remove_tags
+from .text import add_tags, clip, nearest, remove_tags
 
 #: C6 — every listing is bounded, and the bound is the same everywhere.
 DEFAULT_LIMIT = 20
@@ -327,6 +327,14 @@ def truncate(rows: list[Any], limit: int) -> tuple[list[Any], str | None]:
     return rows[:limit], f"showing {limit} of {len(rows)} — rerun with --limit 0"
 
 
+def id_width(rows: Sequence[Entity]) -> int:
+    """Ids are `<PREFIX>-<NNNN>` and prefixes differ in length, so a listing
+    that mixes types has a ragged left edge unless the column is measured.
+    Padded per call rather than to a constant, so a single-type listing does
+    not pay for the longest prefix the project happens to declare."""
+    return max((len(entity.id.text) for entity in rows), default=0)
+
+
 # ---------------------------------------------------------------------------
 # capture
 # ---------------------------------------------------------------------------
@@ -391,7 +399,9 @@ def cmd_refine(args: argparse.Namespace) -> int:
         raise BadInput(
             f"{idea.id.text} is a {idea.type.name}, not an intake entity, so it "
             f"cannot be refined.",
-            fix=f"szsdlc new {args.into} --title \"{idea.title}\"",
+            # Clipped: the title may be a whole captured paragraph, and a
+            # refusal that runs to 200 characters has stopped being a fix.
+            fix=f"szsdlc new {args.into} --title \"{clip(idea.title)}\"",
         )
 
     target = session.config.type_for(args.into)
@@ -478,10 +488,11 @@ def cmd_inbox(args: argparse.Namespace) -> int:
         return 0
 
     rows, note = truncate(unrefined, args.limit)
+    width = id_width(rows)
     for entity in rows:
         age = _age_days(entity)
         stamp = f"{age}d" if age is not None else "-"
-        out(f"{entity.id.text}  {stamp:>5}  {entity.title}")
+        out(f"{entity.id.text:<{width}}  {stamp:>5}  {clip(entity.title)}")
     if note:
         out(note)
     return 0
@@ -660,6 +671,34 @@ def _coerce(session: Session, entity: Entity, field: str, raw: str) -> Any:
     return raw
 
 
+def _retire_from_roadmaps(session: "Session", entity: Entity) -> list[str]:
+    """Take a newly-terminal entity off every roadmap it sits on.
+
+    A roadmap states what is *going to be done*, so a finished entity on one
+    is not a plan, it is a leftover — and `validate` says so, as an error.
+    Left to the caller that error lands between the two halves of every single
+    close: `set … status=done` fails validation until `unschedule` follows it.
+    The `Stop` hook blocks on errors, so finishing a work item would end each
+    session by refusing to end it.
+
+    Scheduling stays manual in the other direction on purpose. Deciding *when*
+    something is worked is a judgment about the whole set; noticing that a
+    finished thing is finished is bookkeeping, and bookkeeping is what this
+    framework exists to stop charging people for.
+    """
+    if not entity.is_terminal:
+        return []
+
+    from .roadmap import load_all as load_roadmaps
+
+    removed = []
+    for roadmap in load_roadmaps(session.config).values():
+        if roadmap.remove(entity.id.text):
+            roadmap.save()
+            removed.append(f"off {roadmap.name}")
+    return removed
+
+
 def cmd_set(args: argparse.Namespace) -> int:
     from . import workflow as workflow_module
 
@@ -694,6 +733,7 @@ def cmd_set(args: argparse.Namespace) -> int:
         if field == "status":
             transition = workflow_module.move(entity, raw)
             reported.append(f"status {transition.before} → {transition.after}")
+            reported += _retire_from_roadmaps(session, entity)
         else:
             before = entity.field(field)
             entity.set_field(field, _coerce(session, entity, field, raw))
@@ -1041,8 +1081,9 @@ def cmd_next(args: argparse.Namespace) -> int:
         return 0
 
     rows, note = truncate(candidates, args.limit)
+    width = id_width(rows)
     for entity in rows:
-        out(f"{entity.id.text}  {entity.status:<10}  {entity.title}")
+        out(f"{entity.id.text:<{width}}  {entity.status:<10}  {clip(entity.title)}")
     if note:
         out(note)
     return 0
@@ -1134,8 +1175,9 @@ def cmd_list(args: argparse.Namespace) -> int:
         return 0
 
     rows, note = truncate(entities, args.limit)
+    width = id_width(rows)
     for entity in rows:
-        out(f"{entity.id.text}  {entity.status:<10}  {entity.title}")
+        out(f"{entity.id.text:<{width}}  {entity.status:<10}  {clip(entity.title)}")
     if note:
         out(note)
     return 0
