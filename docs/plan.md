@@ -579,11 +579,29 @@ corrected call rather than a search.
 >   there is nothing to hang the reverse on, and dropping the forward edge
 >   would destroy the only evidence of the problem.
 
-### Task 6: Roadmap scheduling
-- [ ] **Step 1:** Implement `roadmap.py`: load/validate roadmap records against the configured horizons; expose position lookups.
-- [ ] **Step 2:** Placement operations behind **one verb and one ref** — `schedule <ref> --horizon H [--after REF | --before REF | --top]` and `unschedule <ref>` — rewriting the record deterministically with stable formatting. No sub-verbs and no positional roadmap name; `--roadmap` defaults when only one exists.
-- [ ] **Step 3:** Reject scheduling of non-`schedulable` types and of entities that have not reached the configured ready status.
-- [ ] **Step 4:** Tests: insertion at every position, horizon moves, duplicate rejection, dangling rejection, default-roadmap resolution; commit.
+### Task 6: Roadmap scheduling — **DONE**
+- [x] **Step 1:** Implement `roadmap.py`: load/validate roadmap records against the configured horizons; expose position lookups.
+- [x] **Step 2:** Placement operations behind **one verb and one ref** — `schedule <ref> --horizon H [--after REF | --before REF | --top]` and `unschedule <ref>` — rewriting the record deterministically with stable formatting. No sub-verbs and no positional roadmap name; `--roadmap` defaults when only one exists.
+- [x] **Step 3:** Reject scheduling of non-`schedulable` types and of entities that have not reached the configured ready status.
+- [x] **Step 4:** Tests: insertion at every position, horizon moves, duplicate rejection, dangling rejection, default-roadmap resolution; commit.
+
+> **Decisions taken while implementing:**
+>
+> - **"Has it reached the ready status?" is answered by reachability, not by
+>   declaration order.** An entity has reached `ready` when it is at ready, or
+>   when ready can no longer be got to by moving forward. Comparing positions
+>   in the declared state list would quietly get branching workflows wrong, and
+>   `review → executing` already makes the default work-item workflow one.
+> - **One verb covers schedule *and* move.** `place` removes any existing
+>   placement first, so "appears twice" is impossible by construction rather
+>   than by the caller remembering to unschedule.
+> - **Unknown horizons in the file are preserved, not dropped.** A config that
+>   renames a horizon must not make `schedule` silently discard the work
+>   stranded there; `validate` reports it instead.
+> - **A broken roadmap record is represented, not raised** — same rule as an
+>   unparseable entity, so `sync` still renders and `validate` reports.
+> - **The validate rules landed here** rather than in Task 11, since they are
+>   roadmap logic; Task 11 assembles them alongside the other rules.
 
 ---
 
