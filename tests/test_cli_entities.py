@@ -528,7 +528,9 @@ def test_scheduling_below_the_ready_status_is_refused(run, seeded):
     code, _, err = run("schedule", "WI-0001", "--horizon", "now")
     assert code == EXIT_REFUSED
     assert "has not reached ready" in err
-    assert "Fix: szsdlc set WI-0001 status=ready" in err
+    # The *next hop*, not the destination: WI-0001 is at `idea`, and
+    # `status=ready` would simply refuse again as an illegal transition.
+    assert "Fix: szsdlc set WI-0001 status=groomed" in err
 
 
 def test_scheduling_a_requirement_is_refused(run, project):

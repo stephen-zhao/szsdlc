@@ -140,7 +140,10 @@ def test_placement_reports_its_neighbours(project):
 def test_an_unknown_horizon_is_refused_with_the_legal_ones(project):
     with pytest.raises(BadInput) as excinfo:
         Roadmap.load(project, "roadmap").place("WI-0001", "someday")
-    assert "now" in excinfo.value.fix and "later" in excinfo.value.fix
+    err = excinfo.value
+    # Line 2 is runnable; the full list of horizons goes on line 3.
+    assert err.fix == "szsdlc schedule WI-0001 --horizon later"
+    assert "now" in err.see and "later" in err.see
 
 
 def test_an_anchor_on_another_horizon_names_that_horizon(project):

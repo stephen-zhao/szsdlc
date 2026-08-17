@@ -78,7 +78,10 @@ def test_unknown_prefix_lists_the_configured_ones(project):
         ids.parse("TASK-0001")
     err = excinfo.value
     assert "TASK" in err.problem
-    assert "WI" in err.fix and "IDEA" in err.fix
+    # No single fix exists — we cannot know which prefix was meant — so line 2
+    # is the diagnostic that reveals the answer and the list goes on line 3.
+    assert err.fix == "szsdlc list --limit 20"
+    assert "WI" in err.see and "IDEA" in err.see
     assert err.exit_code == EXIT_BAD_INPUT
 
 

@@ -537,7 +537,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     if config_path.exists():
         raise BadInput(
             f"{config_path} already exists.",
-            fix="szsdlc validate",
+            fix="szsdlc context",
         )
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -650,7 +650,8 @@ def cmd_set(args: argparse.Namespace) -> int:
         if not separator:
             raise BadInput(
                 f"set: {assignment!r} is not field=value.",
-                fix=f"szsdlc set {entity.id.text} status={entity.type.workflow.initial}",
+                fix=f"szsdlc set {entity.id.text} "
+                    f"status={workflow_module.suggested_next(entity)}",
             )
 
         field = field.strip()

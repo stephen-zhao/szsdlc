@@ -98,6 +98,56 @@ def _alternative(entity: Entity, blocked: str) -> str | None:
     return None
 
 
+def suggested_next(entity: Entity) -> str:
+    """A status this entity could legally move to right now.
+
+    Every refusal that has to name *some* status uses this rather than the
+    workflow's initial one. Suggesting `initial` looks reasonable and is
+    usually wrong: an entity sitting at `idea` would be told to move to `idea`,
+    and the fix would fail with "already idea" — turning a two-call recovery
+    into a loop.
+    """
+    workflow = entity.type.workflow
+    current = workflow.states.get(entity.status or "")
+    if current:
+        for candidate in current.to:
+            state = workflow.states.get(candidate)
+            if state is not None and not state.abandoned:
+                return candidate
+        if current.to:
+            return current.to[0]
+    return workflow.initial
+
+
+def step_toward(entity: Entity, target: str) -> str | None:
+    """The first hop on the shortest legal path from here to `target`.
+
+    `idea → ready` is two transitions, so telling a caller to "set status=ready"
+    produces a refusal rather than progress. Naming the next hop is the
+    difference between a fix and a suggestion.
+    """
+    workflow = entity.type.workflow
+    start = entity.status or ""
+    if start not in workflow.states or target not in workflow.states:
+        return None
+    if start == target:
+        return None
+
+    frontier = [(start, None)]
+    seen = {start}
+    while frontier:
+        current, first = frontier.pop(0)
+        for candidate in workflow.states[current].to:
+            if candidate in seen:
+                continue
+            hop = first or candidate
+            if candidate == target:
+                return hop
+            seen.add(candidate)
+            frontier.append((candidate, hop))
+    return None
+
+
 def check(entity: Entity, status: str) -> None:
     """Refuse the move to `status`, or return silently."""
     workflow = entity.type.workflow
@@ -106,7 +156,7 @@ def check(entity: Entity, status: str) -> None:
     if status not in workflow.states:
         raise Refused(
             f"{ref}: {status!r} is not a status of {entity.type.name}.",
-            fix=f"szsdlc set {ref} status={workflow.initial}",
+            fix=f"szsdlc set {ref} status={suggested_next(entity)}",
             see=f"statuses: {', '.join(workflow.states)}",
         )
 

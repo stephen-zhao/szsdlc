@@ -207,7 +207,8 @@ class Roadmap:
         if horizon not in self.buckets:
             raise BadInput(
                 f"{horizon!r} is not a horizon of roadmap {self.name!r}.",
-                fix=f"use one of: {', '.join(self.spec.horizons)}",
+                fix=f"szsdlc schedule {id_text} --horizon {self.spec.horizons[-1]}",
+                see=f"horizons: {', '.join(self.spec.horizons)}",
             )
         if sum(bool(x) for x in (after, before, top)) > 1:
             raise BadInput(
@@ -336,20 +337,26 @@ class Scheduler:
         if threshold is None:
             return
 
+        from .workflow import step_toward, suggested_next
+
         reached = has_reached(entity_type.workflow, entity.status, threshold)
         if reached is None:
             states = ", ".join(entity_type.workflow.states)
             raise Refused(
                 f"{entity.id.text}: status {entity.status!r} is not in the "
                 f"{entity_type.name} workflow.",
-                fix=f"szsdlc set {entity.id.text} status={threshold}",
+                fix=f"szsdlc set {entity.id.text} status={suggested_next(entity)}",
                 see=f"statuses: {states}",
             )
         if not reached:
+            # The *next hop*, not the destination: `idea → ready` is two
+            # transitions, so naming the destination produces another refusal
+            # rather than progress.
+            hop = step_toward(entity, threshold) or threshold
             raise Refused(
                 f"{entity.id.text}: status {entity.status} has not reached "
                 f"{threshold}, so it is not ready to schedule.",
-                fix=f"szsdlc set {entity.id.text} status={threshold}",
+                fix=f"szsdlc set {entity.id.text} status={hop}",
             )
 
     def schedule(self, ref: str | EntityId | Entity, horizon: str, *,

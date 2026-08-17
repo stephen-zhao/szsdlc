@@ -712,16 +712,39 @@ corrected call rather than a search.
 >   plan's own audit table already pairs them. A test now asserts every
 >   registered command appears in that block.
 
-### Task 9a: Enforce the command surface contract
-- [ ] **Step 1:** Implement C1 — every mutating command prints the resulting state in one line, so no confirming `show` is ever required.
-- [ ] **Step 2:** Implement C2/C7 — a shared error type carrying `problem`, `fix` and `exit_code`, rendered to stderr in the fixed three-line shape. `fix` must be a runnable command. Suppress argparse usage dumps and convert every internal exception, so no traceback can escape.
-- [ ] **Step 2a:** **Two-shot recovery tests.** For every error class, assert mechanically that (a) stderr is ≤3 lines, (b) it contains a `Fix:` line, (c) the fix line parses as a valid invocation, and (d) **executing that suggested command actually succeeds** against the same fixture. This makes "correct in two shots" an enforced property rather than an aspiration — a fix hint that doesn't work fails CI.
-- [ ] **Step 3:** Implement C3 — `set` rejects `relations`, list-valued and nested fields, naming the correct command instead.
-- [ ] **Step 4:** Implement C4 — `sync` and `validate` are silent on success, `--verbose` opts in. Assert byte-count zero on the clean path, since these run on every edit and every turn end.
-- [ ] **Step 5:** Implement nearest-match suggestions for unknown references (edit distance over known ids, best single suggestion only).
-- [ ] **Step 6:** Compact `--help`: one line per command, deep help behind `<command> --help`.
-- [ ] **Step 7:** **Golden output-budget tests**: for every command in the audit table, assert the success output stays within its stated budget against both a 20-entity and a 200-entity fixture. The table is the specification; a command that outgrows its budget fails CI.
-- [ ] **Step 8:** Commit.
+### Task 9a: Enforce the command surface contract — **DONE** (Step 4 with Tasks 10/11)
+- [x] **Step 1:** Implement C1 — every mutating command prints the resulting state in one line, so no confirming `show` is ever required.
+- [x] **Step 2:** Implement C2/C7 — a shared error type carrying `problem`, `fix` and `exit_code`, rendered to stderr in the fixed three-line shape. `fix` must be a runnable command. Suppress argparse usage dumps and convert every internal exception, so no traceback can escape.
+- [x] **Step 2a:** **Two-shot recovery tests.** For every error class, assert mechanically that (a) stderr is ≤3 lines, (b) it contains a `Fix:` line, (c) the fix line parses as a valid invocation, and (d) **executing that suggested command actually succeeds** against the same fixture.
+- [x] **Step 3:** Implement C3 — `set` rejects `relations`, list-valued and nested fields, naming the correct command instead.
+- [ ] **Step 4:** Implement C4 — `sync` and `validate` are silent on success, `--verbose` opts in. **Lands with those commands in Tasks 10 and 11**; there is nothing to assert byte-count zero on until they exist.
+- [x] **Step 5:** Implement nearest-match suggestions for unknown references (edit distance over known ids, best single suggestion only).
+- [x] **Step 6:** Compact `--help`: one line per command, deep help behind `<command> --help`.
+- [x] **Step 7:** **Golden output-budget tests**: for every command in the audit table, assert the success output stays within its stated budget against both a 20-entity and a 200-entity fixture.
+- [x] **Step 8:** Commit.
+
+> **The two-shot test found four fixes that did not work,** which is the whole
+> reason for writing it:
+>
+> - **"Not ready to schedule" pointed at the destination, not the next hop.**
+>   `idea → ready` is two transitions, so `Fix: szsdlc set WI-0001 status=ready`
+>   produced a second refusal rather than progress. `step_toward` now names the
+>   first hop.
+> - **Three refusals suggested the workflow's *initial* status,** which for an
+>   entity already sitting there fails with "already idea" — a two-call
+>   recovery turned into a loop. `suggested_next` names a status the entity can
+>   actually move to.
+> - **Two fixes were prose lists** (`use one of: now, next, later`). Line 2 is
+>   now runnable and the list moved to line 3, which is what `See:` is for.
+> - **`init` twice suggested `szsdlc validate`,** a command that does not exist
+>   yet. It now suggests `context`, which answers the actual question — what is
+>   already here.
+>
+> **Two honest limits on Step 2a.** A fix containing a `<placeholder>` is a
+> form the caller must fill in, so the test holds it to naming a real command
+> rather than executing it. A fix that is a remedy rather than a command
+> (writing `design.md`, editing a config key) must name the concrete path or
+> key. Both are asserted; neither is waived.
 
 ---
 

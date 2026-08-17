@@ -237,7 +237,8 @@ class IdSpace:
         if self.config.type_for_prefix(prefix) is None:
             raise BadInput(
                 f"{ref!r}: unknown id prefix {prefix!r}.",
-                fix=f"use one of: {', '.join(self.config.prefixes)}",
+                fix="szsdlc list --limit 20",
+                see=f"prefixes: {', '.join(self.config.prefixes)}",
             )
 
         return self.make(prefix, int(groups["number"]))

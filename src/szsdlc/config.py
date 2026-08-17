@@ -228,10 +228,13 @@ class Config:
         try:
             return self.entity_types[name]
         except KeyError:
-            known = ", ".join(sorted(self.entity_types))
+            known = sorted(self.entity_types)
+            # No single fix exists — we cannot know which type was meant — so
+            # line 2 is the diagnostic that reveals the answer, per C2.
             raise ConfigError(
                 f"unknown entity type {name!r}.",
-                fix=f"use one of: {known}",
+                fix=f"szsdlc list --type {known[0]}" if known else "szsdlc init",
+                see=f"types: {', '.join(known)}",
             ) from None
 
     def type_for_prefix(self, prefix: str) -> EntityType | None:
