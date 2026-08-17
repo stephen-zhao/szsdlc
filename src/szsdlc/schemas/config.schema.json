@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/StephenZhao/szsdlc/schemas/config.schema.json",
+  "$id": "https://github.com/stephen-zhao/szsdlc/schemas/config.schema.json",
   "title": "szsdlc project configuration",
   "description": "The shape of .szsdlc/config.yml after it has been deep-merged over the shipped defaults. Every entity type, relation, workflow and horizon in szsdlc is data validated by this schema, never code — a project may replace all of it. Unknown keys are rejected everywhere, because a silently ignored key is a configuration that does not do what it says.",
 

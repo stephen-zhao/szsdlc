@@ -1,9 +1,9 @@
 {
   "name": "szsdlc",
   "description": "Project-agnostic agentic SDLC framework: entities are the single source of truth, every index is generated, and the deterministic operations are script calls with fixed token cost.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "author": { "name": "Stephen Zhao" },
-  "homepage": "https://github.com/StephenZhao/szsdlc",
+  "homepage": "https://github.com/stephen-zhao/szsdlc",
   "license": "MIT",
   "keywords": ["sdlc", "backlog", "traceability", "requirements", "roadmap"],
   "hooks": "./hooks/hooks.json"

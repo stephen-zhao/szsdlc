@@ -900,7 +900,7 @@ corrected call rather than a search.
 ### Task 15: Marketplace registration
 - [ ] **Step 1:** Push the `szsdlc` repo to GitHub.
 - [ ] **Step 2:** Add to the `szccpmp` marketplace's `marketplace.json`:
-      `{"name": "szsdlc", "source": {"source": "github", "repo": "<owner>/szsdlc"}}`.
+      `{"name": "szsdlc", "source": {"source": "github", "repo": "stephen-zhao/szsdlc"}}`.
 - [ ] **Step 3:** Install into a scratch project via `/plugin marketplace update` then `/plugin install szsdlc@szccpmp`; confirm skills and hooks load.
 - [ ] **Step 4:** Commit.
 
@@ -1035,10 +1035,9 @@ change now and expensive later, so decide before the relevant task.
 4. **Do multiple named roadmaps earn their keep?** The `--roadmap` flag exists
    for a global roadmap plus per-epic ones. If one roadmap is always enough,
    the flag and its defaulting logic can go.
-5. **GitHub owner for the marketplace entry** in Task 15 is still `<owner>`.
-   `.claude-plugin/plugin.json` currently carries a *provisional* `homepage`
-   of `github.com/StephenZhao/szsdlc`; it is a guess and needs confirming
-   alongside the marketplace entry, since both name the same repo.
+5. ~~**GitHub owner for the marketplace entry**~~ **Decided: `stephen-zhao`.**
+   Applied to `plugin.json`'s `homepage` and to the config schema's `$id`,
+   which both name the same repo.
 
 ## Working environment
 
