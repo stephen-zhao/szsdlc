@@ -16,6 +16,7 @@ There is no `--check` flag. Staleness is a `validate` rule implemented with the
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 from dataclasses import dataclass
@@ -180,6 +181,8 @@ class Renderer:
                 fix=f"correct {self._relative(data_path)}",
             ) from None
 
+        data = _jsonish(data)
+
         if spec.schema:
             schema_path = self.config.root / spec.schema
             schema = json.loads(schema_path.read_text(encoding="utf-8"))
@@ -197,8 +200,54 @@ class Renderer:
         return Rendered(name=name, path=self.config.record_path(name), body=body)
 
     def all(self) -> list[Rendered]:
-        return ([self.view(name) for name in self.config.views]
-                + [self.record(name) for name in self.config.records])
+        """Everything generated, skipping records that cannot be built.
+
+        A broken record is a fact about the *project*, so it becomes a
+        validate finding rather than an exception. Raising here instead would
+        let one malformed YAML file take down `context` — and `context` is the
+        SessionStart payload, so a stray colon in a hand-authored dataset would
+        silently cost the model everything it knows about the work.
+        """
+        rendered = [self.view(name) for name in self.config.views]
+        for name in self.config.records:
+            try:
+                rendered.append(self.record(name))
+            except BadInput:
+                continue
+        return rendered
+
+    def record_problems(self) -> list[BadInput]:
+        """Why each unbuildable record could not be built. Used by `validate`,
+        which is the command whose job it is to say so."""
+        problems = []
+        for name in self.config.records:
+            try:
+                self.record(name)
+            except BadInput as exc:
+                problems.append(exc)
+        return problems
+
+
+def _jsonish(value: Any) -> Any:
+    """Fold YAML's own scalar types down to what JSON Schema can validate.
+
+    `last_calibrated: 2026-05-02` is a `datetime.date` to a YAML parser and a
+    string to every schema anybody would write for it, so the most obvious
+    field a record can hold — a date — failed validation with a message
+    blaming the author and quoting a Python repr back at them. Dates become
+    ISO 8601 strings, which is both what `format: date` expects and what the
+    template would have rendered anyway.
+
+    Applied before validation *and* before rendering, so the schema a project
+    writes describes the same data its template receives.
+    """
+    if isinstance(value, dict):
+        return {key: _jsonish(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonish(item) for item in value]
+    if isinstance(value, (dt.date, dt.datetime, dt.time)):
+        return value.isoformat()
+    return value
 
 
 def compare(rendered: list[Rendered]) -> list[Rendered]:

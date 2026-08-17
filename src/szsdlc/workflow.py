@@ -32,10 +32,20 @@ class Transition:
 
 @dataclass(frozen=True)
 class Gate:
-    """One unmet entry condition, with the way to meet it."""
+    """One unmet entry condition, with the way to meet it.
+
+    `prefer_remedy` decides what a refusal offers as its `Fix:`. Set it when
+    the remedy is the *only* real answer — no legal transition creates a
+    missing file — and leave it off when moving somewhere else is a genuine
+    alternative. Unfinished tasks are the latter: "go back to executing" is a
+    true statement about where the work belongs, whereas "results.md is
+    missing, so return to running" is the same bad advice as suggesting the
+    caller abandon the work, wearing a legal transition as a disguise.
+    """
 
     reason: str
     remedy: str
+    prefer_remedy: bool = False
 
     def __str__(self) -> str:
         return self.reason
@@ -57,14 +67,18 @@ def unmet_gates(entity: Entity, status: str) -> list[Gate]:
         gates.append(Gate(
             reason=f"{artifact} is missing or empty",
             remedy=f"write {where}, then rerun",
+            prefer_remedy=True,
         ))
 
     if state.requires_tasks_complete:
         progress = entity.progress
         if progress is None:
             gates.append(Gate(
+                # A misconfiguration, not a state of the work: no transition
+                # anywhere fixes it, so the remedy is the only answer.
                 reason=f"{entity.type.name} declares no progress artifact to check",
                 remedy=f"set entity_types.{entity.type.name}.progress_artifact",
+                prefer_remedy=True,
             ))
         elif not progress.complete:
             unchecked = progress.remaining if progress.total else "no"
@@ -188,7 +202,7 @@ def check(entity: Entity, status: str) -> None:
 
     gates = unmet_gates(entity, status)
     if gates:
-        alternative = _alternative(entity, status)
+        alternative = None if gates[0].prefer_remedy else _alternative(entity, status)
         raise Refused(
             f"{ref}: status {entity.status} → {status} blocked, {gates[0].reason}.",
             fix=(f"szsdlc set {ref} status={alternative}" if alternative

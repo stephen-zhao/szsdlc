@@ -1,0 +1,352 @@
+# A wholly non-default configuration, in a domain with no software in it.
+#
+# This file exists to prove one claim: **no module in szsdlc names an entity
+# type.** Not one of the six shipped types appears below. `work_item`, `epic`
+# and `requirement` are gone; the workflows have different shapes and
+# different numbers of states; the horizons are not now/next/later; and the
+# whole thing is a wet lab rather than a codebase.
+#
+# Everything still works — `next` sequences experiments, coverage is derived
+# from which hypotheses have experiments against them, gates refuse a write-up
+# without results, and the traceability view walks back to the question that
+# started it. Behaviour follows the capability flags, which is what makes that
+# possible.
+#
+# `_replace: true` throws the shipped types away wholesale rather than merging
+# over them; without it, this project would inherit six types it has no use for.
+
+version: 1
+
+paths:
+  entities: .
+  roadmaps: schedule
+  views: overview
+  records: overview
+  standards: practices
+  templates: .szsdlc/templates
+  entity_file: entity.md
+
+id:
+  pattern: "{prefix}-{number}"
+  padding: 3
+
+parent_relation: programme
+
+tags:
+  normalize: true
+
+validate:
+  tag_near_duplicate_distance: 1
+  tag_singleton_threshold: 12
+  inbox_stale_days: 60
+
+# ---------------------------------------------------------------------------
+# Entity types — five of them, none shared with the defaults.
+# ---------------------------------------------------------------------------
+
+entity_types:
+  _replace: true
+
+  question:
+    prefix: Q
+    title: Open question
+    dir: questions
+    layout: file
+    intake: true
+    actionable: false
+    tracks_progress: false
+    can_parent: false
+    schedulable: false
+    persistent: false
+    fields:
+      raised:
+        type: date
+        required: true
+      dropped_reason:
+        type: text
+        required: false
+    workflow:
+      initial: raised
+      states:
+        raised:
+          to: [triaging, formalised, set-aside]
+        triaging:
+          to: [formalised, set-aside]
+        formalised:
+          terminal: true
+          description: A hypothesis or a programme was spawned from this.
+        set-aside:
+          terminal: true
+          abandoned: true
+
+  programme:
+    prefix: PRG
+    title: Programme
+    dir: programmes
+    layout: directory
+    intake: false
+    actionable: false
+    tracks_progress: false
+    can_parent: true
+    schedulable: true
+    persistent: false
+    fields:
+      opened:
+        type: date
+        required: true
+      lead:
+        type: text
+        required: false
+    artifacts: [log.md]
+    journal_artifact: log.md
+    workflow:
+      initial: proposed
+      states:
+        proposed:
+          to: [funded, shelved]
+        funded:
+          to: [running, shelved]
+        running:
+          to: [concluded, shelved]
+        concluded:
+          terminal: true
+        shelved:
+          terminal: true
+          abandoned: true
+    derived:
+      progress:
+        kind: aggregate_progress
+        relation: programme
+
+  hypothesis:
+    prefix: HYP
+    title: Hypothesis
+    dir: hypotheses
+    layout: directory
+    intake: false
+    # A hypothesis is a claim, not work: it is never scheduled and never
+    # finished, only supported, refuted or withdrawn. Same flags as the
+    # shipped `requirement`, in a domain that has never heard of one.
+    actionable: false
+    tracks_progress: false
+    can_parent: false
+    schedulable: false
+    persistent: true
+    fields:
+      stated:
+        type: date
+        required: true
+      falsifiable_by:
+        type: text
+        required: false
+        description: What observation would refute this.
+    workflow:
+      initial: stated
+      states:
+        stated:
+          to: [under-test, withdrawn]
+        under-test:
+          to: [supported, refuted, withdrawn]
+        supported:
+          to: [refuted, withdrawn]
+        refuted:
+          terminal: true
+        withdrawn:
+          terminal: true
+    derived:
+      # Same two facts the shipped `requirement` derives, over this project's
+      # own relation. The register view selects types by `persistent` plus a
+      # `derived` block, not by name — declaring these is what puts a
+      # hypothesis in it, and nothing in the framework knows what one is.
+      covered:
+        kind: has_incoming
+        relation: tests
+        description: At least one experiment bears on this.
+      delivered:
+        kind: all_incoming_terminal
+        relation: tests
+        description: Every experiment testing this has been written up.
+
+  experiment:
+    prefix: EXP
+    title: Experiment
+    dir: experiments
+    layout: directory
+    intake: false
+    actionable: true
+    tracks_progress: true
+    can_parent: false
+    schedulable: true
+    persistent: false
+    fields:
+      opened:
+        type: date
+        required: true
+      bench:
+        type: text
+        required: false
+    artifacts: [method.md, runs.md, results.md, log.md]
+    progress_artifact: runs.md
+    journal_artifact: log.md
+    workflow:
+      initial: sketched
+      states:
+        sketched:
+          to: [designed, abandoned]
+        designed:
+          to: [scheduled, abandoned]
+          requires_artifact: [method.md]
+        scheduled:
+          to: [running, abandoned]
+        running:
+          to: [analysing, abandoned]
+          requires_artifact: [runs.md]
+        analysing:
+          to: [written-up, running, abandoned]
+        written-up:
+          terminal: true
+          requires_artifact: [results.md]
+          requires_tasks_complete: true
+        abandoned:
+          terminal: true
+          abandoned: true
+
+  protocol:
+    prefix: PROT
+    title: Protocol
+    dir: protocols
+    layout: directory
+    intake: false
+    actionable: false
+    tracks_progress: false
+    can_parent: false
+    schedulable: false
+    persistent: true
+    fields:
+      written:
+        type: date
+        required: true
+    workflow:
+      initial: draft
+      states:
+        draft:
+          to: [in-use, retired]
+        in-use:
+          to: [superseded, retired]
+        superseded:
+          terminal: true
+        retired:
+          terminal: true
+
+# ---------------------------------------------------------------------------
+# Relations
+# ---------------------------------------------------------------------------
+
+relations:
+  _replace: true
+
+  programme:
+    inverse: experiments
+    source_types: [experiment]
+    target_types: null
+    cardinality: one
+    acyclic: true
+    required_on: [experiment]
+    description: Which programme this work sits under.
+
+  tests:
+    inverse: tested_by
+    source_types: [experiment]
+    target_types: [hypothesis]
+    cardinality: many
+    description: Which claims this experiment bears on. Coverage is derived from these.
+
+  follows:
+    inverse: followed_by
+    source_types: [experiment]
+    target_types: [protocol]
+    cardinality: many
+    description: The written method this run adheres to.
+
+  blocked_by:
+    inverse: blocks
+    source_types: [experiment, programme]
+    target_types: [experiment, programme]
+    cardinality: many
+    acyclic: true
+    description: Must be terminal before this can start.
+
+  raised_from:
+    inverse: raised_into
+    source_types: [hypothesis, programme, experiment, protocol]
+    target_types: [question]
+    cardinality: one
+    description: Provenance, written on the child when a question is formalised.
+
+  supersedes:
+    inverse: superseded_by
+    source_types: [hypothesis, protocol, programme, experiment]
+    target_types: [hypothesis, protocol, programme, experiment]
+    cardinality: one
+    acyclic: true
+    description: Replaces an earlier statement. Nothing is renamed or deleted.
+
+# ---------------------------------------------------------------------------
+# Schedule — horizons that are not now/next/later.
+# ---------------------------------------------------------------------------
+
+roadmaps:
+  _replace: true
+
+  bench-schedule:
+    title: Bench schedule
+    horizons: [this-quarter, next-quarter, someday]
+    requires_scheduling:
+      experiment: scheduled
+      programme: funded
+
+# ---------------------------------------------------------------------------
+# Views — the shipped templates, selecting by capability flag rather than by
+# type name, which is why they render a wet lab without modification.
+# ---------------------------------------------------------------------------
+
+views:
+  _replace: true
+
+  open-questions:
+    title: Open questions
+    template: views/inbox.md.j2
+    output: open-questions.md
+  bench-schedule:
+    title: Bench schedule
+    template: views/roadmap.md.j2
+    output: bench-schedule.md
+  board:
+    title: Board
+    template: views/board.md.j2
+    output: board.md
+  hypothesis-register:
+    title: Hypothesis register
+    template: views/requirements-register.md.j2
+    output: hypothesis-register.md
+  programme-rollup:
+    title: Programme rollup
+    template: views/epic-rollup.md.j2
+    output: programme-rollup.md
+  provenance:
+    title: Provenance
+    template: views/traceability.md.j2
+    output: provenance.md
+
+# ---------------------------------------------------------------------------
+# One project-specific record: a table this lab needs and the framework has
+# never heard of. Hand-authored YAML in, generated markdown out.
+# ---------------------------------------------------------------------------
+
+records:
+  instruments:
+    title: Instrument calibration
+    data: overview/instruments.yml
+    schema: .szsdlc/schemas/instruments.schema.json
+    template: records/instruments.md.j2
+    output: instruments.md

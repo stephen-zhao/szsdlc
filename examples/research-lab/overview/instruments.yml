@@ -1,0 +1,20 @@
+# Hand-authored. `szsdlc sync` renders overview/instruments.md from this.
+instruments:
+  - name: Incubator (north)
+    serial: INC-N-4471
+    last_calibrated: 2026-05-02
+    interval_days: 180
+    notes: Runs warm at the back-left; see EXP-001.
+  - name: Incubator (south)
+    serial: INC-S-4472
+    last_calibrated: 2026-05-02
+    interval_days: 180
+  - name: Plate reader
+    serial: PR-1180
+    last_calibrated: 2026-07-14
+    interval_days: 365
+  - name: Autoclave
+    serial: AC-22
+    last_calibrated: 2026-02-11
+    interval_days: 90
+    notes: Log book digitised 2026-08.

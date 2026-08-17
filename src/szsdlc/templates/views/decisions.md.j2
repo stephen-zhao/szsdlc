@@ -1,6 +1,6 @@
 {# The decision log. Like the requirements register it is never pruned:
    a superseded decision is the most useful kind to be able to look up. #}
-# Decisions
+# {{ view.title }}
 
 {% set log_types = [] %}
 {% for entity_type in types_with('persistent') if not entity_type.derived %}

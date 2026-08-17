@@ -1,7 +1,7 @@
 {# Each grouping entity with its children and derived aggregate progress.
    Closed ones drop off — a rollup of finished work is a report, not a board.
    The percentage is never stored anywhere; it is computed here every time. #}
-# Epic rollup
+# {{ view.title }}
 
 {% set parents = types_with('can_parent') %}
 {% for entity_type in parents %}

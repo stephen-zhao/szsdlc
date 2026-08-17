@@ -623,3 +623,23 @@ def test_a_non_terminal_transition_leaves_placement_alone(run, ready):
     assert "off" not in output
     _, listing, _ = run("next")
     assert "WI-0001" in listing
+
+
+def test_a_missing_artifact_says_write_it_not_go_backwards(run, seeded, project):
+    """The artifact gate's remedy beats any legal alternative transition.
+
+    A type whose review-ish state can legally return to an earlier one — the
+    shipped `review → executing` is one, and a wet-lab `analysing → running`
+    is another — would otherwise be told "go back" when what it needs is a
+    file written. That is the same bad advice as suggesting the caller abandon
+    the work, wearing a legal transition as a disguise.
+    """
+    entity = entities(project).by_text("WI-0001")
+    for status in ("groomed", "ready", "designing"):
+        run("set", "WI-0001", f"status={status}")
+
+    code, _, err = run("set", "WI-0001", "status=planned")
+    assert code == EXIT_REFUSED
+    assert "design.md is missing or empty" in err
+    assert "Fix: write " in err
+    assert "design.md" in err.split("Fix:", 1)[1]

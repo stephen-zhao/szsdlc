@@ -10,6 +10,7 @@ changing in the requirement itself.
 
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 
@@ -371,7 +372,9 @@ def with_record(make_project, tmp_path):
     template = project.templates_dir / "records" / "hosts.md.j2"
     template.parent.mkdir(parents=True, exist_ok=True)
     template.write_text(
-        "# Hosts\n\n{% for row in data %}- {{ row.name }} ({{ row.role }})\n{% endfor %}",
+        "# Hosts\n\n{% for row in data %}- {{ row.name }} ({{ row.role }})"
+        "{{ ' last seen ' ~ row.last_seen if row.last_seen is defined }}\n"
+        "{% endfor %}",
         encoding="utf-8")
     return project
 
@@ -388,21 +391,70 @@ def test_sync_generates_records_alongside_views(with_record, capsys):
     assert (with_record.records_dir / "hosts.md").is_file()
 
 
-def test_a_record_that_violates_its_schema_is_refused(with_record, capsys):
+def test_a_record_that_violates_its_schema_is_reported_by_validate(with_record,
+                                                                   capsys):
+    """`sync` skips it; `validate` is the command whose job it is to say so.
+
+    `sync` is contractually silent and never validates, so a schema check
+    failing there was the contract violating itself. It matters beyond
+    tidiness: `context` builds the same renderer, so one bad dataset used to
+    take down the SessionStart payload — a stray colon in hand-authored YAML
+    costing the model everything it knows about the work.
+    """
     (with_record.root / "records" / "hosts.yml").write_text(
         yaml.safe_dump([{"name": "alpha"}]), encoding="utf-8")
-    code = main(["-C", str(with_record.root), "sync"])
-    err = capsys.readouterr().err
-    assert code == 2
-    assert "role" in err
-    assert len(err.strip().splitlines()) <= 3
+
+    assert main(["-C", str(with_record.root), "sync"]) == 0
+    assert capsys.readouterr().out == ""
+
+    code = main(["-C", str(with_record.root), "validate"])
+    reported = capsys.readouterr().out
+    assert code == 4
+    assert "role" in reported
+    assert "hosts" in reported
+
+
+def test_one_broken_record_does_not_take_down_the_other_views(with_record, capsys):
+    (with_record.root / "records" / "hosts.yml").write_text(
+        yaml.safe_dump([{"name": "alpha"}]), encoding="utf-8")
+    main(["-C", str(with_record.root), "sync"])
+    capsys.readouterr()
+    assert (with_record.views_dir / "inbox.md").is_file()
+
+    assert main(["-C", str(with_record.root), "context"]) == 0
+    assert "entities" in capsys.readouterr().out
 
 
 def test_a_missing_dataset_names_the_file_to_create(with_record, capsys):
     (with_record.root / "records" / "hosts.yml").unlink()
-    code = main(["-C", str(with_record.root), "sync"])
-    assert code == 2
-    assert "records/hosts.yml" in capsys.readouterr().err
+    assert main(["-C", str(with_record.root), "validate"]) == 4
+    assert "records/hosts.yml" in capsys.readouterr().out
+
+
+def test_yaml_dates_reach_a_json_schema_as_strings(with_record, capsys):
+    """`last_seen: 2026-05-02` is a `datetime.date` to YAML and a string to
+    every schema anybody would write for it. Unfolded, the most obvious field
+    a record can hold failed validation with a Python repr quoted back at the
+    author."""
+    (with_record.root / "records" / "hosts.yml").write_text(
+        yaml.safe_dump([{"name": "alpha", "role": "control",
+                         "last_seen": dt.date(2026, 5, 2)}]), encoding="utf-8")
+    (with_record.root / "records" / "hosts.schema.json").write_text(json.dumps({
+        "type": "array",
+        "items": {"type": "object",
+                  "required": ["name", "role", "last_seen"],
+                  "properties": {"name": {"type": "string"},
+                                 "role": {"type": "string"},
+                                 "last_seen": {"type": "string",
+                                               "format": "date"}}},
+    }), encoding="utf-8")
+
+    main(["-C", str(with_record.root), "sync"])
+    capsys.readouterr()
+    assert main(["-C", str(with_record.root), "validate"]) == 0
+    assert capsys.readouterr().out == ""
+    rendered = (with_record.records_dir / "hosts.md").read_text(encoding="utf-8")
+    assert "2026-05-02" in rendered
 
 
 # ---------------------------------------------------------------------------

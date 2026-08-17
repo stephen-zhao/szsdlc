@@ -1,0 +1,13 @@
+{# The GENERATED banner and content-hash are prepended by the renderer, so a
+   project template never writes them itself. #}
+# {{ record.title }}
+
+Hand-authored in `{{ record.data }}`; this file is generated from it.
+
+| Instrument | Serial | Last calibrated | Interval | Notes |
+|---|---|---|---|---|
+{% for item in data.instruments | sort(attribute='name') %}
+| {{ item.name }} | {{ item.serial | default('—', true) }} | {{ item.last_calibrated }} | {{ item.interval_days }}d | {{ item.notes | default('—', true) }} |
+{% endfor %}
+
+{{ data.instruments | length }} instrument{{ '' if data.instruments | length == 1 else 's' }} on the register.

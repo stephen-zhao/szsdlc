@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Instrument calibration register",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["instruments"],
+  "properties": {
+    "instruments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "last_calibrated", "interval_days"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "serial": { "type": "string" },
+          "last_calibrated": { "type": "string", "format": "date" },
+          "interval_days": { "type": "integer", "minimum": 1 },
+          "notes": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -4,24 +4,32 @@
    `covered` and `delivered` are derived from the relation graph at this
    moment. Nothing is written back to the requirement when work against it
    starts or finishes; that is the whole point of the split. #}
-# Requirements register
+# {{ view.title }}
 
+{# The derived columns are whatever the *type* declares, in declaration order.
+   Hardcoding "Covered" and "Delivered" would put this project's vocabulary in
+   a register of somebody else's — a lab tracking hypotheses derives the same
+   two facts over a relation called `tests`, and gets its own words back. #}
 {% for entity_type in types_with('persistent') if entity_type.derived %}
 {% set rows = of_type(entity_type.name) %}
 {% if rows %}
 ## {{ entity_type.title }}
 
-| Id | Status | Covered | Delivered | Implemented by | Title |
-|---|---|---|---|---|---|
+| Id | Status |{% for key in entity_type.derived %} {{ key | replace('_', ' ') | capitalize }} |{% endfor %} Referenced by | Title |
+|---|---|{% for key in entity_type.derived %}---|{% endfor %}---|---|
 {% for entity in rows %}
 {% set facts = derived(entity) %}
-{% set implementers = [] %}
+{% set referrers = [] %}
 {% for relation in config.relations.values() %}
 {% for source in sources(entity, relation.name) %}
-{% set _ = implementers.append(source.id.text) %}
+{% set _ = referrers.append(source.id.text) %}
 {% endfor %}
 {% endfor %}
-| {{ entity.id.text }} | {{ entity.status }} | {{ '✓' if facts.get('covered') else '**no**' }} | {{ '✓' if facts.get('delivered') else '—' }} | {{ implementers | join(', ') or '—' }} | {{ entity.title | clip }} |
+{# A false `has_incoming` means nothing points at this at all — an orphaned
+   definition, and the one cell in this table worth shouting about. Every other
+   falsity is just "not finished yet". That distinction is a property of the
+   derivation kind, so it holds in any domain. #}
+| {{ entity.id.text }} | {{ entity.status }} |{% for key, spec in entity_type.derived.items() %} {{ '✓' if facts.get(key) else ('**no**' if spec.kind == 'has_incoming' else '—') }} |{% endfor %} {{ referrers | join(', ') or '—' }} | {{ entity.title | clip }} |
 {% endfor %}
 
 {% endif %}

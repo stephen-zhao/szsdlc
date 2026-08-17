@@ -1,0 +1,3 @@
+- [x] plate replicate set 1
+- [x] plate replicate set 2
+- [x] plate replicate set 3

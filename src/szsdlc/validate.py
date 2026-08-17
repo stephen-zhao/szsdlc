@@ -380,6 +380,16 @@ def stale_generated(config: Config, store: EntityStore, graph: Graph,
     findings = []
     renderer = render_module.Renderer(config, store, graph, roadmaps)
 
+    # A record whose dataset is missing, malformed or off-schema cannot be
+    # rendered at all. `sync` skips it so one bad file cannot take down every
+    # other generated view; saying so is this command's job.
+    for problem in renderer.record_problems():
+        findings.append(Finding(
+            kind="broken-record", ref="record",
+            message=problem.problem.rstrip("."),
+            fix=problem.fix or "szsdlc validate --verbose",
+        ))
+
     for item in renderer.all():
         if not item.path.is_file():
             findings.append(Finding(

@@ -1,6 +1,6 @@
 {# Unrefined ideas, oldest first. Sorted oldest-first because an inbox sorted
    newest-first is an inbox whose bottom never gets drained. #}
-# Inbox
+# {{ view.title }}
 
 {% set open_ideas = [] %}
 {% for entity in entities if entity.type.intake and not entity.is_terminal %}

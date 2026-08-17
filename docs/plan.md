@@ -959,11 +959,51 @@ corrected call rather than a search.
 > `git diff` over `requirements/` across the entire run is empty while the
 > register shows the requirement flipping to covered.
 
-### Task 17: Documentation
-- [ ] **Step 1:** `README.md` — model, config reference, command reference, install.
-- [ ] **Step 2:** `AGENTS.md` — the agent-facing contract: never hand-edit generated files, transition status through the CLI, author relations on one side only, capture rather than discuss-and-forget, order via `order`.
-- [ ] **Step 3:** An `examples/` project with a wholly non-default entity-type set, custom horizons and one custom record, proving genericity.
-- [ ] **Step 4:** Commit, tag `v0.1.0`.
+### Task 17: Documentation — **DONE** *(bar the tag, which waits on Task 15)*
+- [x] **Step 1:** `README.md` — model, config reference, command reference, install.
+- [x] **Step 2:** `AGENTS.md` — the agent-facing contract: never hand-edit generated files, transition status through the CLI, author relations on one side only, capture rather than discuss-and-forget, order via `order`.
+- [x] **Step 3:** An `examples/` project with a wholly non-default entity-type set, custom horizons and one custom record, proving genericity.
+- [~] **Step 4:** Commit, tag `v0.1.0`. — *Committed. Tagging waits on Task 15: a version tag naming a repo whose owner is still undecided is a tag that has to be moved.*
+
+> **The example is a test, not a sample.** `tests/test_example.py` loads
+> `examples/research-lab` and asserts that its vocabulary and the shipped
+> defaults are disjoint, that `validate` is clean, and that every committed
+> generated file matches what the current code renders. That last one makes the
+> directory a canary: changing a shipped template fails the suite until the
+> example is re-synced, so the committed sample can never drift into showing
+> output the tool no longer produces. It caught three real bugs within minutes
+> of first being run, all of them things the unit tests could not see because
+> every fixture they use is software-shaped:
+>
+> - **Records could not hold a date.** `last_calibrated: 2026-05-02` is a
+>   `datetime.date` to a YAML parser and a string to every JSON Schema anybody
+>   would write for it, so the most obvious field a record can hold failed
+>   validation — with a Python repr quoted back at the author. YAML's own
+>   scalar types are now folded to JSON's before both validation and rendering,
+>   so a project's schema describes the same data its template receives.
+> - **One malformed record took down `context`.** A broken dataset raised
+>   rather than becoming a finding, and `context` builds the same renderer — so
+>   a stray colon in hand-authored YAML cost the model everything it knew about
+>   the work at session start. `sync` now skips an unbuildable record (it is
+>   contractually silent and *never validates*, so a schema check failing there
+>   was the contract violating itself) and `validate` reports it. This is the
+>   same "invalidity is representable" rule the entities already had; records
+>   had simply never been given it.
+> - **The artifact gate suggested going backwards.** With a workflow whose
+>   review-ish state can legally return to an earlier one — `analysing →
+>   running` here, `review → executing` in the defaults — a missing artifact
+>   was answered with "go back" rather than "write the file". That is the same
+>   bad advice as suggesting the caller abandon the work, wearing a legal
+>   transition as a disguise. Gates now say whether their remedy is the only
+>   real answer: a missing file always is, unfinished tasks genuinely are not.
+>
+> Two smaller ones, both places the "no module names a type" claim was true of
+> the code and quietly false of the templates: **view headings were hardcoded**
+> (a register of hypotheses titled "Requirements register"), and the register's
+> **derived columns were hardcoded** rather than read from the type's own
+> `derived` block. Falsity is still shouted for a `has_incoming` attribute and
+> not for the others — nothing points at this is an orphan in any domain,
+> whereas not finished yet is not news.
 
 ---
 

@@ -1,0 +1,1 @@
+- 2026-08-17 north incubator reading 39.1C at the back-left corner
