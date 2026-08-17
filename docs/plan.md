@@ -428,6 +428,7 @@ corrected call rather than a search.
 | `src/szsdlc/config.py` | Load/validate `.szsdlc/config.yml`, apply defaults |
 | `src/szsdlc/ids.py` | Id pattern, prefix/key registry, per-(type,key) counters, tombstone resolution |
 | `src/szsdlc/text.py` | Every normalization in one place: slugs, tags, edit distance, nearest-match |
+| `src/szsdlc/frontmatter.py` | Surgical block-level frontmatter editing: change one field, leave every other byte alone |
 | `src/szsdlc/model.py` | Entity parsing for both layouts, frontmatter round-trip, progress parsing |
 | `src/szsdlc/graph.py` | Relation graph, inverse derivation, derived attributes, cycle detection |
 | `src/szsdlc/roadmap.py` | Roadmap records, horizons, placement operations |
@@ -518,14 +519,37 @@ corrected call rather than a search.
 > - **`text.py` holds every normalization** — slugs, tags, distance. One
 >   module, because normalization only works if it happens at one place.
 
-### Task 4: Entity model
-- [ ] **Step 1:** Implement `model.py` supporting **both layouts** — a `file` entity is a single markdown file, a `directory` entity is `entity.md` plus artifacts — behind one interface so nothing downstream branches on layout.
-- [ ] **Step 2:** Parse into frontmatter + body with a **round-trip preserving key order, comments and body byte-for-byte** when a single field changes.
-- [ ] **Step 3:** Validate frontmatter against a schema composed from core fields plus the type's configured fields. For `intake` types, require only `id` and `status`; derive a title from the first non-empty body line when absent.
-- [ ] **Step 4:** Progress parsing for `tracks_progress` types: count `- [ ]` / `- [x]` in the configured artifact.
-- [ ] **Step 5:** A file whose frontmatter will not parse loads as an explicit **unparseable entity** carrying its path and the parse error — never an exception. One corrupt file must not stop the other 199 from loading. Likewise a status outside the configured workflow loads as-is; `set` refuses to create one, but a hand-edited file must still be readable.
-- [ ] **Step 6:** Tests including a round-trip property test across both layouts, plus loading a directory containing one corrupt file and asserting every other entity still loads.
-- [ ] **Step 6:** Commit.
+### Task 4: Entity model — **DONE**
+- [x] **Step 1:** Implement `model.py` supporting **both layouts** — a `file` entity is a single markdown file, a `directory` entity is `entity.md` plus artifacts — behind one interface so nothing downstream branches on layout.
+- [x] **Step 2:** Parse into frontmatter + body with a **round-trip preserving key order, comments and body byte-for-byte** when a single field changes.
+- [x] **Step 3:** Validate frontmatter against a schema composed from core fields plus the type's configured fields. For `intake` types, require only `id` and `status`; derive a title from the first non-empty body line when absent.
+- [x] **Step 4:** Progress parsing for `tracks_progress` types: count `- [ ]` / `- [x]` in the configured artifact.
+- [x] **Step 5:** A file whose frontmatter will not parse loads as an explicit **unparseable entity** carrying its path and the parse error — never an exception. One corrupt file must not stop the other 199 from loading. Likewise a status outside the configured workflow loads as-is; `set` refuses to create one, but a hand-edited file must still be readable.
+- [x] **Step 6:** Tests including a round-trip property test across both layouts, plus loading a directory containing one corrupt file and asserting every other entity still loads.
+- [x] **Step 7:** Commit.
+
+> **Decisions taken while implementing:**
+>
+> - **The round-trip does not round-trip.** Loading YAML and dumping it back
+>   would reorder keys, drop every comment and reflow the body no matter how
+>   careful the dumper. `frontmatter.py` instead locates the *block of lines*
+>   belonging to one top-level key and replaces exactly those, so everything
+>   else — comments, key order, line endings, body — is untouched at the byte
+>   level. This also avoids a `ruamel.yaml` dependency the plan's stack does
+>   not list.
+> - **A comment above a key survives that key's removal.** The alternative,
+>   attaching leading comments to the following block, would mean every `set`
+>   silently deleted the comment above the field it touched — the commoner
+>   operation and the worse loss.
+> - **Files are read and written as bytes.** Line endings are part of what
+>   stays untouched, and `read_text`/`write_text` translate them.
+> - **`progress` is `None`, not `0/0`,** for a type that does not track it:
+>   "0% done" is a lie about something that has no tasks.
+> - **Windows caught a real bug the Linux run could not.** A valueless key
+>   (`relations:`) under CRLF puts a carriage return exactly where the key
+>   pattern expected whitespace, making every nested block unaddressable on
+>   Windows and nowhere else. Fixture writes are now byte-exact and CRLF has
+>   dedicated coverage, so this is tested by design rather than by accident.
 
 ### Task 5: Relation graph and derived attributes
 - [ ] **Step 1:** Implement `graph.py`: load every entity across all types into one graph keyed by canonical id. An edge is `(source, kind, target-string)` with the target held **as written** and resolved lazily — a dangling reference must be representable, or it could never be reported.

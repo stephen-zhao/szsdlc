@@ -250,19 +250,20 @@ class IdSpace:
 
     # -- what exists on disk ------------------------------------------------
 
-    def entries(self, entity_type: EntityType | str) -> dict[EntityId, Path]:
-        """Every entity of one type, found by scanning its directory.
+    def scan(self, entity_type: EntityType | str) -> list[tuple[EntityId, Path]]:
+        """Every on-disk name of one type that parses as an id, in path order.
 
-        The directory listing *is* the index. Nothing is cached and no counter
-        is stored, so there is no second copy of this fact to go stale.
+        Returns a list rather than a mapping so a duplicated id survives to be
+        reported with *both* paths. Collapsing it here would hide the one
+        failure mode directory-scan allocation can produce.
         """
         et = (entity_type if not isinstance(entity_type, str)
               else self.config.type_for(entity_type))
         directory = self.config.dir_for(et)
         if not directory.is_dir():
-            return {}
+            return []
 
-        found: dict[EntityId, Path] = {}
+        found: list[tuple[EntityId, Path]] = []
         for entry in sorted(directory.iterdir()):
             if et.is_directory_layout:
                 if not entry.is_dir():
@@ -276,7 +277,18 @@ class IdSpace:
             entity_id = self.parse_leading(name)
             if entity_id is None or entity_id.prefix != et.prefix:
                 continue
-            found.setdefault(entity_id, entry)
+            found.append((entity_id, entry))
+        return found
+
+    def entries(self, entity_type: EntityType | str) -> dict[EntityId, Path]:
+        """Every entity of one type, found by scanning its directory.
+
+        The directory listing *is* the index. Nothing is cached and no counter
+        is stored, so there is no second copy of this fact to go stale.
+        """
+        found: dict[EntityId, Path] = {}
+        for entity_id, path in self.scan(entity_type):
+            found.setdefault(entity_id, path)
         return found
 
     def all_entries(self) -> dict[EntityId, Path]:
