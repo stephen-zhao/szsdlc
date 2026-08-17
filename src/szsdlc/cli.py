@@ -1344,12 +1344,32 @@ def run(argv: Sequence[str] | None = None) -> int:
     return runner(args)
 
 
+def _force_utf8_streams() -> None:
+    """Make output encodable everywhere before anything tries to write.
+
+    On Windows the console encoding is the ANSI codepage, not UTF-8, so a
+    single `->` arrow in a transition line raises UnicodeEncodeError from
+    inside `print` -- after the mutation has already been written to disk.
+    That reports failure for work that succeeded, which is the worst shape a
+    failure can take. Python 3.15 defaults to UTF-8 mode; until then, ask.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:  # a pipe someone replaced; nothing to do
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (ValueError, OSError):  # pragma: no cover - already detached
+            pass
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """The single place an exception becomes an exit code.
 
     C7: exit codes are distinct per class so a caller can branch without
     parsing text, and no internal exception escapes as a traceback.
     """
+    _force_utf8_streams()
     try:
         return run(argv)
     except SzsdlcError as exc:
