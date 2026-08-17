@@ -326,10 +326,20 @@ def test_dropping_twice_is_refused(run, no_stdin):
 
 
 def test_help_is_compact(capsys):
+    """The audit budgets --help at 25 lines, and this is the block a mistyped
+    command would otherwise print."""
     assert main(["--help"]) == 0
     output = capsys.readouterr().out
     assert len(output.splitlines()) <= 25
     assert "capture" in output and "refine" in output
+    # Every command reachable from the parser has a line here.
+    from szsdlc.cli import COMMANDS, build_parser
+
+    documented = {invocation.split()[0] for invocation, _ in COMMANDS}
+    documented |= {verb for invocation, _ in COMMANDS
+                   for verb in invocation.split()[0].split("|")}
+    registered = set(build_parser()._subparsers._group_actions[0].choices)
+    assert registered <= documented
 
 
 def test_no_arguments_prints_help_to_stderr_not_stdout(capsys):

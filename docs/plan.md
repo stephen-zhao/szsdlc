@@ -674,7 +674,7 @@ corrected call rather than a search.
 >   written; a test asserts the file declares nothing but the project name.
 > - **`log` prints nothing** (C4) and is the sole writer of the journal.
 
-### Task 9: Query commands (the token-saving surface)
+### Task 9: Query commands (the token-saving surface) — **DONE**
 
 > **Design rule — counters in context, details on demand.** Every condition
 > worth knowing about is a *scalar* in `szsdlc context`, costing a handful of
@@ -682,13 +682,35 @@ corrected call rather than a search.
 > scalar is non-zero and the detail is actually wanted. No listing is ever
 > unbounded, and no truncation is ever silent.
 
-- [ ] **Step 1:** `szsdlc next [--horizon H] [--parent <ref>]` — actionable queue drawn only from `actionable` types, **ordered by roadmap position** rather than a per-entity field, filtered to entities whose `depends_on` are all terminal. Under ~40 lines of output.
-- [ ] **Step 2:** `szsdlc show <ref> [--context]` — `--context` adds design summary, current unchecked task, recent journal entries, immediate relations and provenance, budgeted to a character cap.
-- [ ] **Step 3:** `szsdlc context` — the `SessionStart` payload: in-flight entities, the current task, and a **counters block** — inbox depth, unscheduled count, uncovered-requirement count, validation error and warning counts. Counters are scalars, never lists. Hard cap, deterministic ordering.
-- [ ] **Step 4:** `szsdlc list [--type T] [--status S] [--tag T]... [--parent <ref>] [--uncovered] [--unscheduled] [--limit N] [--json]` and `szsdlc trace <ref> [--depth N]` walking relations both directions, including back to the originating idea.
-- [ ] **Step 5:** Apply the output contract to **every** listing command: a default `--limit` (20), a printed total whenever results are truncated (`showing 10 of 47 — rerun with --limit 0`), and `--json` exempt from limits for programmatic use. Truncation must always be visible, since a silently capped list reads as "nothing more to see".
-- [ ] **Step 6:** `szsdlc standards match <path>...`.
-- [ ] **Step 7:** Tests asserting output stays under the caps for a 200-entity fixture, **including a fixture where every entity is unscheduled** — the migration case, and the one where an uncapped listing would hurt most; commit.
+- [x] **Step 1:** `szsdlc next [--horizon H] [--parent <ref>]` — actionable queue drawn only from `actionable` types, **ordered by roadmap position** rather than a per-entity field, filtered to entities whose `depends_on` are all terminal. Under ~40 lines of output.
+- [x] **Step 2:** `szsdlc show <ref> [--context]` — `--context` adds design summary, current unchecked task, recent journal entries, immediate relations and provenance, budgeted to a character cap.
+- [x] **Step 3:** `szsdlc context` — the `SessionStart` payload: in-flight entities, the current task, and a **counters block** — inbox depth, unscheduled count, uncovered-requirement count, validation error and warning counts. Counters are scalars, never lists. Hard cap, deterministic ordering. *(The findings counter currently sums the graph and roadmap findings; Task 11 points it at the full `validate` run and splits errors from warnings.)*
+- [x] **Step 4:** `szsdlc list [--type T] [--status S] [--tag T]... [--parent <ref>] [--uncovered] [--unscheduled] [--limit N] [--json]` and `szsdlc trace <ref> [--depth N]` walking relations both directions, including back to the originating idea.
+- [x] **Step 5:** Apply the output contract to **every** listing command: a default `--limit` (20), a printed total whenever results are truncated (`showing 10 of 47 — rerun with --limit 0`), and `--json` exempt from limits for programmatic use. Truncation must always be visible, since a silently capped list reads as "nothing more to see".
+- [x] **Step 6:** `szsdlc standards match <path>...`.
+- [x] **Step 7:** Tests asserting output stays under the caps for a 200-entity fixture, **including a fixture where every entity is unscheduled** — the migration case, and the one where an uncapped listing would hurt most; commit.
+
+> **Decisions taken while implementing:**
+>
+> - **"In flight" means *strictly past* the status at which the type becomes
+>   schedulable,** not merely non-terminal. `ready` is groomed and waiting, not
+>   under way, and the first version listed it — which turned `context` into
+>   the backlog dump the counters exist to prevent. The threshold is already
+>   declared per type in a roadmap's `requires_scheduling`, so this reuses the
+>   project's own statement of when work becomes real.
+> - **`--uncovered` is expressed through the declared derivation,** not by
+>   naming requirements, so a project with a differently named definitional
+>   type gets the flag for free.
+> - **An unresolvable dependency does not block `next`.** It is a validate
+>   finding; treating a typo as a blocker would hide the queue rather than the
+>   typo.
+> - **A single `*` in a standard's glob does not cross a path separator.**
+>   `fnmatch` would have let `docs/*.md` match `docs/a/b.md`, which defeats the
+>   point of writing a glob rather than a substring.
+> - **Paired verbs share a help row.** With 21 commands the compact help ran to
+>   29 lines against a 25-line budget; `tag`/`untag` are one idea, and the
+>   plan's own audit table already pairs them. A test now asserts every
+>   registered command appears in that block.
 
 ### Task 9a: Enforce the command surface contract
 - [ ] **Step 1:** Implement C1 — every mutating command prints the resulting state in one line, so no confirming `show` is ever required.

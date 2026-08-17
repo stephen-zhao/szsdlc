@@ -36,6 +36,10 @@ from .text import add_tags, nearest, remove_tags
 
 #: C6 — every listing is bounded, and the bound is the same everywhere.
 DEFAULT_LIMIT = 20
+#: `next` is tighter still: it answers "what now", and an answer of twenty
+#: things is not an answer.
+NEXT_LIMIT = 10
+STANDARDS_LIMIT = 10
 
 
 # ---------------------------------------------------------------------------
@@ -60,34 +64,42 @@ class Parser(argparse.ArgumentParser):
         raise SystemExit(0)
 
 
-COMMANDS: list[tuple[str, str, str]] = [
-    ("init", "", "scaffold a project: config, directories, an empty roadmap"),
-    ("capture", "[text]", "capture an idea from an argument, stdin or $EDITOR"),
-    ("refine", "<ref> --into TYPE", "spawn a typed entity from an idea"),
-    ("inbox", "", "unrefined ideas, oldest first"),
-    ("drop", "<ref> --reason ...", "close an idea that went nowhere, with a reason"),
-    ("new", "<TYPE> --title ...", "create a typed entity directly"),
-    ("set", "<ref> field=value ...", "set scalar fields; enforces the workflow"),
-    ("tag", "<ref> <tag>...", "add tags, normalized on write"),
-    ("untag", "<ref> <tag>...", "remove tags"),
-    ("link", "<ref> <rel> <ref>", "author one edge; the inverse is generated"),
-    ("unlink", "<ref> <rel> <ref>", "remove one authored edge"),
-    ("convert", "<ref> <TYPE>", "reclassify, leaving a resolving tombstone"),
-    ("log", "<ref> [msg]", "append a dated line to the journal artifact"),
-    ("schedule", "<ref> --horizon H", "place on a roadmap; --after/--before/--top"),
-    ("unschedule", "<ref>", "take off the roadmap"),
+#: (invocation, one-line blurb). Paired verbs share a row, as the plan's own
+#: audit table does — `tag`/`untag` are one idea, and spending two lines of a
+#: 25-line budget saying so twice is exactly the waste this budget exists for.
+COMMANDS: list[tuple[str, str]] = [
+    ("init", "scaffold a project: config, directories, an empty roadmap"),
+    ("capture [text]", "capture an idea from an argument, stdin or $EDITOR"),
+    ("refine <ref> --into T", "spawn a typed entity from an idea"),
+    ("inbox", "unrefined ideas, oldest first"),
+    ("drop <ref> --reason ..", "close an idea that went nowhere, with a reason"),
+    ("new <TYPE> --title ..", "create a typed entity directly"),
+    ("set <ref> field=value", "set scalar fields; enforces the workflow"),
+    ("tag|untag <ref> <tag>", "add or remove tags, normalized on write"),
+    ("link|unlink a <r> b", "author or remove one edge; inverses are generated"),
+    ("convert <ref> <TYPE>", "reclassify, leaving a resolving tombstone"),
+    ("log <ref> [msg]", "append a dated line to the journal artifact"),
+    ("schedule <ref> -H h", "place on a roadmap; --after/--before/--top"),
+    ("unschedule <ref>", "take off the roadmap"),
+    ("next", "actionable work, in roadmap order, unblocked"),
+    ("show <ref> [--context]", "one entity, or a budgeted context bundle"),
+    ("context", "in-flight work and the counters block"),
+    ("list [filters]", "by type, status, tag, parent, coverage, placement"),
+    ("trace <ref> [--depth]", "relations both ways, back to the idea"),
+    ("standards match <path>", "conventions governing these paths"),
 ]
 
 
 def compact_help() -> str:
-    """C6/Task 9a — one line per command, deep help behind `<command> --help`."""
-    width = max(len(f"{name} {usage}".strip()) for name, usage, _ in COMMANDS)
-    lines = [f"szsdlc {__version__} — agentic SDLC framework", "",
-             "usage: szsdlc <command> [options]", ""]
-    for name, usage, blurb in COMMANDS:
-        lines.append(f"  {f'{name} {usage}'.strip():<{width}}  {blurb}")
-    lines += ["", "  -C, --project PATH   run against a project other than the cwd",
-              "", "szsdlc <command> --help for details."]
+    """One line per command; deep help lives behind `<command> --help`.
+
+    A 30-line usage block is the classic way a single typo costs a thousand
+    tokens, and this is the block a mistyped command would otherwise print.
+    """
+    width = max(len(invocation) for invocation, _ in COMMANDS)
+    lines = ["usage: szsdlc [-C PATH] <command> [options]", ""]
+    lines += [f"  {invocation:<{width}}  {blurb}" for invocation, blurb in COMMANDS]
+    lines += ["", "szsdlc <command> --help for details."]
     return "\n".join(lines)
 
 
@@ -172,6 +184,49 @@ def build_parser() -> Parser:
     unschedule.add_argument("ref")
     unschedule.add_argument("--roadmap", default=None)
     unschedule.set_defaults(run=cmd_unschedule)
+
+    nxt = subparsers.add_parser("next", prog="szsdlc next")
+    nxt.add_argument("--horizon", default=None)
+    nxt.add_argument("--parent", default=None)
+    nxt.add_argument("--roadmap", default=None)
+    nxt.add_argument("--limit", type=int, default=NEXT_LIMIT)
+    nxt.add_argument("--json", action="store_true", dest="as_json")
+    nxt.set_defaults(run=cmd_next)
+
+    show = subparsers.add_parser("show", prog="szsdlc show")
+    show.add_argument("ref")
+    show.add_argument("--context", action="store_true", dest="with_context")
+    show.add_argument("--json", action="store_true", dest="as_json")
+    show.set_defaults(run=cmd_show)
+
+    ctx = subparsers.add_parser("context", prog="szsdlc context")
+    ctx.add_argument("--json", action="store_true", dest="as_json")
+    ctx.set_defaults(run=cmd_context)
+
+    listing = subparsers.add_parser("list", prog="szsdlc list")
+    listing.add_argument("--type", dest="type_name", default=None)
+    listing.add_argument("--status", default=None)
+    listing.add_argument("--tag", action="append", default=None)
+    listing.add_argument("--parent", default=None)
+    listing.add_argument("--uncovered", action="store_true")
+    listing.add_argument("--unscheduled", action="store_true")
+    listing.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
+    listing.add_argument("--json", action="store_true", dest="as_json")
+    listing.set_defaults(run=cmd_list)
+
+    trace = subparsers.add_parser("trace", prog="szsdlc trace")
+    trace.add_argument("ref")
+    trace.add_argument("--depth", type=int, default=2)
+    trace.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
+    trace.add_argument("--json", action="store_true", dest="as_json")
+    trace.set_defaults(run=cmd_trace)
+
+    standards = subparsers.add_parser("standards", prog="szsdlc standards")
+    standards.add_argument("subcommand", choices=["match", "list"])
+    standards.add_argument("paths", nargs="*")
+    standards.add_argument("--limit", type=int, default=STANDARDS_LIMIT)
+    standards.add_argument("--json", action="store_true", dest="as_json")
+    standards.set_defaults(run=cmd_standards)
 
     return parser
 
@@ -381,25 +436,9 @@ def _refined_from_relation(session: Session, idea: Entity, target) -> str | None
 # ---------------------------------------------------------------------------
 
 
-def _age_days(entity: Entity) -> int | None:
-    """Days since this entity's first declared date field.
-
-    Read off the type's own fields rather than hunting the frontmatter for
-    anything date-shaped, so a project whose intake type records `raised`
-    rather than `captured` still gets an age.
-    """
-    for name, spec in entity.type.fields.items():
-        if spec.type != "date":
-            continue
-        value = entity.data.get(name)
-        if isinstance(value, dt.datetime):
-            value = value.date()
-        if isinstance(value, dt.date):
-            return (dt.date.today() - value).days
-    return None
-
-
 def cmd_inbox(args: argparse.Namespace) -> int:
+    from .context import age_days as _age_days
+
     session = Session(args.project)
 
     unrefined = [
@@ -882,6 +921,262 @@ def cmd_unschedule(args: argparse.Namespace) -> int:
                 f"{scheduler.roadmap.spec.horizons[-1]}",
         )
     out(f"{entity_id.text}: off {scheduler.roadmap.name}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Queries
+#
+# Design rule — counters in context, details on demand. Every listing here is
+# bounded by default and every truncation is printed, because a silently capped
+# list reads as "nothing more to see".
+# ---------------------------------------------------------------------------
+
+
+def _graph(session: Session):
+    from .graph import Graph
+
+    return Graph(session.config, session.store, session.ids)
+
+
+def _roadmaps(session: Session, name: str | None = None):
+    from .roadmap import Roadmap, load_all as load_roadmaps
+
+    if name:
+        if name not in session.config.roadmaps:
+            raise BadInput(
+                f"{name!r} is not a configured roadmap.",
+                fix=f"use one of: {', '.join(sorted(session.config.roadmaps))}",
+            )
+        return {name: Roadmap.load(session.config, name)}
+    return load_roadmaps(session.config)
+
+
+def _roadmap_order(roadmaps: dict, horizon: str | None) -> dict[str, int]:
+    """id -> sort key, following horizon order then position within it.
+
+    Ordering by the roadmap rather than by a per-entity field is the whole
+    reason there is no `priority`: sequence is a property of the list.
+    """
+    order: dict[str, int] = {}
+    position = 0
+    for roadmap in roadmaps.values():
+        for bucket in roadmap.spec.horizons:
+            if horizon and bucket != horizon:
+                continue
+            for id_text in roadmap.entries(bucket):
+                order.setdefault(id_text, position)
+                position += 1
+    return order
+
+
+def _blocked(session: Session, graph, entity: Entity) -> bool:
+    """True while any dependency has not reached a terminal status.
+
+    Saying so here is cheaper than letting somebody start the work and find
+    out. An unresolvable dependency does not block — it is a validate finding,
+    and treating a typo as a blocker would hide the queue rather than the typo.
+    """
+    for target in graph.targets(entity.id, "depends_on"):
+        if not target.resolved:
+            continue
+        dependency = session.store.get(target.entity_id)
+        if dependency is not None and not dependency.is_terminal:
+            return True
+    return False
+
+
+def cmd_next(args: argparse.Namespace) -> int:
+    session = Session(args.project)
+    graph = _graph(session)
+    roadmaps = _roadmaps(session, args.roadmap)
+    order = _roadmap_order(roadmaps, args.horizon)
+
+    parent_id = session.ids.resolve(args.parent).text if args.parent else None
+    parent_relation = session.config.data["parent_relation"]
+
+    candidates = []
+    for entity in session.store.with_flag("actionable"):
+        if entity.is_terminal:
+            continue
+        if args.horizon and entity.id.text not in order:
+            continue
+        if parent_id and parent_id not in entity.targets(parent_relation):
+            continue
+        if _blocked(session, graph, entity):
+            continue
+        candidates.append(entity)
+
+    # Scheduled work first, in roadmap sequence; everything else after, by id.
+    candidates.sort(key=lambda e: (order.get(e.id.text, len(order)),
+                                   e.id.prefix, e.id.number))
+
+    if args.as_json:
+        emit_json([{"id": e.id.text, "status": e.status, "title": e.title,
+                    "scheduled": e.id.text in order} for e in candidates])
+        return 0
+
+    rows, note = truncate(candidates, args.limit)
+    for entity in rows:
+        out(f"{entity.id.text}  {entity.status:<10}  {entity.title}")
+    if note:
+        out(note)
+    return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    from . import context as context_module
+
+    session = Session(args.project)
+    entity = session.entity(args.ref)
+
+    if args.with_context:
+        out(context_module.bundle(session.config, _graph(session), entity))
+        return 0
+
+    if args.as_json:
+        graph = _graph(session)
+        emit_json({
+            "id": entity.id.text,
+            "type": entity.type.name,
+            "status": entity.status,
+            "title": entity.title,
+            "tags": entity.tags,
+            "relations": entity.relations,
+            "derived": {k: str(v) for k, v in graph.derived(entity).items()},
+            "path": _relative(session, entity.path),
+        })
+        return 0
+
+    out(entity.render().rstrip("\n"))
+    return 0
+
+
+def cmd_context(args: argparse.Namespace) -> int:
+    from . import context as context_module
+
+    session = Session(args.project)
+    built = context_module.build(session.config, session.store, _graph(session),
+                                 _roadmaps(session))
+    if args.as_json:
+        emit_json({
+            "counters": {label: value for label, value, _ in built.counters.rows()},
+            "in_flight": [{"id": e.id.text, "status": e.status, "title": e.title}
+                          for e in built.in_flight],
+            "current_entity": built.current_entity,
+            "current_task": built.current_task,
+        })
+        return 0
+
+    rendered = context_module.render(built)
+    if rendered:
+        out(rendered)
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    session = Session(args.project)
+    graph = _graph(session)
+
+    entities = list(session.store)
+
+    if args.type_name:
+        session.config.type_for(args.type_name)  # refuses with the known types
+        entities = [e for e in entities if e.type.name == args.type_name]
+    if args.status:
+        entities = [e for e in entities if e.status == args.status]
+    for tag in args.tag or []:
+        normalized = add_tags([], [tag])
+        entities = [e for e in entities if set(normalized) <= set(e.tags)]
+    if args.parent:
+        parent_id = session.ids.resolve(args.parent).text
+        relation = session.config.data["parent_relation"]
+        entities = [e for e in entities if parent_id in e.targets(relation)]
+    if args.uncovered:
+        entities = [e for e in entities if _is_uncovered(graph, e)]
+    if args.unscheduled:
+        scheduled = {i for r in _roadmaps(session).values() for i in r.all_ids()}
+        entities = [e for e in entities
+                    if e.type.schedulable and not e.is_terminal
+                    and e.id.text not in scheduled]
+
+    entities.sort(key=lambda e: (e.id.prefix, e.id.number))
+
+    if args.as_json:
+        # --json is exempt from the limit: it has a programmatic consumer that
+        # is not paying context for it.
+        emit_json([{"id": e.id.text, "type": e.type.name, "status": e.status,
+                    "tags": e.tags, "title": e.title} for e in entities])
+        return 0
+
+    rows, note = truncate(entities, args.limit)
+    for entity in rows:
+        out(f"{entity.id.text}  {entity.status:<10}  {entity.title}")
+    if note:
+        out(note)
+    return 0
+
+
+def _is_uncovered(graph, entity: Entity) -> bool:
+    """True when a `has_incoming` derived attribute of this entity is false.
+
+    Expressed through the declared derivation rather than by naming
+    requirements, so a project with a differently named definitional type gets
+    `--uncovered` for free.
+    """
+    for name, declaration in entity.type.derived.items():
+        if declaration.kind == "has_incoming" and not graph.derive(entity, name):
+            return True
+    return False
+
+
+def cmd_trace(args: argparse.Namespace) -> int:
+    session = Session(args.project)
+    graph = _graph(session)
+    entity_id = session.ids.resolve(args.ref)
+
+    edges = graph.trace(entity_id, depth=args.depth)
+
+    if args.as_json:
+        emit_json([{"source": e.source.text, "relation": e.kind,
+                    "target": e.target.label} for e in edges])
+        return 0
+
+    rows, note = truncate(edges, args.limit)
+    for edge in rows:
+        out(f"{edge.source.text} {edge.kind} {edge.target.label}")
+    if note:
+        out(note)
+    return 0
+
+
+def cmd_standards(args: argparse.Namespace) -> int:
+    from . import standards as standards_module
+
+    session = Session(args.project)
+    loaded = standards_module.load(session.config)
+
+    if args.subcommand == "list":
+        found = loaded
+    else:
+        if not args.paths:
+            raise BadInput(
+                "standards match: no paths given.",
+                fix="szsdlc standards match <path>",
+            )
+        found = standards_module.matching(session.config, args.paths, loaded)
+
+    if args.as_json:
+        emit_json([{"name": s.name, "path": _relative(session, s.path),
+                    "applies_to": list(s.applies_to), "body": s.body}
+                   for s in found])
+        return 0
+
+    rows, note = truncate(found, args.limit)
+    for standard in rows:
+        out(standard.name)
+    if note:
+        out(note)
     return 0
 
 
