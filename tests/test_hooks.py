@@ -52,10 +52,19 @@ def seeded(project, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_the_plugin_manifest_is_valid_and_points_at_the_hooks():
+def test_the_plugin_manifest_leaves_the_hooks_file_to_convention():
+    """`hooks/hooks.json` is loaded by convention, so naming it is fatal.
+
+    Declaring `manifest.hooks` registers the same file a second time and the
+    loader refuses the whole plugin:
+
+        Hook load failed: Duplicate hooks file detected: ./hooks/hooks.json
+
+    The file must exist and the manifest must stay silent about it.
+    """
     manifest = json.loads((REPO / ".claude-plugin" / "plugin.json").read_text("utf-8"))
     assert manifest["name"] == "szsdlc"
-    assert manifest["hooks"] == "./hooks/hooks.json"
+    assert "hooks" not in manifest
     assert (REPO / "hooks" / "hooks.json").is_file()
 
 
