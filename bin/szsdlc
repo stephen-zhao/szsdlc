@@ -5,7 +5,7 @@
 # resolve an interpreter without asking anyone anything. The order is:
 #
 #   1. an installed `szsdlc` already on PATH — a developer's own venv wins;
-#   2. a venv this launcher previously created under the plugin's data dir;
+#   2. a venv this launcher previously created, refreshed when it is stale;
 #   3. create that venv from the plugin source, once, on first run.
 #
 # Failure is silent-ish by design: a hook that dies noisily in a project which
@@ -39,9 +39,35 @@ fi
 plugin_root="${CLAUDE_PLUGIN_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}"
 data_dir="${CLAUDE_PLUGIN_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/szsdlc}"
 venv="$data_dir/venv"
+stamp="$data_dir/installed-from"
 
+# What the venv is supposed to contain. Claude Code installs each release into
+# its own cache directory and leaves the old ones in place, so the path alone
+# catches an update; the version also catches a checkout updated in place.
+release=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    "$plugin_root/.claude-plugin/plugin.json" 2>/dev/null | head -1)
+want="$plugin_root@$release"
+
+# 2. A venv this launcher built earlier — but only if it holds *this* release.
+#
+# Without the check the launcher execs whichever venv it built first, forever:
+# `/plugin update` writes new code to disk that nothing ever runs, and the fix
+# is an `rm -rf` nobody knows to perform.
 for candidate in "$venv/bin/python" "$venv/Scripts/python.exe"; do
     if [ -x "$candidate" ]; then
+        if [ "$(cat "$stamp" 2>/dev/null || true)" != "$want" ]; then
+            # Install over the venv rather than rebuilding it: the interpreter
+            # is already there and pip replaces the package. Stamped only on
+            # success, so a broken pip keeps retrying and keeps saying so
+            # rather than silently pinning the caller to old code.
+            if "$candidate" -m pip install --quiet --disable-pip-version-check \
+                    --upgrade "$plugin_root" >/dev/null 2>&1; then
+                printf '%s\n' "$want" > "$stamp" 2>/dev/null || true
+            else
+                echo "szsdlc: could not refresh $venv to $release; running what is there." >&2
+                echo "Fix: $candidate -m pip install --upgrade $plugin_root" >&2
+            fi
+        fi
         exec "$candidate" -m szsdlc.cli "$@"
     fi
 done
@@ -83,6 +109,7 @@ for candidate in "$venv/bin/python" "$venv/Scripts/python.exe"; do
             echo "Fix: $candidate -m pip install $plugin_root" >&2
             exit 5
         }
+        printf '%s\n' "$want" > "$stamp" 2>/dev/null || true
         exec "$candidate" -m szsdlc.cli "$@"
     fi
 done

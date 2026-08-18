@@ -4,6 +4,6 @@ Entities are the single source of truth; every index, board, roadmap and
 back-link is generated. See docs/plan.md.
 """
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 __all__ = ["__version__"]
