@@ -27,8 +27,37 @@ if "%PLUGIN_ROOT%"=="" set "PLUGIN_ROOT=%~dp0.."
 set "DATA_DIR=%CLAUDE_PLUGIN_DATA%"
 if "%DATA_DIR%"=="" set "DATA_DIR=%LOCALAPPDATA%\szsdlc"
 set "VENV=%DATA_DIR%\venv"
+set "STAMP=%DATA_DIR%\installed-from"
 
+rem What the venv is supposed to contain. Claude Code installs each release
+rem into its own cache directory and leaves the old ones in place, so the path
+rem alone catches an update; the version also catches an in-place checkout.
+set "RELEASE="
+for /f "tokens=2 delims=:," %%v in ('findstr /c:"\"version\"" "%PLUGIN_ROOT%\.claude-plugin\plugin.json" 2^>nul') do (
+    if not defined RELEASE set "RELEASE=%%~v"
+)
+set "RELEASE=!RELEASE: =!"
+set RELEASE=!RELEASE:"=!
+set "WANT=%PLUGIN_ROOT%@!RELEASE!"
+
+rem A venv this launcher built earlier -- but only if it holds *this* release.
+rem Without the check the launcher runs whichever venv it built first, forever:
+rem `/plugin update` writes new code to disk that nothing ever runs.
 if exist "%VENV%\Scripts\python.exe" (
+    set "HAVE="
+    if exist "%STAMP%" set /p HAVE=<"%STAMP%"
+    if not "!HAVE!"=="!WANT!" (
+        rem Install over the venv rather than rebuilding it, and stamp only on
+        rem success -- a broken pip keeps retrying and keeps saying so rather
+        rem than silently pinning the caller to old code.
+        "%VENV%\Scripts\python.exe" -m pip install --quiet --disable-pip-version-check --upgrade "%PLUGIN_ROOT%" >nul 2>&1
+        if !ERRORLEVEL!==0 (
+            >"%STAMP%" echo !WANT!
+        ) else (
+            echo szsdlc: could not refresh %VENV% to !RELEASE!; running what is there. 1>&2
+            echo Fix: "%VENV%\Scripts\python.exe" -m pip install --upgrade "%PLUGIN_ROOT%" 1>&2
+        )
+    )
     "%VENV%\Scripts\python.exe" -m szsdlc.cli %*
     exit /b %ERRORLEVEL%
 )
@@ -63,5 +92,6 @@ if not %ERRORLEVEL%==0 (
     exit /b 5
 )
 
+>"%STAMP%" echo !WANT!
 "%VENV%\Scripts\python.exe" -m szsdlc.cli %*
 exit /b %ERRORLEVEL%

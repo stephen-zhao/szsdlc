@@ -398,3 +398,20 @@ def test_the_real_validator_accepts_this_plugin():
     # is their bug, not ours, and it cannot arise for a plugin manifest.
     assert "hooks" not in output.lower() or "error" not in output.lower(), output
     assert "Validation failed" not in output, output
+def test_both_launchers_refresh_a_venv_left_from_an_earlier_release():
+    """A launcher that execs any venv it finds runs the version it built first.
+
+    Claude Code installs each release into its own cache directory and leaves
+    the old ones in place, so without a staleness check `/plugin update` writes
+    new code to disk that nothing ever runs — and the remedy is an `rm -rf` of
+    a data directory nobody knows exists. The stamp records which release the
+    venv holds; a mismatch reinstalls over it.
+    """
+    for name, stamp in (("szsdlc", '"$stamp"'), ("szsdlc.cmd", '"%STAMP%"')):
+        text = (REPO / "bin" / name).read_text("utf-8")
+        assert "installed-from" in text, name
+        assert "--upgrade" in text, name
+        # Stamped on both paths: after refreshing a stale venv, and after
+        # building a fresh one. Miss the second and every new install
+        # reinstalls itself on its very next invocation.
+        assert text.count(stamp) >= 3, name

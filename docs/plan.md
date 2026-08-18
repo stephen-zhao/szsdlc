@@ -1096,10 +1096,16 @@ are open.
   `AGENTS.md` forbids. `validate` catches the result, so the state is provable
   after the fact — but the documented path and the only workable path disagree.
   A `--status` on `new`, gated to types the caller owns, would close it.
-- **The launcher cannot be exec'd from Windows tooling.** `bin/szsdlc` is POSIX
-  sh; `subprocess.run(["szsdlc", ...])` on Windows fails with `WinError 2`, so
-  the migration drove `python -m szsdlc.cli` in the venv instead. A `szsdlc.cmd`
-  shim beside it would fix this.
+- ~~**The launcher cannot be exec'd from Windows tooling.**~~ Withdrawn --
+  `bin/szsdlc.cmd` already exists and was overlooked. The real constraint is
+  narrower and is Windows, not szsdlc: `CreateProcess` runs neither an
+  extensionless sh script nor a `.cmd`, so a Python caller needs `shell=True`
+  or an explicit `cmd /c`. Nothing to fix here.
+- **The launcher never refreshed its venv.** Fixed in 0.1.3. Both launchers
+  exec'd whichever venv they built first and never checked it against the
+  installed release, so `/plugin update` wrote new code to disk that nothing
+  ran. Found by upgrading 0.1.1 to 0.1.2 and watching `--version` keep saying
+  0.1.1.
 - **The board template runs headings into lists.** `### answered (2)` follows
   the previous section's last bullet with no blank line between them.
 
