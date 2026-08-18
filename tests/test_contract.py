@@ -18,6 +18,7 @@ import io
 import json
 import re
 import shlex
+import sys
 
 import pytest
 import yaml
@@ -446,3 +447,31 @@ def test_json_output_is_never_clipped(tmp_path, invoke):
     invoke(config.root, "capture", PARAGRAPH)
     _, output, _ = invoke(config.root, "inbox", "--json")
     assert PARAGRAPH.split(". ")[0] in json.dumps(json.loads(output))
+
+
+# ---------------------------------------------------------------------------
+# C1 — a mutation that succeeded must never report failure
+# ---------------------------------------------------------------------------
+
+
+def test_output_survives_a_non_utf8_console(tmp_path, monkeypatch):
+    """A Windows console is cp1252, and transitions are reported with an arrow.
+
+    Writing happens before printing, so an unencodable character does not lose
+    the edit -- it loses the *report* of the edit, exits non-zero, and tells a
+    caller their mutation failed when it is already on disk. That inverts C1,
+    so the streams are made encodable before any command runs.
+    """
+    config = build_project(tmp_path)
+    stdout, stderr = io.BytesIO(), io.BytesIO()
+    monkeypatch.setattr(
+        "sys.stdout", io.TextIOWrapper(stdout, encoding="cp1252", newline=""))
+    monkeypatch.setattr(
+        "sys.stderr", io.TextIOWrapper(stderr, encoding="cp1252", newline=""))
+
+    code = main(["-C", str(config.root), "set", "WI-0002", "status=designing"])
+    sys.stdout.flush()
+    sys.stderr.flush()
+
+    assert code == 0, stderr.getvalue().decode("utf-8", "replace")
+    assert "→" in stdout.getvalue().decode("utf-8")

@@ -1070,10 +1070,38 @@ test the *host's* behaviour, not this code's. See Tasks 13, 14 and 15.
 
 ## Out of scope (separate items, after this lands)
 
-1. **Adopting `szsdlc` in its first consumer (`s-s1-lab`)** — `szsdlc init`, config declaring that project's entity types and workflows, plus its project-specific records (a dev/prod parity ledger being one instance of the generic record mechanism). Tracked in that repo, not this one.
-2. **Migrating that project's existing content** — 24 plans, 21 specs, `backlog.md`, `prioritization.md`, and ADR subsections inside `concepts.md`.
+1. ~~**Adopting `szsdlc` in its first consumer (`s-s1-lab`)**~~ — done 2026-08-17. Config, an environment parity ledger as a record, and `docs/standards/` seeded from that project's `CLAUDE.md`.
+2. ~~**Migrating that project's existing content**~~ — done 2026-08-17. 24 plans, 21 specs, 21 backlog headings, `prioritization.md` and six ADRs, as 53 entities validating clean.
 3. **Git/forge automation** — branch creation on transition, PR linking.
 4. **CI integration** — `szsdlc validate` as a GitHub Action. One command, since staleness is one of its rules.
+
+## Found while adopting it (2026-08-17)
+
+Four things the first real migration surfaced. Two were fixed on the spot; two
+are open.
+
+- ~~**Hooks all exited 5.**~~ Fixed in `a272aaa`. The plugin puts its own `bin/`
+  on `PATH`, so the launcher's `command -v szsdlc` resolved to itself and the
+  recursion guard fired on every invocation — the framework was inert wherever
+  it was installed as a plugin, which is everywhere.
+- ~~**Every mutation failed on a Windows console.**~~ Fixed in `26111ef`.
+- **A broken *project* template reports as a szsdlc bug.** A Jinja error in a
+  project's own record template surfaces as `internal error: ... report this
+  with the command you ran`. It is a project finding — the same class as an
+  off-schema dataset, which is already reported properly — and telling the
+  author to file a bug against the framework sends them the wrong way.
+- **There is no import path for existing history.** Reaching a terminal status
+  means walking every transition, so bulk-importing finished work leaves
+  hand-writing frontmatter as the only option, which is exactly what rule C in
+  `AGENTS.md` forbids. `validate` catches the result, so the state is provable
+  after the fact — but the documented path and the only workable path disagree.
+  A `--status` on `new`, gated to types the caller owns, would close it.
+- **The launcher cannot be exec'd from Windows tooling.** `bin/szsdlc` is POSIX
+  sh; `subprocess.run(["szsdlc", ...])` on Windows fails with `WinError 2`, so
+  the migration drove `python -m szsdlc.cli` in the venv instead. A `szsdlc.cmd`
+  shim beside it would fix this.
+- **The board template runs headings into lists.** `### answered (2)` follows
+  the previous section's last bullet with no blank line between them.
 
 ## Open questions
 
