@@ -1,6 +1,6 @@
 ---
 name: capture
-description: Record a passing thought, complaint, or "we should someday…" as a tracked idea without derailing the current conversation. Use whenever someone says note that down, we should, remind me, worth doing later, or voices a frustration with the current system while working on something else.
+description: Record passing thoughts, complaints and half-formed "we should someday…" items as tracked ideas without derailing the current conversation. Use whenever someone says note that down, we should, remind me or worth doing later — and whenever they dump several loose thoughts at once, as a list or a rambling paragraph, rather than asking for one of them to be done now.
 ---
 
 # Capture
@@ -12,38 +12,38 @@ no questions, back to what you were doing.
 szsdlc capture "users keep losing unsaved drafts"
 ```
 
-It prints the new id. Say the id in one short clause and continue the task
-you were on. Do not summarise, do not ask what type it should be, do not
-offer to refine it now — that is `/szsdlc:refine`, and it happens later, on
-purpose.
+It prints the new id. Say the ids in one short clause and carry on with the
+task you were on. Do not summarise, do not ask what type it should be, do not
+offer to refine now — that is `/szsdlc:refine`, later, on purpose.
 
-## Recognising an aside
+## An aside
 
-Capture when someone voices something worth doing that is **not** what they
-asked you to do right now:
+Something worth doing that is **not** what they asked you to do right now:
+"we should really fix that someday", "note that down", "TODO", a complaint
+about the system voiced while working on something else, a risk you find
+mid-task that is out of scope to fix.
 
-- "we should really fix that someday", "note that down", "TODO"
-- a complaint about the system while working on something unrelated
-- a risk or edge case you find mid-task that is out of scope to fix
+## A dump
 
-Do **not** capture:
+Several loose thoughts arriving at once — numbered, bulleted, or one paragraph
+that changes subject twice — is intake, not a brief. Not fleshed out enough to
+act on is the definition of the case, not a reason to wait.
 
-- the task you are currently doing — that is already tracked
-- a step in your own working notes
-- anything the person is actively asking you to do in this turn
+Capture **every** item, one command each, before you reply. Reading a dump is
+not capturing it: your context ends with the session and the ideas must not.
+When a dump also carries one thing to do now, do that thing *and* capture the
+rest.
+
+## Not capture
+
+The task you are currently doing — already tracked. A step in your own
+working notes. Anything they are actively asking you to do this turn.
 
 ## Writing the text
 
-The captured text is what a future reader gets. One sentence, in their
-words, stating the problem rather than a solution. "Drafts are lost on
-refresh" survives; "add autosave" pre-commits to an answer nobody has
-judged yet.
-
-If several distinct thoughts arrive at once, capture each separately. One
-idea per capture is what makes them refinable independently.
-
-## Duplicates
-
-Before capturing, `szsdlc inbox` if you have not seen it this session. If
-the same thought is already there, say so and skip the capture. Two ids for
-one thought is worse than none.
+What a future reader gets. One sentence, in their words, stating the problem
+rather than a solution: "drafts are lost on refresh" survives, "add autosave"
+pre-commits to an answer nobody has judged. One idea per capture — that is
+what makes them refinable independently. Before capturing, `szsdlc inbox` if
+you have not seen it this session; the same thought already there means say so
+and skip it, because two ids for one thought is worse than none.

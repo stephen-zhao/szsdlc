@@ -1077,17 +1077,35 @@ storage change trades a lost thought for a churned directory, so the order is
 deliberate — Task 18 first, and the churn it creates is the argument for Tasks
 19 and 20.
 
-### Task 18: Capture fires on a dump of half-formed things
+### Task 18: Capture fires on a dump of half-formed things — **DONE**
 
 **Requirement.** When someone lists several loose, unfleshed thoughts, every
 one of them is written down as an idea in that turn, before any of them is
 discussed. Understanding a dump is not capturing it: context ends at the
 session boundary and the ideas must not.
 
-- [ ] **Step 1:** Widen `skills/capture`'s description to name the dump — a list, or a paragraph, of things not fleshed out enough to act on — alongside the "note that down" asides it already names. The description is the only part the model matches against before invoking, so a situation absent from it cannot fire.
-- [ ] **Step 2:** State the multi-item rule in the body: one `szsdlc capture` per item, all of them, before replying; and a dump that also carries one actionable thing means do that thing *and* capture the rest.
-- [ ] **Step 3:** Carry the same case into `AGENTS.md` rule 4, which is what a project's agents read when the plugin's skills are not loaded.
-- [ ] **Step 4:** Hold the 50-line skill budget — cut, do not extend. `pytest tests/test_skills.py`.
+- [x] **Step 1:** Widen `skills/capture`'s description to name the dump — a list, or a paragraph, of things not fleshed out enough to act on — alongside the "note that down" asides it already names. The description is the only part the model matches against before invoking, so a situation absent from it cannot fire.
+- [x] **Step 2:** State the multi-item rule in the body: one `szsdlc capture` per item, all of them, before replying; and a dump that also carries one actionable thing means do that thing *and* capture the rest.
+- [x] **Step 3:** Carry the same case into `AGENTS.md` rule 4, which is what a project's agents read when the plugin's skills are not loaded.
+- [x] **Step 4:** Hold the 50-line skill budget — cut, do not extend. `pytest tests/test_skills.py`.
+
+> **Decisions taken while implementing:**
+>
+> - **The trigger widened in the description, not in the body.** The body is
+>   only read *after* the skill fires, so a case described only there is a case
+>   that never happens. The dump is now named in the sentence the model matches
+>   against, in the words a dump actually arrives in — "several loose thoughts
+>   at once", "a list", "a rambling paragraph".
+> - **Reading a dump is explicitly not capturing it.** Stated in both the skill
+>   and `AGENTS.md`, because the failure is silent and feels like success: the
+>   items are understood, answered well, and gone at the session boundary.
+> - **Four lines were cut to buy the two the dump needed.** The budget held at
+>   49 rather than 50 deliberately — the completion audit's finding about
+>   `--help` sitting exactly on its ceiling applies to any budget, and one line
+>   of headroom is the difference between a budget and a wall.
+> - **Batching was considered and left to Task 19.** Ten thoughts still cost
+>   ten `capture` calls and ten files; a `--each` flag would have hidden that
+>   cost rather than removed it, and the file churn is the actual complaint.
 
 ### Task 19: A `section` layout, and `idea` defaults to it
 
