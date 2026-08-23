@@ -29,7 +29,7 @@ import yaml
 from jsonschema import Draft202012Validator
 
 from .config import Config
-from .context import age_days, first_unchecked
+from .context import captured_on, first_unchecked
 from .errors import BadInput
 from .graph import Graph
 from .model import EntityStore
@@ -133,7 +133,13 @@ class Renderer:
             children=self.graph.children,
             sources=self.graph.sources,
             targets=self.graph.targets,
-            age_days=age_days,
+            # No clock. Every template renders into a content-hashed file, so a
+            # global that reads today's date is a file that changes on its own
+            # overnight: `sync` rewrites it, `validate` calls it stale, and the
+            # Stop hook blocks a session over a number nobody wrote. Dates are
+            # facts about an entity and belong here; ages are facts about now
+            # and belong in command output, which is read once and discarded.
+            captured_on=captured_on,
             next_task=first_unchecked,
             relative=lambda path: self._relative(path),
         )

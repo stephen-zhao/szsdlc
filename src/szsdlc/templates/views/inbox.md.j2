@@ -1,5 +1,10 @@
 {# Unrefined ideas, oldest first. Sorted oldest-first because an inbox sorted
-   newest-first is an inbox whose bottom never gets drained. #}
+   newest-first is an inbox whose bottom never gets drained.
+
+   The date, not the age. An age is only true on the day it is written, and
+   this file is content-hashed: writing one down means the file disagrees with
+   itself by morning. `szsdlc inbox` still reports an age, because command
+   output is read once and thrown away. #}
 # {{ view.title }}
 
 {% set open_ideas = [] %}
@@ -9,10 +14,10 @@
 {% if not open_ideas %}
 Nothing waiting.
 {% else %}
-| Id | Age | Thought |
+| Id | Captured | Thought |
 |---|---|---|
 {% for entity in open_ideas | sort(attribute='id.number') | sort(attribute='id.prefix') %}
-| {{ entity.id.text }} | {{ age_days(entity) if age_days(entity) is not none else '—' }}d | {{ entity.title | clip }} |
+| {{ entity.id.text }} | {{ captured_on(entity) or '—' }} | {{ entity.title | clip }} |
 {% endfor %}
 {% endif %}
 {% include "views/_broken.md.j2" %}

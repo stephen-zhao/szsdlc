@@ -1071,12 +1071,13 @@ test the *host's* behaviour, not this code's. See Tasks 13, 14 and 15.
 
 ## Phase 6 — Intake that fires, and storage that bends (2026-08-23)
 
-Three requirements from *using* the framework rather than building it. They
-are one story: **capture has to fire far more often than it does, and the cost
+Requirements from *using* the framework rather than building it. The first
+three are one story: **capture has to fire far more often than it does, and the cost
 of firing has to stay near zero as it does.** Widening the trigger without the
 storage change trades a lost thought for a churned directory, so the order is
 deliberate — Task 18 first, and the churn it creates is the argument for Tasks
-19 and 20.
+19 and 20. Task 21 arrived later, from the same direction: churn in a file
+nobody edited.
 
 ### Task 18: Capture fires on a dump of half-formed things — **DONE**
 
@@ -1178,6 +1179,53 @@ directory the moment something must live beside it.
 - [ ] **Step 3:** A command that moves one entry between shapes, id and links preserved, refusing on a non-`dynamic` type with a fix naming the layout key. It needs a row in the command audit table and it lands against a `--help` budget with no headroom (see the completion audit).
 - [ ] **Step 4:** Adding an artifact to a non-directory entry stops being a refusal and becomes promotion to `directory`, since the refusal's only fix would be the command in Step 3.
 - [ ] **Step 5:** Decide whether `refine` promotes automatically. An idea that has spawned entities is provenance, and may be better left where it is.
+
+---
+
+### Task 21: A generated file may not read the clock — **DONE**
+
+**Requirement.** A generated file is a pure function of the entities. Nothing
+rendered into one may depend on when it was rendered, so that a project that
+nobody touched produces the same bytes tomorrow as today.
+
+**The bug.** `views/inbox.md` rendered an **age** — `0d`, `3d` — and is
+content-hashed like every generated file. So the file disagreed with itself by
+morning: `sync` rewrote it, `validate` reported `inbox.md is out of date`, and
+that finding is an *error*, so the `Stop` hook blocked the session. Once a day,
+in every project with a non-empty inbox, over a number nobody wrote. Reproduced
+by rendering, advancing the clock one day, and validating without touching a
+thing.
+
+- [x] **Step 1:** Render the captured date instead. It is a fact about the entity and it is already stored; the age was the only thing being invented at render time.
+- [x] **Step 2:** Split `age_days` into `captured_on` — which finds the type's first declared date field, so a project recording `raised` rather than `captured` is served by the same code — and the subtraction. Only `captured_on` is exposed to templates.
+- [x] **Step 3:** Keep the age where it was always correct: `szsdlc inbox`, `szsdlc context` and the stale-idea rule all compute it on read and never write it down.
+- [x] **Step 4:** Assert the rule generally: render every view, move the clock, render again, compare bytes.
+
+> **Decisions taken while implementing:**
+>
+> - **The old test stated this exact rule and could not enforce it.**
+>   `test_no_timestamp_leaks_into_a_generated_file` searched each view for
+>   today's date *as a string* — which an age rendered as `3d` never contains —
+>   and then carried `or name == "inbox"`, exempting the one view that was
+>   breaking the rule. A test with an exemption for the failing case is worse
+>   than no test, because it reports the rule as held. Rendering the same
+>   project on two different days and comparing bytes has nothing to exempt,
+>   and it fails on the old template — checked by reintroducing it.
+> - **The clock is behind one seam per module.** `context.today()`, matching
+>   `model._today()`, so the test can ask what the project renders in 400 days
+>   without replacing `datetime.date` and breaking every `isinstance` check
+>   that depends on it.
+> - **Ages are not banned, they are placed.** An age is a fact about *now* and
+>   belongs in command output, which is read once and discarded. A date is a
+>   fact about the entity and belongs in a file. The distinction is written
+>   where a template author will meet it — the globals list in `render.py`.
+> - **The column says `Captured`, not the field's name.** A project may call
+>   the field `raised`, and the view spans every intake type, so deriving a
+>   header from the field would need a rule for what to do when two types
+>   disagree. `Captured` describes what an inbox *is*.
+> - **The old generated files in every project are one `sync` behind.** No
+>   migration: the first sync after this rewrites `inbox.md` once, and then it
+>   stops moving. That is the last clock-driven diff any project takes.
 
 ---
 
