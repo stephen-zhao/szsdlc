@@ -446,15 +446,19 @@ def test_converting_to_the_same_type_is_refused(run, project):
     assert "already a work_item" in err
 
 
-def test_converting_a_directory_entity_with_artifacts_to_a_file_type_is_refused(
-    run, project
-):
+def test_converting_into_a_dynamic_type_lands_where_the_artifacts_fit(run, project):
+    """An idea is captured as a section, but one converted *from* work that
+    carries files has to arrive somewhere those files can follow. Creating it
+    in the cheapest shape and dropping them is the worst answer available."""
     run("new", "work_item", "--title", "W")
     entity = entities(project).by_text("WI-0001")
     (entity.home / "design.md").write_text("x\n", encoding="utf-8")
-    code, _, err = run("convert", "WI-0001", "idea")
-    assert code == EXIT_BAD_INPUT
-    assert "design.md" in err
+
+    code, _, _ = run("convert", "WI-0001", "idea")
+    assert code == 0
+    idea = entities(project).by_text("IDEA-0001")
+    assert idea.layout == "directory"
+    assert (idea.home / "design.md").is_file()
 
 
 # ---------------------------------------------------------------------------

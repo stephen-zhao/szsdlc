@@ -29,9 +29,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import __version__, config as config_module, hooks as hooks_module
+from .config import LAYOUTS
 from .errors import EXIT_ERROR, EXIT_INVALID, BadInput, InternalError, SzsdlcError
 from .ids import IdSpace
-from .model import Entity, EntityStore, create_entity, load_all
+from .model import Entity, EntityStore, create_entity, load_all, relayout
 from .text import add_tags, clip, nearest, remove_tags
 
 #: C6 — every listing is bounded, and the bound is the same everywhere.
@@ -78,6 +79,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("tag|untag <ref> <tag>", "add or remove tags, normalized on write"),
     ("link|unlink a <r> b", "author or remove one edge; inverses are generated"),
     ("convert <ref> <TYPE>", "reclassify, leaving a resolving tombstone"),
+    ("move <ref> <LAYOUT>", "store an entry as a section, file or directory"),
     ("log <ref> [msg]", "append a dated line to the journal artifact"),
     ("schedule <ref> -H h", "place on a roadmap; --after/--before/--top"),
     ("unschedule <ref>", "take off the roadmap"),
@@ -92,7 +94,7 @@ COMMANDS: list[tuple[str, str]] = [
 ]
 
 #: Registered but not listed: invoked by hooks.json, never typed by anyone.
-#: Spending a line of a 25-line budget on it would cost tokens in every
+#: Spending a line of the help budget on it would cost tokens in every
 #: session to document something no reader can use.
 HIDDEN_COMMANDS = {"hook"}
 
@@ -172,6 +174,11 @@ def build_parser() -> Parser:
     convert.add_argument("ref")
     convert.add_argument("type_name", metavar="TYPE")
     convert.set_defaults(run=cmd_convert)
+
+    move = subparsers.add_parser("move", prog="szsdlc move")
+    move.add_argument("ref")
+    move.add_argument("layout", metavar="LAYOUT", choices=list(LAYOUTS))
+    move.set_defaults(run=cmd_move)
 
     log = subparsers.add_parser("log", prog="szsdlc log")
     log.add_argument("ref")
@@ -873,14 +880,16 @@ def cmd_convert(args: argparse.Namespace) -> int:
             f"convert: {entity.id.text} is already a {target_type.name}.",
             fix=f"szsdlc show {entity.id.text}",
         )
-    if entity.home is not None and not target_type.carries_artifacts:
-        extra = [p.name for p in entity.artifact_files()]
-        if extra:
-            raise BadInput(
-                f"convert: a {target_type.name} has nowhere to put an artifact, "
-                f"but {entity.id.text} carries {', '.join(extra)}.",
-                fix=f"remove those artifacts, then rerun",
-            )
+    extra = [p.name for p in entity.artifact_files()] if entity.home else []
+    if extra and not target_type.carries_artifacts:
+        raise BadInput(
+            f"convert: a {target_type.name} has nowhere to put an artifact, "
+            f"but {entity.id.text} carries {', '.join(extra)}.",
+            fix=f"remove those artifacts, then rerun",
+        )
+    # Artifacts decide the child's shape when the type leaves it open. The
+    # alternative is creating it in the cheapest shape and dropping them.
+    landing = "directory" if extra and target_type.is_dynamic_layout else None
 
     new_id = session.ids.next_id(target_type)
     # A status that exists in both workflows is kept; otherwise the entity
@@ -895,6 +904,7 @@ def cmd_convert(args: argparse.Namespace) -> int:
         relations={k: (v[0] if session.config.relations[k].is_single else v)
                    for k, v in entity.relations.items()
                    if k in {r.name for r in session.config.relations_from(target_type.name)}},
+        layout=landing,
     )
     assert child.id == new_id
 
@@ -914,6 +924,49 @@ def cmd_convert(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# move
+# ---------------------------------------------------------------------------
+
+
+def cmd_move(args: argparse.Namespace) -> int:
+    session = Session(args.project)
+    entity = session.entity(args.ref)
+    target = args.layout
+
+    if not entity.type.is_dynamic_layout:
+        raise BadInput(
+            f"move: every {entity.type.name} is stored as a {entity.type.layout}, "
+            f"so there is nothing to move it to.",
+            fix=f"set entity_types.{entity.type.name}.layout to dynamic",
+        )
+    if target == entity.layout:
+        raise BadInput(
+            f"move: {entity.id.text} is already stored as a {target}.",
+            fix=f"szsdlc show {entity.id.text}",
+        )
+
+    carried = [p.name for p in entity.artifact_files()]
+    if carried and target != "directory":
+        raise BadInput(
+            f"move: a {target} has nowhere to put an artifact, but "
+            f"{entity.id.text} carries {', '.join(carried)}.",
+            fix="remove those artifacts, then rerun",
+        )
+
+    moved = relayout(session.config, session.ids, entity, target)
+    out(f"{moved.id.text}  ({entity.layout} → {target}) {display_path(session, moved)}")
+    return 0
+
+
+def display_path(session: Session, entity: Entity) -> str:
+    where = entity.home or entity.path
+    try:
+        return str(where.relative_to(session.config.root).as_posix())
+    except ValueError:  # pragma: no cover - a project outside its own root
+        return str(where)
+
+
+# ---------------------------------------------------------------------------
 # log
 # ---------------------------------------------------------------------------
 
@@ -923,11 +976,22 @@ def cmd_log(args: argparse.Namespace) -> int:
     entity = session.entity(args.ref)
 
     artifact = entity.type.journal_artifact
-    if not artifact or entity.home is None:
+    if not artifact:
         raise BadInput(
             f"{entity.type.name} declares no journal artifact, so there is "
             f"nowhere to log to.",
             fix=f"set entity_types.{entity.type.name}.journal_artifact",
+        )
+    if entity.home is None and entity.type.is_dynamic_layout:
+        # The only fix for the refusal would have been `move … directory`, and
+        # a refusal whose fix is one unconditional command is a step nobody
+        # should have to type. Wanting a journal *is* earning the directory.
+        entity = relayout(session.config, session.ids, entity, "directory")
+    if entity.home is None:
+        raise BadInput(
+            f"a {entity.type.name} is stored as a {entity.layout}, which has "
+            f"nowhere to keep {artifact}.",
+            fix=f"set entity_types.{entity.type.name}.layout to directory",
         )
 
     message = args.message

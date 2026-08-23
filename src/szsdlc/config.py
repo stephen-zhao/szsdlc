@@ -54,6 +54,15 @@ CORE_FIELDS = frozenset({"id", "title", "tags", "status", "relations"})
 #: — the sync hook included — keeps working without being told about layouts.
 DEFAULT_SECTION_FILE = "index.md"
 
+#: What one entry may occupy. `dynamic` is not one of them: it is a type saying
+#: its entries may take any of these, one at a time, and change which.
+LAYOUTS = ("section", "file", "directory")
+
+#: Where a `dynamic` type puts an entry it has just been handed. The cheapest
+#: shape that fits, for the same reason `workflow.initial` is the cheapest
+#: status: something that has just arrived has not earned anything more.
+DEFAULT_INITIAL_LAYOUT = "section"
+
 CAPABILITY_FLAGS = (
     "intake",
     "actionable",
@@ -147,6 +156,7 @@ class EntityType:
     title: str
     workflow: Workflow
     section_file: str = DEFAULT_SECTION_FILE
+    initial_layout: str = DEFAULT_INITIAL_LAYOUT
     fields: dict[str, Field] = field(default_factory=dict)
     artifacts: tuple[str, ...] = ()
     progress_artifact: str | None = None
@@ -160,20 +170,43 @@ class EntityType:
     persistent: bool = False
 
     @property
+    def is_dynamic_layout(self) -> bool:
+        """Entries may take any shape, and may change which one they are in."""
+        return self.layout == "dynamic"
+
+    @property
+    def layouts(self) -> tuple[str, ...]:
+        """Every shape an entry of this type may be found in.
+
+        One value for a type that declared a layout, all three for `dynamic`.
+        Callers ask this rather than comparing the string, which is why adding
+        `dynamic` did not add a branch anywhere outside this file.
+        """
+        return LAYOUTS if self.is_dynamic_layout else (self.layout,)
+
+    @property
     def is_directory_layout(self) -> bool:
         return self.layout == "directory"
 
     @property
     def is_section_layout(self) -> bool:
-        """Entries are sections of one shared file rather than files of
-        their own. Asked instead of comparing the string, so the third
-        layout did not have to be spelled out at every branch."""
         return self.layout == "section"
 
     @property
+    def holds_sections(self) -> bool:
+        """Whether this type has a shared file to look in at all."""
+        return "section" in self.layouts
+
+    @property
+    def new_entry_layout(self) -> str:
+        """The shape an entry arrives in."""
+        return self.initial_layout if self.is_dynamic_layout else self.layout
+
+    @property
     def carries_artifacts(self) -> bool:
-        """Whether an entry of this type has room for a file beside it."""
-        return self.is_directory_layout
+        """Whether an entry of this type can have a file beside it — now, or
+        after being moved into a directory."""
+        return "directory" in self.layouts
 
     def flag(self, name: str) -> bool:
         if name not in CAPABILITY_FLAGS:
@@ -569,16 +602,24 @@ def _check_entity_types(data: dict[str, Any]) -> None:
                   f"give {name} a directory no other type uses")
         seen_dir[directory] = name
 
+        layout = spec["layout"]
+        holds = LAYOUTS if layout == "dynamic" else (layout,)
+
         artifacts = set(spec.get("artifacts") or ())
-        if artifacts and spec["layout"] != "directory":
+        if artifacts and "directory" not in holds:
             _fail(f"{base}.artifacts",
-                  f"a `{spec['layout']}` layout entity has nowhere to put an artifact.",
+                  f"a `{layout}` layout entity has nowhere to put an artifact.",
                   f"set {base}.layout to directory, or remove {base}.artifacts")
 
-        if spec.get("section_file") and spec["layout"] != "section":
+        if spec.get("section_file") and "section" not in holds:
             _fail(f"{base}.section_file",
-                  f"a `{spec['layout']}` layout entity is not stored in a shared file.",
+                  f"a `{layout}` layout entity is not stored in a shared file.",
                   f"set {base}.layout to section, or remove {base}.section_file")
+
+        if spec.get("initial_layout") and layout != "dynamic":
+            _fail(f"{base}.initial_layout",
+                  f"a `{layout}` layout entity has only one shape to arrive in.",
+                  f"set {base}.layout to dynamic, or remove {base}.initial_layout")
 
         for slot in ("progress_artifact", "journal_artifact"):
             value = spec.get(slot)
@@ -834,6 +875,7 @@ def _build_entity_type(name: str, spec: dict[str, Any]) -> EntityType:
         dir=spec["dir"],
         layout=spec["layout"],
         section_file=spec.get("section_file") or DEFAULT_SECTION_FILE,
+        initial_layout=spec.get("initial_layout") or DEFAULT_INITIAL_LAYOUT,
         title=spec.get("title") or name.replace("_", " ").capitalize(),
         workflow=_build_workflow(spec["workflow"]),
         fields=fields,

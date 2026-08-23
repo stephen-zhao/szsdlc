@@ -44,11 +44,12 @@ def make(cfg, type_name: str, *names: str) -> None:
     """Create entities on disk by name alone — this module only reads names."""
     entity_type = cfg.type_for(type_name)
     directory = cfg.dir_for(entity_type)
+    shape = entity_type.new_entry_layout
     for name in names:
-        if entity_type.is_directory_layout:
+        if shape == "directory":
             (directory / name).mkdir(parents=True, exist_ok=True)
             (directory / name / "entity.md").write_text("", encoding="utf-8")
-        elif entity_type.is_section_layout:
+        elif shape == "section":
             path = cfg.section_path(entity_type)
             existing = path.read_text(encoding="utf-8") if path.is_file() else ""
             section = f"## {name}\n\n---\n---\n\n"
@@ -199,16 +200,38 @@ def test_scan_respects_each_type_layout(project):
 
 
 def test_a_section_type_scans_its_shared_file_and_nothing_else(project):
-    """The shipped `idea` type: entries are sections, and a stray file is not
-    one. A loose IDEA-0009.md in the directory is somebody's half-done move,
-    and counting it would hand out an id that is already spoken for."""
-    cfg = project()
+    """A type that declared `section` holds entries nowhere else. A loose
+    IDEA-0009.md beside the shared file is not an entry of it."""
+    cfg = project({"entity_types": {"idea": {"layout": "section"}}})
     make(cfg, "idea", "IDEA-0005-a-thought", "IDEA-0006-another")
     (cfg.dir_for("idea") / "IDEA-0009-loose.md").write_text("", encoding="utf-8")
 
     ids = IdSpace(cfg)
     assert {i.text for i in ids.entries("idea")} == {"IDEA-0005", "IDEA-0006"}
     assert ids.next_id("idea").text == "IDEA-0007"
+
+
+def test_a_dynamic_type_scans_all_three_shapes(project):
+    """The shipped `idea` type. An entry is wherever it currently is, and the
+    scan is what makes an id allocated in one shape unavailable in another."""
+    cfg = project()
+    make(cfg, "idea", "IDEA-0001-in-the-shared-file")
+    (cfg.dir_for("idea") / "IDEA-0002-its-own-file.md").write_text("", encoding="utf-8")
+    (cfg.dir_for("idea") / "IDEA-0003-a-directory").mkdir()
+
+    ids = IdSpace(cfg)
+    assert {i.text for i in ids.entries("idea")} == {"IDEA-0001", "IDEA-0002",
+                                                    "IDEA-0003"}
+    assert ids.next_id("idea").text == "IDEA-0004"
+
+
+def test_the_shared_file_is_never_mistaken_for_an_entry(project):
+    """`index.md` does not parse as an id, but a type could be configured so
+    that it did. The scan excludes it by identity, not by hoping."""
+    cfg = project({"entity_types": {"idea": {"section_file": "IDEA-0001-oops.md"}}})
+    cfg.section_path("idea").write_text(
+        "## IDEA-0007 — a thought\n\n---\n---\n", encoding="utf-8")
+    assert {i.text for i in IdSpace(cfg).entries("idea")} == {"IDEA-0007"}
 
 
 def test_a_heading_that_is_not_an_id_does_not_start_an_entry(project):
@@ -227,6 +250,18 @@ def test_a_section_entry_reports_the_shared_file_as_its_path(project):
     make(cfg, "idea", "IDEA-0001-a")
     found = IdSpace(cfg).scan("idea")
     assert [path for _, path in found] == [cfg.section_path("idea")]
+
+
+def test_an_id_in_two_shapes_survives_the_scan_as_two_rows(project):
+    """A half-finished move is the one failure a dynamic type adds. `scan`
+    returns a list, not a mapping, precisely so both places are reportable."""
+    cfg = project()
+    make(cfg, "idea", "IDEA-0001-a-thought")
+    (cfg.dir_for("idea") / "IDEA-0001-a-thought.md").write_text("", encoding="utf-8")
+
+    found = IdSpace(cfg).scan("idea")
+    assert [entity_id.text for entity_id, _ in found] == ["IDEA-0001", "IDEA-0001"]
+    assert len({path for _, path in found}) == 2
 
 
 def test_all_entries_spans_every_type(project):

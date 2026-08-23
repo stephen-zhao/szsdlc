@@ -75,7 +75,7 @@ name — drive behaviour:
 
 | Flag | Meaning |
 |---|---|
-| `layout` | `section`, `file` or `directory` — what one entry occupies |
+| `layout` | `section`, `file` or `directory` — what one entry occupies; or `dynamic`, meaning any of them, per entry |
 | `intake` | accepts typeless capture; appears in the inbox view |
 | `actionable` | appears in `szsdlc next` |
 | `tracks_progress` | has a checkbox artifact parsed for progress |
@@ -87,7 +87,7 @@ name — drive behaviour:
 
 | Prefix | Type | Default workflow | layout | intake | action­able | progress | can_parent | schedulable | persistent |
 |---|---|---|---|---|---|---|---|---|---|
-| `IDEA` | idea (typeless intake) | `inbox → refining → refined \| dropped` | **section** | **yes** | no | no | no | no | no |
+| `IDEA` | idea (typeless intake) | `inbox → refining → refined \| dropped` | **dynamic** (arrives as a section) | **yes** | no | no | no | no | no |
 | `EPIC` | epic (grouping of work) | `open → active → closed` | directory | no | no | derived | **yes** | yes | no |
 | `REQ` | requirement (product definition) | `draft → reviewed → approved → superseded \| retired` | directory | no | no | **none** | no | no | **yes** |
 | `SPK` | spike (investigation) | `open → researching → answered` | directory | no | yes | no | no | yes | no |
@@ -388,6 +388,7 @@ always print the total when truncated.
 | `tag`/`untag <ref> <tag>...` | bare words, no flags | resulting tag list | 1 line |
 | `link\|unlink <ref> <rel> <ref>` | three tokens, no flags | the edge, plus the generated inverse | 1 line |
 | `convert <ref> <T>` | two args | new id, tombstone note | 2 lines |
+| `move <ref> <LAYOUT>` | two args | the shapes moved between, and where it landed | 1 line |
 | `log <ref> "msg"` | short arg **or stdin** | nothing | 0 lines |
 | `schedule <ref> --horizon H [--after REF]` | one verb, one ref; roadmap defaults when one exists | the entity's new neighbours | 1 line |
 | `unschedule <ref>` | one ref | confirmation | 1 line |
@@ -400,7 +401,7 @@ always print the total when truncated.
 | `validate` | none | **nothing** when clean; grouped findings when not, most severe first | 0 / ≤20 |
 | `standards match <path>...` | paths | matching standard names | ≤10 rows |
 | `init` | none | created paths, compact | ≤15 lines |
-| `--help` | none | one line per command | ≤25 lines |
+| `--help` | none | one line per command | ≤28 lines, and never on the ceiling |
 
 Unknown-reference errors suggest the nearest match (`no WI-0420; did you
 mean WI-0042?`), which converts the most likely agent typo into a single
@@ -1167,18 +1168,64 @@ file, so capturing ten thoughts touches one file instead of creating ten.
 >   because Task 20 is the mover, and building a throwaway one first would be
 >   two answers to one question.
 
-### Task 20: `layout: dynamic` — one type, entries in any shape
+### Task 20: `layout: dynamic` — one type, entries in any shape — **DONE**
 
 **Requirement.** A type may hold its entries in all three shapes at once, and
 an entry moves between them without changing its id or breaking a link. An
 idea starts as a section, earns its own file when it grows, and earns a
 directory the moment something must live beside it.
 
-- [ ] **Step 1:** `layout: dynamic`, read side first: a scan finds entries in all three shapes under the type's `dir`, and one id appearing in two shapes is a `validate` error naming both paths.
-- [ ] **Step 2:** A write shape for new entries — the cheapest that fits (`section`), configurable per type.
-- [ ] **Step 3:** A command that moves one entry between shapes, id and links preserved, refusing on a non-`dynamic` type with a fix naming the layout key. It needs a row in the command audit table and it lands against a `--help` budget with no headroom (see the completion audit).
-- [ ] **Step 4:** Adding an artifact to a non-directory entry stops being a refusal and becomes promotion to `directory`, since the refusal's only fix would be the command in Step 3.
-- [ ] **Step 5:** Decide whether `refine` promotes automatically. An idea that has spawned entities is provenance, and may be better left where it is.
+- [x] **Step 1:** `layout: dynamic`, read side first: a scan finds entries in all three shapes under the type's `dir`, and one id appearing in two shapes is a `validate` error naming both paths.
+- [x] **Step 2:** A write shape for new entries — the cheapest that fits (`section`), configurable per type.
+- [x] **Step 3:** A command that moves one entry between shapes, id and links preserved, refusing on a non-`dynamic` type with a fix naming the layout key. It needs a row in the command audit table and it lands against a `--help` budget with no headroom (see the completion audit).
+- [x] **Step 4:** Adding an artifact to a non-directory entry stops being a refusal and becomes promotion to `directory`, since the refusal's only fix would be the command in Step 3.
+- [x] **Step 5:** Decide whether `refine` promotes automatically. An idea that has spawned entities is provenance, and may be better left where it is.
+
+---
+
+> **Decisions taken while implementing:**
+>
+> - **Which shape an entry is in is a fact about the entry, read off its
+>   path.** Not a fact about its type, which for `dynamic` has nothing useful
+>   to say. `Entity.layout` is derived at load; the type answers `layouts`
+>   (what it accepts) and `new_entry_layout` (what it arrives in). That split
+>   is why adding a third layout and then a fourth *mode* added no branch
+>   anywhere outside `config.py` and `model.py`.
+> - **The move writes the new shape before removing the old one.** An
+>   interrupted move therefore claims the id twice, which `validate` reports
+>   with both paths, rather than losing it, which nothing can report. The
+>   duplicate-id message grew a case for both copies being in the same file.
+> - **`convert` had to learn where to land.** With `idea` dynamic, converting
+>   a work item that carries `design.md` into an idea stopped being refused —
+>   the type *can* hold artifacts — and would have created it as a section and
+>   dropped them. `create_entity` now takes the shape to land in, and convert
+>   asks for a directory when there are files to carry. Dropping them quietly
+>   was the worst of the three answers available.
+> - **Wanting a journal is how an entry earns a directory.** `log` promoted
+>   rather than refusing, because the refusal's only fix would have been one
+>   unconditional command. The artifact *gate* still refuses — writing the
+>   file is a decision — but its remedy now names `szsdlc move … directory`
+>   instead of shrugging that the type has no directory.
+> - **`orphan-file` is skipped for a dynamic type that declares no artifacts.**
+>   Such a type has said the opposite of a fixed artifact set: an entry earns a
+>   directory precisely because something turned up whose name could not have
+>   been known in advance. A type that *does* declare artifacts is still held
+>   to them.
+> - **The `--help` budget rose from 25 to 28, and headroom is now asserted.**
+>   The completion audit left this as a decision; `move` forced it. The test
+>   named `…_with_room_to_grow` asserted `<= 25` while the help was exactly 25
+>   lines, so it could not detect the condition it was named for. It now
+>   asserts the cap *and* at least one spare line, which makes adding a command
+>   a deliberate raise of the number rather than a silent slide into the wall.
+> - **The shipped defaults never restate a value the code already defaults to.**
+>   `section_file: index.md` and `initial_layout: section` were both written
+>   into `defaults/config.yml` and both removed, because deep-merge means a
+>   project overriding a *neighbouring* key inherits them and is then refused
+>   for a key it never wrote. Found twice, by tests doing exactly that.
+> - **Step 5: `refine` does not promote.** An idea that has spawned entities is
+>   provenance — the thing that needs a design and a journal is the work item,
+>   which already has a directory. Promoting the idea too would give every
+>   refined idea an empty directory to prove nothing.
 
 ---
 
