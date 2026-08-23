@@ -1068,6 +1068,61 @@ budget is a design decision, so it is recorded here rather than taken.
 The three `[~]` boxes are genuinely blocked on a live Claude Code session: they
 test the *host's* behaviour, not this code's. See Tasks 13, 14 and 15.
 
+## Phase 6 — Intake that fires, and storage that bends (2026-08-23)
+
+Three requirements from *using* the framework rather than building it. They
+are one story: **capture has to fire far more often than it does, and the cost
+of firing has to stay near zero as it does.** Widening the trigger without the
+storage change trades a lost thought for a churned directory, so the order is
+deliberate — Task 18 first, and the churn it creates is the argument for Tasks
+19 and 20.
+
+### Task 18: Capture fires on a dump of half-formed things
+
+**Requirement.** When someone lists several loose, unfleshed thoughts, every
+one of them is written down as an idea in that turn, before any of them is
+discussed. Understanding a dump is not capturing it: context ends at the
+session boundary and the ideas must not.
+
+- [ ] **Step 1:** Widen `skills/capture`'s description to name the dump — a list, or a paragraph, of things not fleshed out enough to act on — alongside the "note that down" asides it already names. The description is the only part the model matches against before invoking, so a situation absent from it cannot fire.
+- [ ] **Step 2:** State the multi-item rule in the body: one `szsdlc capture` per item, all of them, before replying; and a dump that also carries one actionable thing means do that thing *and* capture the rest.
+- [ ] **Step 3:** Carry the same case into `AGENTS.md` rule 4, which is what a project's agents read when the plugin's skills are not loaded.
+- [ ] **Step 4:** Hold the 50-line skill budget — cut, do not extend. `pytest tests/test_skills.py`.
+
+### Task 19: A `section` layout, and `idea` defaults to it
+
+**Requirement.** An intake type stores every entry as a section of one shared
+file, so capturing ten thoughts touches one file instead of creating ten.
+`idea` ships on it by default, because Task 18 makes ten-at-a-time normal.
+
+**On the name.** Today's `layout` values name *what one entry occupies* — a
+`file`, a `directory`. The new one keeps that rule: an entry occupies a
+**`section`** of a shared file. Rejected: `single`, `ledger`, `collection`,
+`shared`, each of which names the *container* while the other two name the
+*entry*, so the three would stop reading as one axis.
+
+- [ ] **Step 1:** `layout: section` in the config schema and in `EntityType`, with `is_directory_layout` joined by a predicate the rest of the code branches on instead of the raw string.
+- [ ] **Step 2:** A per-type key naming the shared file (default `<dir>/index.md`). Artifacts stay refused, exactly as for `file`.
+- [ ] **Step 3:** A section format that round-trips: a heading carrying id and title, a field block, then the body. The Task 4 property test — parse, re-emit, compare bytes — extends to it and gates this task the same way it gated that one.
+- [ ] **Step 4:** `ids.scan`, `model.load`, `create_entity`, `set`, `drop` and `convert` all work through the one interface. Nothing downstream may branch on layout; `tests/test_model.py` asserts that already and grows a third case.
+- [ ] **Step 5:** Two captures in a row must both survive: assert the second appends rather than rewrites, so a lost first capture cannot pass.
+- [ ] **Step 6:** Switch `defaults/config.yml`'s `idea.layout` to `section`, and say what a project holding `file`-layout ideas today does about it.
+
+### Task 20: `layout: dynamic` — one type, entries in any shape
+
+**Requirement.** A type may hold its entries in all three shapes at once, and
+an entry moves between them without changing its id or breaking a link. An
+idea starts as a section, earns its own file when it grows, and earns a
+directory the moment something must live beside it.
+
+- [ ] **Step 1:** `layout: dynamic`, read side first: a scan finds entries in all three shapes under the type's `dir`, and one id appearing in two shapes is a `validate` error naming both paths.
+- [ ] **Step 2:** A write shape for new entries — the cheapest that fits (`section`), configurable per type.
+- [ ] **Step 3:** A command that moves one entry between shapes, id and links preserved, refusing on a non-`dynamic` type with a fix naming the layout key. It needs a row in the command audit table and it lands against a `--help` budget with no headroom (see the completion audit).
+- [ ] **Step 4:** Adding an artifact to a non-directory entry stops being a refusal and becomes promotion to `directory`, since the refusal's only fix would be the command in Step 3.
+- [ ] **Step 5:** Decide whether `refine` promotes automatically. An idea that has spawned entities is provenance, and may be better left where it is.
+
+---
+
 ## Out of scope (separate items, after this lands)
 
 1. ~~**Adopting `szsdlc` in its first consumer (`s-s1-lab`)**~~ — done 2026-08-17. Config, an environment parity ledger as a record, and `docs/standards/` seeded from that project's `CLAUDE.md`.
