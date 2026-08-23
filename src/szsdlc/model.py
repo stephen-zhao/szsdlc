@@ -1,9 +1,11 @@
-"""Entities: one interface over both storage layouts, and one that can hold
+"""Entities: one interface over every storage layout, and one that can hold
 invalidity rather than choking on it.
 
-A `file` entity is a single markdown file; a `directory` entity is an
-`entity.md` plus artifacts. Nothing downstream branches on which — asking an
-entity for an artifact it cannot have simply answers "no".
+A `section` entity is a section of one shared file; a `file` entity is a single
+markdown file; a `directory` entity is an `entity.md` plus artifacts. Nothing
+downstream branches on which — asking an entity for an artifact it cannot have
+simply answers "no". This module is the one place allowed to know, and it knows
+in four methods: load, save, delete, create.
 
 The harder property is the second one. `sync` must render a half-built project,
 so loading is *permissive*: a file whose frontmatter will not parse becomes an
@@ -23,7 +25,7 @@ from typing import Any, Iterator
 
 from jsonschema import Draft202012Validator
 
-from . import frontmatter
+from . import frontmatter, sections
 from .config import Config, EntityType
 from .errors import InternalError
 from .ids import EntityId, IdSpace
@@ -117,7 +119,8 @@ class Entity:
         self.config = config
         #: The markdown file holding the frontmatter.
         self.path = path
-        #: The entity's own directory, or None for a `file` layout entity.
+        #: The entity's own directory, or None when the layout has no room
+        #: for one — which is every layout but `directory`.
         self.home = home
         self.doc = document
 
@@ -158,6 +161,17 @@ class Entity:
     @property
     def has_stored_title(self) -> bool:
         return bool(self.data.get("title"))
+
+    @property
+    def stored_name(self) -> str:
+        """What this entry is called on disk — a directory name, a filename
+        without its suffix, or a section heading. All three are the id plus a
+        cosmetic remainder, which is why one question answers all three."""
+        if self.home is not None:
+            return self.home.name
+        if self.type.is_section_layout:
+            return sections.heading_for(self.id.text, self.title)
+        return self.path.stem
 
     @property
     def body(self) -> str:
@@ -291,8 +305,46 @@ class Entity:
         return self.doc.render()
 
     def save(self) -> None:
-        """Write bytes, not text: line endings are part of what stays untouched."""
+        """Write bytes, not text: line endings are part of what stays untouched.
+
+        A section entity re-reads its shared file first and replaces only its
+        own lines. Two captures in a row therefore cannot lose the first, and
+        neither can a save that lands after someone edited a neighbouring
+        entry by hand.
+        """
+        if self.type.is_section_layout:
+            self._save_section()
+            return
         self.path.write_bytes(self.render().encode("utf-8"))
+
+    def _save_section(self) -> None:
+        text = sections.read(self.path)
+        sections.write(self.path, sections.upsert(
+            text, self._section_name, self.id.text,
+            sections.heading_for(self.id.text, self.title), self.render(),
+        ))
+
+    def delete(self) -> None:
+        """Remove this entity's storage, whatever shape it takes.
+
+        `convert` is the only caller. Unlinking `self.path` would be right for
+        two layouts and catastrophic for the third, where that path is the file
+        every other entry of the type lives in.
+        """
+        import shutil
+
+        if self.type.is_section_layout:
+            text = sections.read(self.path)
+            sections.write(self.path,
+                           sections.remove(text, self._section_name, self.id.text))
+        elif self.home is not None:
+            shutil.rmtree(self.home)
+        else:
+            self.path.unlink()
+
+    def _section_name(self, heading: str) -> str | None:
+        entity_id = IdSpace(self.config).section_id(self.type, heading)
+        return entity_id.text if entity_id else None
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +427,7 @@ def schema_findings(config: Config, entity: Entity) -> list[str]:
 
 def load_entity(config: Config, entity_id: EntityId, entity_type: EntityType,
                 entry: Path) -> Entity | UnparseableEntity:
-    """Load one entity from either layout. Never raises for bad content."""
+    """Load one entity from any layout. Never raises for bad content."""
     if entity_type.is_directory_layout:
         home: Path | None = entry
         path = entry / config.entity_filename
@@ -396,6 +448,15 @@ def load_entity(config: Config, entity_id: EntityId, entity_type: EntityType,
     except (OSError, UnicodeDecodeError) as exc:
         return UnparseableEntity(path=path, error=str(exc),
                                  entity_id=entity_id, entity_type=entity_type)
+
+    if entity_type.is_section_layout:
+        text = _section_text(config, entity_id, entity_type, text)
+        if text is None:
+            return UnparseableEntity(
+                path=path,
+                error=f"no ## {entity_id.text} section in {path.name}",
+                entity_id=entity_id, entity_type=entity_type,
+            )
 
     document = frontmatter.parse(text)
     if not document.ok:
@@ -429,11 +490,15 @@ def create_entity(config: Config, ids: IdSpace, entity_type: EntityType, *,
         home: Path | None = directory / basename
         home.mkdir(parents=True, exist_ok=False)
         path = home / config.entity_filename
+    elif entity_type.is_section_layout:
+        home = None
+        path = config.section_path(entity_type)
     else:
         home = None
         path = directory / f"{basename}.md"
 
-    if path.exists():  # pragma: no cover - allocation scans the directory first
+    if path.exists() and not entity_type.is_section_layout:  # pragma: no cover
+        # Allocation scans first, so this only fires on a race.
         raise InternalError(f"{path} already exists for a freshly allocated id")
 
     document = frontmatter.parse("---\n---\n" + body)
@@ -460,6 +525,26 @@ def create_entity(config: Config, ids: IdSpace, entity_type: EntityType, *,
     entity = Entity(entity_id, entity_type, config, path, document, home)
     entity.save()
     return entity
+
+
+def _section_text(config: Config, entity_id: EntityId, entity_type: EntityType,
+                  text: str) -> str | None:
+    """One entry's document, cut out of the shared file it shares.
+
+    What comes back is a whole markdown document — frontmatter and body — which
+    is why every reader below this point is unchanged.
+    """
+    ids = IdSpace(config)
+
+    def names(heading: str) -> str | None:
+        found = ids.section_id(entity_type, heading)
+        return found.text if found else None
+
+    _, found = sections.split(text, lambda heading: names(heading) is not None)
+    for section in found:
+        if names(section.name) == entity_id.text:
+            return section.document
+    return None
 
 
 def _first_line(text: str) -> str:

@@ -49,6 +49,11 @@ REPLACE_KEY = "_replace"
 #: custom fields, and a derived attribute may not shadow one.
 CORE_FIELDS = frozenset({"id", "title", "tags", "status", "relations"})
 
+#: Where a `section`-layout type keeps its entries when it does not say. Inside
+#: the type's own directory, so everything that watches or scans that directory
+#: — the sync hook included — keeps working without being told about layouts.
+DEFAULT_SECTION_FILE = "index.md"
+
 CAPABILITY_FLAGS = (
     "intake",
     "actionable",
@@ -141,6 +146,7 @@ class EntityType:
     layout: str
     title: str
     workflow: Workflow
+    section_file: str = DEFAULT_SECTION_FILE
     fields: dict[str, Field] = field(default_factory=dict)
     artifacts: tuple[str, ...] = ()
     progress_artifact: str | None = None
@@ -156,6 +162,18 @@ class EntityType:
     @property
     def is_directory_layout(self) -> bool:
         return self.layout == "directory"
+
+    @property
+    def is_section_layout(self) -> bool:
+        """Entries are sections of one shared file rather than files of
+        their own. Asked instead of comparing the string, so the third
+        layout did not have to be spelled out at every branch."""
+        return self.layout == "section"
+
+    @property
+    def carries_artifacts(self) -> bool:
+        """Whether an entry of this type has room for a file beside it."""
+        return self.is_directory_layout
 
     def flag(self, name: str) -> bool:
         if name not in CAPABILITY_FLAGS:
@@ -308,6 +326,11 @@ class Config:
     def dir_for(self, entity_type: EntityType | str) -> Path:
         et = entity_type if isinstance(entity_type, EntityType) else self.type_for(entity_type)
         return (self.entities_dir / et.dir).resolve()
+
+    def section_path(self, entity_type: EntityType | str) -> Path:
+        """The shared file holding one `section`-layout type's entries."""
+        et = entity_type if isinstance(entity_type, EntityType) else self.type_for(entity_type)
+        return self.dir_for(et) / et.section_file
 
     def roadmap_path(self, name: str) -> Path:
         return self.roadmaps_dir / f"{name}.yml"
@@ -548,8 +571,14 @@ def _check_entity_types(data: dict[str, Any]) -> None:
 
         artifacts = set(spec.get("artifacts") or ())
         if artifacts and spec["layout"] != "directory":
-            _fail(f"{base}.artifacts", "a `file` layout entity cannot carry artifacts.",
+            _fail(f"{base}.artifacts",
+                  f"a `{spec['layout']}` layout entity has nowhere to put an artifact.",
                   f"set {base}.layout to directory, or remove {base}.artifacts")
+
+        if spec.get("section_file") and spec["layout"] != "section":
+            _fail(f"{base}.section_file",
+                  f"a `{spec['layout']}` layout entity is not stored in a shared file.",
+                  f"set {base}.layout to section, or remove {base}.section_file")
 
         for slot in ("progress_artifact", "journal_artifact"):
             value = spec.get(slot)
@@ -804,6 +833,7 @@ def _build_entity_type(name: str, spec: dict[str, Any]) -> EntityType:
         prefix=spec["prefix"],
         dir=spec["dir"],
         layout=spec["layout"],
+        section_file=spec.get("section_file") or DEFAULT_SECTION_FILE,
         title=spec.get("title") or name.replace("_", " ").capitalize(),
         workflow=_build_workflow(spec["workflow"]),
         fields=fields,

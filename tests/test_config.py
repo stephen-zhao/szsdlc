@@ -317,9 +317,23 @@ def test_progress_tracking_requires_an_artifact(tmp_path):
     assert "progress_artifact" in err.problem
 
 
-def test_file_layout_cannot_carry_artifacts(tmp_path):
-    err = load_failing(tmp_path, {"entity_types": {"idea": {"artifacts": ["notes.md"]}}})
-    assert "cannot carry artifacts" in err.problem
+def test_a_layout_with_no_room_cannot_carry_artifacts(tmp_path):
+    """Both of the layouts that are not `directory`, named in the refusal.
+
+    The message says which layout was actually declared, because "a file
+    layout entity cannot" is confusing advice to read about a section one.
+    """
+    for layout in ("section", "file"):
+        err = load_failing(tmp_path, {"entity_types": {"idea": {
+            "layout": layout, "artifacts": ["notes.md"]}}})
+        assert f"a `{layout}` layout entity has nowhere to put an artifact" in err.problem
+
+
+def test_section_file_on_a_type_that_has_no_shared_file_is_refused(tmp_path):
+    """A key that does nothing is a key someone is relying on."""
+    err = load_failing(tmp_path, {"entity_types": {"idea": {
+        "layout": "file", "section_file": "ideas.md"}}})
+    assert "not stored in a shared file" in err.problem
 
 
 def test_custom_field_cannot_shadow_a_core_field(tmp_path):

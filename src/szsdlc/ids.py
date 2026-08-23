@@ -213,8 +213,8 @@ class IdSpace:
         return self._from_match(match, ref)
 
     def parse_leading(self, name: str) -> EntityId | None:
-        """The id at the head of a file or directory name, or None."""
-        match = self._leading.match(name)
+        """The id at the head of a file, directory or section name, or None."""
+        match = self._leading.match(name.split()[0] if name.split() else name)
         if not match:
             return None
         try:
@@ -260,6 +260,9 @@ class IdSpace:
         """
         et = (entity_type if not isinstance(entity_type, str)
               else self.config.type_for(entity_type))
+        if et.is_section_layout:
+            return self.scan_sections(et)
+
         directory = self.config.dir_for(et)
         if not directory.is_dir():
             return []
@@ -280,6 +283,40 @@ class IdSpace:
                 continue
             found.append((entity_id, entry))
         return found
+
+    def scan_sections(self, entity_type: EntityType) -> list[tuple[EntityId, Path]]:
+        """Every entry in a `section` type's shared file, in file order.
+
+        The path reported is the shared file, the same for every entry in it.
+        That is the honest answer — it is where the entry is — and it is what
+        makes a duplicated id inside one file report as a duplicate rather
+        than as two entities.
+        """
+        from . import sections
+
+        path = self.config.section_path(entity_type)
+        _, found_sections = sections.split(
+            sections.read(path),
+            lambda name: self.section_id(entity_type, name) is not None,
+        )
+        found: list[tuple[EntityId, Path]] = []
+        for section in found_sections:
+            entity_id = self.section_id(entity_type, section.name)
+            if entity_id is not None:
+                found.append((entity_id, path))
+        return found
+
+    def section_id(self, entity_type: EntityType, heading: str) -> EntityId | None:
+        """The id a heading names, or None when it names no entry of this type.
+
+        A heading that is not an id of this type is prose — a title, a note to
+        the reader, a `## Notes` written inside a body — and must not split the
+        entry it sits in.
+        """
+        entity_id = self.parse_leading(heading)
+        if entity_id is None or entity_id.prefix != entity_type.prefix:
+            return None
+        return entity_id
 
     def entries(self, entity_type: EntityType | str) -> dict[EntityId, Path]:
         """Every entity of one type, found by scanning its directory.

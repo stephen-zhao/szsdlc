@@ -873,12 +873,12 @@ def cmd_convert(args: argparse.Namespace) -> int:
             f"convert: {entity.id.text} is already a {target_type.name}.",
             fix=f"szsdlc show {entity.id.text}",
         )
-    if entity.home is not None and not target_type.is_directory_layout:
+    if entity.home is not None and not target_type.carries_artifacts:
         extra = [p.name for p in entity.artifact_files()]
         if extra:
             raise BadInput(
-                f"convert: {target_type.name} is a file layout, but "
-                f"{entity.id.text} carries {', '.join(extra)}.",
+                f"convert: a {target_type.name} has nowhere to put an artifact, "
+                f"but {entity.id.text} carries {', '.join(extra)}.",
                 fix=f"remove those artifacts, then rerun",
             )
 
@@ -902,10 +902,7 @@ def cmd_convert(args: argparse.Namespace) -> int:
         for artifact in entity.artifact_files():
             shutil.copy2(artifact, child.home / artifact.name)
 
-    if entity.home is not None:
-        shutil.rmtree(entity.home)
-    else:
-        entity.path.unlink()
+    entity.delete()
 
     tombstones = session.ids.tombstones
     tombstones.record(entity.id.text, child.id.text)

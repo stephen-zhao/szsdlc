@@ -91,7 +91,7 @@ def name_mismatches(store: EntityStore) -> list[Finding]:
     """
     findings = []
     for entity in store:
-        name = entity.home.name if entity.home else entity.path.stem
+        name = entity.stored_name
         if not name.startswith(entity.id.text):
             findings.append(Finding(
                 kind="name-mismatch", ref=entity.id.text, level="warning",
