@@ -52,6 +52,12 @@ One command, no prompts, no ceremony. Then carry on with the task you were on.
 An idea discussed in a conversation and not captured is gone the moment the
 session ends, which is most of what a tracker exists to prevent.
 
+The same applies, once per item, when several loose thoughts arrive at once —
+a list, or a paragraph that changes subject twice. Half-formed is what intake
+is *for*: reading a dump into your context is not capturing it, because your
+context ends with the session. If one item in the dump is a thing to do now,
+do that and capture the rest.
+
 Do not capture the task you are currently working on — that is already tracked.
 
 ## 5. Priority is placement, not a field
