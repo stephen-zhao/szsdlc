@@ -35,9 +35,10 @@ which it got:
 
 | `layout` | One entry is | For |
 |---|---|---|
-| `section` | a section of one shared file, named by a `## <ID> — title` heading | High-volume intake. Ten one-line thoughts should not cost ten files; `idea` ships on this |
+| `section` | a section of one shared file, named by a `## <ID> — title` heading | High-volume intake. Ten one-line thoughts should not cost ten files |
 | `file` | `<dir>/<ID>-<slug>.md` | A thought that has outgrown a section but carries nothing beside it |
 | `directory` | `<dir>/<ID>-<slug>/entity.md`, plus artifacts | Anything with a design, a plan or a journal |
+| `dynamic` | any of the three, per entry, and it may be laid out again later | Types whose fidelity is not known at capture time. `idea` ships on this |
 
 A section is *a whole entity document* — the same frontmatter and body the
 other two layouts store — with a heading above it carrying the name its
@@ -45,6 +46,17 @@ filename would have carried. A heading delimits an entry only if it parses as
 an id of that type, so a `## Notes` written inside a body does not split it.
 `section_file` names the shared file, and defaults to `index.md` inside the
 type's own directory.
+
+`dynamic` follows from that. `szsdlc layout <ref> <layout>` lays an entry out
+again — same id, same bytes, same links, because a section is already a whole
+document and no relation has ever named a path. It is `convert` for the other
+axis: `convert` changes what an entry *is*, `layout` changes what it
+*occupies*. A thought arrives as a section (`initial_layout`, default
+`section`), earns its own file if it grows, and earns a directory the moment
+something has to live beside it; asking to `log` against one gives it that
+directory rather than refusing. The new layout is written before the old one is
+removed, so an interruption leaves the id claimed twice — which `validate`
+reports, with both paths — rather than not at all.
 
 Three properties fall out of that, and they are the ones worth knowing:
 
@@ -77,6 +89,7 @@ set <ref> field=value   set scalar fields; enforces the workflow
 tag|untag <ref> <tag>   add or remove tags, normalized on write
 link|unlink a <r> b     author or remove one edge; inverses are generated
 convert <ref> <TYPE>    reclassify, leaving a resolving tombstone
+layout <ref> <LAYOUT>   lay an entry out as a section, file or directory
 log <ref> [msg]         append a dated line to the journal artifact
 schedule <ref> -H h     place on a roadmap; --after/--before/--top
 unschedule <ref>        take off the roadmap

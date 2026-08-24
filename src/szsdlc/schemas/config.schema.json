@@ -205,7 +205,11 @@
           "type": "string"
         },
         "layout": {
-          "description": "What one entry occupies. `section` for a high-volume type — ten one-line thoughts should not cost ten files, so entries are sections of one shared file. `file` for a low-fidelity type. `directory` for types that carry artifacts.",
+          "description": "What one entry occupies. `section` for a high-volume type — ten one-line thoughts should not cost ten files, so entries are sections of one shared file. `file` for a low-fidelity type. `directory` for types that carry artifacts. `dynamic` for a type whose entries take any of the three and move between them as they earn it.",
+          "enum": ["section", "file", "directory", "dynamic"]
+        },
+        "initial_layout": {
+          "description": "The layout a new entry of a `dynamic` type arrives in. Defaults to section — the cheapest shape that fits, for the same reason a workflow starts at its cheapest status.",
           "enum": ["section", "file", "directory"]
         },
         "section_file": {

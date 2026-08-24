@@ -256,25 +256,31 @@ class IdSpace:
 
         Returns a list rather than a mapping so a duplicated id survives to be
         reported with *both* paths. Collapsing it here would hide the one
-        failure mode directory-scan allocation can produce.
+        failure mode directory-scan allocation can produce — and a `dynamic`
+        type, whose entries may be in any of three layouts, is where that
+        failure is most likely: a half-finished relayout leaves the same id in
+        two of them.
         """
         et = (entity_type if not isinstance(entity_type, str)
               else self.config.type_for(entity_type))
-        if et.is_section_layout:
-            return self.scan_sections(et)
+        layouts = et.layouts
+
+        found: list[tuple[EntityId, Path]] = []
+        if "section" in layouts:
+            found.extend(self.scan_sections(et))
 
         directory = self.config.dir_for(et)
         if not directory.is_dir():
-            return []
+            return found
 
-        found: list[tuple[EntityId, Path]] = []
+        shared = self.config.section_path(et) if et.holds_sections else None
         for entry in sorted(directory.iterdir()):
-            if et.is_directory_layout:
-                if not entry.is_dir():
+            if entry.is_dir():
+                if "directory" not in layouts:
                     continue
                 name = entry.name
             else:
-                if not entry.is_file() or entry.suffix != ".md":
+                if "file" not in layouts or entry.suffix != ".md" or entry == shared:
                     continue
                 name = entry.stem
 

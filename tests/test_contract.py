@@ -293,6 +293,11 @@ def test_a_mutation_reports_its_result_within_budget(tmp_path, invoke, argv, bud
 # ---------------------------------------------------------------------------
 
 
+#: One line per command, plus the header and the footer. Raised from 25 to 28
+#: when `move` landed, because 25 was exactly what the help already used and a
+#: ceiling with nothing under it cannot be tested against.
+HELP_BUDGET = 28
+
 #: (argv, max lines). The audit table in docs/plan.md is the specification;
 #: a command that outgrows its budget fails here.
 BUDGETS = [
@@ -305,7 +310,7 @@ BUDGETS = [
     (("show", "WI-0001", "--context"), 20),
     (("context",), 12),
     (("standards", "match", "docs/plan.md"), 10),
-    (("--help",), 25),
+    (("--help",), HELP_BUDGET),
 ]
 
 
@@ -380,10 +385,20 @@ def test_every_registered_command_is_documented(capsys):
 
 
 def test_help_fits_the_budget_with_room_to_grow():
-    """A budget with no headroom is a budget that breaks on the next command."""
+    """A budget with no headroom is a budget that breaks on the next command.
+
+    This asserted `<= 25` while the help was exactly 25 lines long, so it could
+    not detect the condition its own name describes — the completion audit
+    found that and left it as a decision. Adding `move` forced the decision:
+    the budget rose to 28, and the headroom is now asserted separately, so the
+    next command added is a deliberate raise of this number rather than a
+    silent slide into the wall.
+    """
     from szsdlc.cli import compact_help
 
-    assert len(compact_help().splitlines()) <= 25
+    used = len(compact_help().splitlines())
+    assert used <= HELP_BUDGET, f"{used} lines"
+    assert HELP_BUDGET - used >= 1, "raise HELP_BUDGET deliberately, in this commit"
 
 
 def test_the_audit_table_and_the_parser_agree():

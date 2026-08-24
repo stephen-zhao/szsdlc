@@ -58,14 +58,27 @@ def unparseable_files(store: EntityStore) -> list[Finding]:
 
 
 def duplicate_ids(config: Config, store: EntityStore) -> list[Finding]:
+    """One id claimed twice, reported with both places it was found.
+
+    A `dynamic` type is where this now most often comes from: a relayout writes
+    the new layout before removing the old one, deliberately, so that an
+    interrupted one leaves the id claimed twice rather than not at all. Both
+    places are named, because that is the whole difference between a report and
+    a riddle.
+    """
     findings = []
     for entity_id, path in store.duplicates:
         original = store.get(entity_id)
-        where = original.path if original else "(unreadable)"
+        where = original.path if original else None
+        entity_type = config.type_for_prefix(entity_id.prefix)
+        if where == path:
+            message = f"claimed twice inside {path}"
+        else:
+            message = f"claimed by two paths: {where or '(unreadable)'} and {path}"
         findings.append(Finding(
             kind="duplicate-id", ref=entity_id.text,
-            message=f"claimed by two paths: {where} and {path}",
-            fix=f"szsdlc convert {entity_id.text} {config.type_for_prefix(entity_id.prefix).name}",
+            message=message,
+            fix=f"szsdlc convert {entity_id.text} {entity_type.name}",
         ))
     return findings
 
@@ -312,9 +325,19 @@ def tag_findings(config: Config, store: EntityStore) -> list[Finding]:
 
 
 def orphan_files(config: Config, store: EntityStore) -> list[Finding]:
+    """A file in an entity's directory that the type never declared.
+
+    Skipped for a `dynamic` type that declares no artifacts at all. Such a type
+    has said the opposite of a fixed artifact set: an entry earns a directory
+    precisely because something turned up that has to live beside it, and its
+    name could not have been known in advance. A type that *does* declare
+    artifacts is still held to them.
+    """
     findings = []
     for entity in store:
         if entity.home is None:
+            continue
+        if entity.type.is_dynamic_layout and not entity.type.artifacts:
             continue
         allowed = set(entity.type.artifacts) | {config.entity_filename}
         for path in entity.artifact_files():

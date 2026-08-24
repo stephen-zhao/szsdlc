@@ -326,11 +326,14 @@ def test_dropping_twice_is_refused(run, no_stdin):
 
 
 def test_help_is_compact(capsys):
-    """The audit budgets --help at 25 lines, and this is the block a mistyped
-    command would otherwise print."""
+    """The audit budgets --help, and this is the block a mistyped command
+    would otherwise print. The number itself lives in test_contract.py, next
+    to the rest of the audit table it comes from."""
+    from tests.test_contract import HELP_BUDGET
+
     assert main(["--help"]) == 0
     output = capsys.readouterr().out
-    assert len(output.splitlines()) <= 25
+    assert len(output.splitlines()) <= HELP_BUDGET
     assert "capture" in output and "refine" in output
     # Every command reachable from the parser has a line here, except the
     # hook entry point, which is invoked by hooks.json and never typed.

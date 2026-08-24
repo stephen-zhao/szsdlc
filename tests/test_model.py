@@ -42,14 +42,15 @@ def one(project, type_name: str, number: int) -> Entity:
 def test_every_layout_answers_the_same_questions(make_project, write_entity_in):
     """A section, a file and a directory, asked the same things.
 
-    The three shapes exist so that storage cost matches fidelity, not so that
+    The three layouts exist so that storage cost matches fidelity, not so that
     callers can tell them apart. The moment a view or a command has to know
     which one it is holding, the abstraction has stopped paying for itself.
     """
     project = make_project({"entity_types": {"decision": {"layout": "file"}}})
     write = write_entity_in(project)
 
-    write("idea", 1, "status: inbox\ncaptured: 2026-08-16\n", "A loose thought\n")
+    write("idea", 1, "status: inbox\ncaptured: 2026-08-16\n", "A loose thought\n",
+          layout="section")
     write("decision", 1, "title: Use X\nstatus: proposed\nopened: 2026-08-16\n")
     write("work_item", 1, "title: Do it\nstatus: idea\nopened: 2026-08-16\n")
 

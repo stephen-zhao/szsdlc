@@ -5,7 +5,13 @@ A `section` entity is a section of one shared file; a `file` entity is a single
 markdown file; a `directory` entity is an `entity.md` plus artifacts. Nothing
 downstream branches on which — asking an entity for an artifact it cannot have
 simply answers "no". This module is the one place allowed to know, and it knows
-in four methods: load, save, delete, create.
+in five methods: load, save, delete, create and relayout.
+
+Which layout an entity is in is a fact about the *entity*, read off its path,
+not a fact about its type. For the three fixed layouts those agree by
+construction; for a `dynamic` type they do not, and an entry is laid out again
+as it earns it — a thought starts as a section, gets its own file when it
+grows, and gets a directory the moment something has to live beside it.
 
 The harder property is the second one. `sync` must render a half-built project,
 so loading is *permissive*: a file whose frontmatter will not parse becomes an
@@ -110,18 +116,23 @@ class UnparseableEntity:
 
 
 class Entity:
-    """One entity, loaded from either layout."""
+    """One entity, loaded from any layout."""
 
     def __init__(self, entity_id: EntityId, entity_type: EntityType, config: Config,
-                 path: Path, document: frontmatter.Document, home: Path | None = None):
+                 path: Path, document: frontmatter.Document, home: Path | None = None,
+                 layout: str | None = None):
         self.id = entity_id
         self.type = entity_type
         self.config = config
-        #: The markdown file holding the frontmatter.
+        #: The markdown file holding the frontmatter. For a `section` entity
+        #: that file holds every other entry of the type as well.
         self.path = path
-        #: The entity's own directory, or None when the layout has no room
-        #: for one — which is every layout but `directory`.
+        #: The entity's own directory, or None when this entry has no room for
+        #: one — which is every layout but `directory`.
         self.home = home
+        #: Which layout this entry is actually in. Read off the path rather
+        #: than taken from the type, because for a `dynamic` type they differ.
+        self.layout = layout or entry_layout(config, entity_type, home or path)
         self.doc = document
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
@@ -167,9 +178,9 @@ class Entity:
         """What this entry is called on disk — a directory name, a filename
         without its suffix, or a section heading. All three are the id plus a
         cosmetic remainder, which is why one question answers all three."""
-        if self.home is not None:
+        if self.layout == "directory" and self.home is not None:
             return self.home.name
-        if self.type.is_section_layout:
+        if self.layout == "section":
             return sections.heading_for(self.id.text, self.title)
         return self.path.stem
 
@@ -312,7 +323,7 @@ class Entity:
         neither can a save that lands after someone edited a neighbouring
         entry by hand.
         """
-        if self.type.is_section_layout:
+        if self.layout == "section":
             self._save_section()
             return
         self.path.write_bytes(self.render().encode("utf-8"))
@@ -333,7 +344,7 @@ class Entity:
         """
         import shutil
 
-        if self.type.is_section_layout:
+        if self.layout == "section":
             text = sections.read(self.path)
             sections.write(self.path,
                            sections.remove(text, self._section_name, self.id.text))
@@ -425,10 +436,28 @@ def schema_findings(config: Config, entity: Entity) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+def entry_layout(config: Config, entity_type: EntityType, entry: Path) -> str:
+    """Which layout an entry is in, read off where it sits.
+
+    The path is the authority, not the type. For the three fixed layouts they
+    agree by construction; for `dynamic` the type has nothing useful to say,
+    and the whole point is that different entries answer differently.
+    """
+    if entry.is_dir():
+        return "directory"
+    if entity_type.holds_sections and entry == config.section_path(entity_type):
+        return "section"
+    if entry.name == config.entity_filename and entry.parent.is_dir():
+        # The frontmatter file of a directory entry, handed to us directly.
+        return "directory"
+    return "file"
+
+
 def load_entity(config: Config, entity_id: EntityId, entity_type: EntityType,
                 entry: Path) -> Entity | UnparseableEntity:
     """Load one entity from any layout. Never raises for bad content."""
-    if entity_type.is_directory_layout:
+    layout = entry_layout(config, entity_type, entry)
+    if layout == "directory":
         home: Path | None = entry
         path = entry / config.entity_filename
     else:
@@ -449,7 +478,7 @@ def load_entity(config: Config, entity_id: EntityId, entity_type: EntityType,
         return UnparseableEntity(path=path, error=str(exc),
                                  entity_id=entity_id, entity_type=entity_type)
 
-    if entity_type.is_section_layout:
+    if layout == "section":
         text = _section_text(config, entity_id, entity_type, text)
         if text is None:
             return UnparseableEntity(
@@ -463,15 +492,16 @@ def load_entity(config: Config, entity_id: EntityId, entity_type: EntityType,
         return UnparseableEntity(path=path, error=document.error or "unparseable",
                                  entity_id=entity_id, entity_type=entity_type)
 
-    return Entity(entity_id, entity_type, config, path, document, home)
+    return Entity(entity_id, entity_type, config, path, document, home, layout)
 
 
 def create_entity(config: Config, ids: IdSpace, entity_type: EntityType, *,
                   title: str | None = None, body: str = "", status: str | None = None,
                   tags: list[str] | None = None,
                   fields: dict[str, Any] | None = None,
-                  relations: dict[str, Any] | None = None) -> Entity:
-    """Mint the next id and write one entity in its type's layout.
+                  relations: dict[str, Any] | None = None,
+                  layout: str | None = None) -> Entity:
+    """Mint the next id and write one entity in the layout it arrives in.
 
     Frontmatter is built in a fixed order — id, title, tags, status, relations,
     then the type's own fields — so two entities created a month apart still
@@ -479,6 +509,11 @@ def create_entity(config: Config, ids: IdSpace, entity_type: EntityType, *,
 
     A required `date` field with no value given defaults to today. That is the
     whole point of capture costing one command: the framework knows when it is.
+
+    `layout` overrides the one it arrives in, which only a `dynamic` type has
+    more than one of. `convert` uses it: work carrying artifacts must land
+    somewhere that can hold them, and dropping them quietly would be the worst
+    of the three possible answers.
     """
     entity_id = ids.next_id(entity_type)
     basename = ids.basename(entity_id, title or _first_line(body))
@@ -486,18 +521,15 @@ def create_entity(config: Config, ids: IdSpace, entity_type: EntityType, *,
     directory = config.dir_for(entity_type)
     directory.mkdir(parents=True, exist_ok=True)
 
-    if entity_type.is_directory_layout:
-        home: Path | None = directory / basename
+    layout = layout or entity_type.new_entry_layout
+    if layout not in entity_type.layouts:  # pragma: no cover - callers check
+        raise InternalError(
+            f"{entity_type.name} entries are not stored as a {layout}")
+    home, path = _storage_for(config, entity_type, layout, basename)
+    if layout == "directory":
         home.mkdir(parents=True, exist_ok=False)
-        path = home / config.entity_filename
-    elif entity_type.is_section_layout:
-        home = None
-        path = config.section_path(entity_type)
-    else:
-        home = None
-        path = directory / f"{basename}.md"
 
-    if path.exists() and not entity_type.is_section_layout:  # pragma: no cover
+    if path.exists() and layout != "section":  # pragma: no cover
         # Allocation scans first, so this only fires on a race.
         raise InternalError(f"{path} already exists for a freshly allocated id")
 
@@ -522,9 +554,60 @@ def create_entity(config: Config, ids: IdSpace, entity_type: EntityType, *,
     for name, value in given.items():
         document.set(name, value)
 
-    entity = Entity(entity_id, entity_type, config, path, document, home)
+    entity = Entity(entity_id, entity_type, config, path, document, home, layout)
     entity.save()
     return entity
+
+
+def relayout(config: Config, ids: IdSpace, entity: Entity, layout: str) -> Entity:
+    """Lay one entry out in another layout. Same id, same bytes, same links.
+
+    Nothing is renumbered and nothing is re-serialised: the document that comes
+    out of the old layout is the document that goes into the new one, which is
+    why a section was made a whole entity document in the first place. Every
+    reference to the entity keeps resolving because the id never moved — only
+    the storage did, and no relation has ever named a path.
+
+    Order matters: the new layout is written first and the old one removed
+    after, so an interruption leaves the id claimed twice — which `validate`
+    reports, with both paths — rather than not at all.
+    """
+    if layout == entity.layout:
+        raise InternalError(f"{entity.id.text} is already laid out as a {layout}")
+
+    basename = ids.basename(entity.id, entity.title)
+    home, path = _storage_for(config, entity.type, layout, basename)
+    document = frontmatter.parse(entity.render())
+
+    if layout == "directory":
+        home.mkdir(parents=True, exist_ok=True)
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+    moved = Entity(entity.id, entity.type, config, path, document, home, layout)
+    moved.save()
+
+    carried = entity.artifact_files() if entity.home is not None else []
+    if carried and home is not None:
+        import shutil
+
+        for artifact in carried:
+            shutil.copy2(artifact, home / artifact.name)
+
+    entity.delete()
+    return moved
+
+
+def _storage_for(config: Config, entity_type: EntityType, layout: str,
+                 basename: str) -> tuple[Path | None, Path]:
+    """Where an entry of this layout lives: its directory, and its markdown."""
+    directory = config.dir_for(entity_type)
+    if layout == "directory":
+        home = directory / basename
+        return home, home / config.entity_filename
+    if layout == "section":
+        return None, config.section_path(entity_type)
+    return None, directory / f"{basename}.md"
 
 
 def _section_text(config: Config, entity_id: EntityId, entity_type: EntityType,
