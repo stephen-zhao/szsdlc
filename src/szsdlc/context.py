@@ -61,12 +61,12 @@ class Context:
     current_entity: str | None = None
 
 
-def age_days(entity: Entity) -> int | None:
-    """Days since this entity's first declared date field.
+def captured_on(entity: Entity) -> dt.date | None:
+    """This entity's first declared date field, as a date.
 
     Read off the type's own fields rather than hunting the frontmatter for
     anything date-shaped, so a project whose intake type records `raised`
-    rather than `captured` still gets an age.
+    rather than `captured` is served by the same code.
     """
     for name, spec in entity.type.fields.items():
         if spec.type != "date":
@@ -75,8 +75,29 @@ def age_days(entity: Entity) -> int | None:
         if isinstance(value, dt.datetime):
             value = value.date()
         if isinstance(value, dt.date):
-            return (dt.date.today() - value).days
+            return value
     return None
+
+
+def age_days(entity: Entity) -> int | None:
+    """Days since that date.
+
+    Computed on every read and never rendered into a file. An age is a fact
+    about *now*, and the moment one is written down it starts being wrong —
+    see the note on template globals in `render.py`.
+    """
+    captured = captured_on(entity)
+    return None if captured is None else (today() - captured).days
+
+
+def today() -> dt.date:
+    """The one place this module reads the clock.
+
+    A seam, so that a test can ask what the project renders on a different day
+    without replacing `datetime.date` and breaking every isinstance check that
+    depends on it. `model.py` keeps the same seam, for the same reason.
+    """
+    return dt.date.today()
 
 
 def in_flight(store: EntityStore, thresholds: dict[str, str] | None = None) -> list[Entity]:

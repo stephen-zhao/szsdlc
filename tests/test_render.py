@@ -111,14 +111,30 @@ def test_rendering_is_deterministic(world):
     assert view_text(world, "traceability") == view_text(world, "traceability")
 
 
-def test_no_timestamp_leaks_into_a_generated_file(world):
-    """A clock in the output would make every sync a diff."""
-    import datetime as dt
+def test_no_generated_file_moves_when_only_the_clock_does(world, monkeypatch):
+    """The rule the whole generated-file design rests on: a generated file is
+    a pure function of the entities.
 
-    today = dt.date.today().isoformat()
-    for name in world.views:
-        body = view_text(world, name).split("\n\n", 1)[1]
-        assert today not in body or name == "inbox"
+    The moment one is not, it changes overnight on its own — `sync` rewrites
+    it, `validate` calls it stale, and the `Stop` hook blocks a session over a
+    number nobody wrote. That is not churn at the margin; it is a daily hard
+    error in every project with a non-empty inbox.
+
+    This replaces a test that stated the same rule and could not enforce it: it
+    searched each view for today's date as a *string*, which an *age* rendered
+    as `3d` never contains — and then exempted `inbox`, the one view that was
+    breaking the rule. Rendering the same project on two different days and
+    comparing bytes has nothing to exempt.
+    """
+    from szsdlc import context as context_module
+
+    before = {name: view_text(world, name) for name in world.views}
+
+    later = dt.date.today() + dt.timedelta(days=400)
+    monkeypatch.setattr(context_module, "today", lambda: later)
+
+    for name, original in before.items():
+        assert view_text(world, name) == original, f"{name} reads the clock"
 
 
 # ---------------------------------------------------------------------------
