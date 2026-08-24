@@ -7,11 +7,11 @@ downstream branches on which — asking an entity for an artifact it cannot have
 simply answers "no". This module is the one place allowed to know, and it knows
 in five methods: load, save, delete, create and relayout.
 
-Which shape an entity is in is a fact about the *entity*, read off its path,
+Which layout an entity is in is a fact about the *entity*, read off its path,
 not a fact about its type. For the three fixed layouts those agree by
-construction; for a `dynamic` type they do not, and an entry moves between
-shapes as it earns them — a thought starts as a section, gets its own file when
-it grows, and gets a directory the moment something has to live beside it.
+construction; for a `dynamic` type they do not, and an entry is laid out again
+as it earns it — a thought starts as a section, gets its own file when it
+grows, and gets a directory the moment something has to live beside it.
 
 The harder property is the second one. `sync` must render a half-built project,
 so loading is *permissive*: a file whose frontmatter will not parse becomes an
@@ -116,7 +116,7 @@ class UnparseableEntity:
 
 
 class Entity:
-    """One entity, loaded from either layout."""
+    """One entity, loaded from any layout."""
 
     def __init__(self, entity_id: EntityId, entity_type: EntityType, config: Config,
                  path: Path, document: frontmatter.Document, home: Path | None = None,
@@ -128,10 +128,10 @@ class Entity:
         #: that file holds every other entry of the type as well.
         self.path = path
         #: The entity's own directory, or None when this entry has no room for
-        #: one — which is every shape but `directory`.
+        #: one — which is every layout but `directory`.
         self.home = home
-        #: Which shape this entry is actually in. Read off the path rather than
-        #: taken from the type, because for a `dynamic` type they differ.
+        #: Which layout this entry is actually in. Read off the path rather
+        #: than taken from the type, because for a `dynamic` type they differ.
         self.layout = layout or entry_layout(config, entity_type, home or path)
         self.doc = document
 
@@ -437,7 +437,7 @@ def schema_findings(config: Config, entity: Entity) -> list[str]:
 
 
 def entry_layout(config: Config, entity_type: EntityType, entry: Path) -> str:
-    """Which shape an entry is in, read off where it sits.
+    """Which layout an entry is in, read off where it sits.
 
     The path is the authority, not the type. For the three fixed layouts they
     agree by construction; for `dynamic` the type has nothing useful to say,
@@ -510,7 +510,7 @@ def create_entity(config: Config, ids: IdSpace, entity_type: EntityType, *,
     A required `date` field with no value given defaults to today. That is the
     whole point of capture costing one command: the framework knows when it is.
 
-    `layout` overrides the shape it arrives in, which only a `dynamic` type has
+    `layout` overrides the one it arrives in, which only a `dynamic` type has
     more than one of. `convert` uses it: work carrying artifacts must land
     somewhere that can hold them, and dropping them quietly would be the worst
     of the three possible answers.
@@ -560,20 +560,20 @@ def create_entity(config: Config, ids: IdSpace, entity_type: EntityType, *,
 
 
 def relayout(config: Config, ids: IdSpace, entity: Entity, layout: str) -> Entity:
-    """Move one entry into another shape. Same id, same bytes, same links.
+    """Lay one entry out in another layout. Same id, same bytes, same links.
 
     Nothing is renumbered and nothing is re-serialised: the document that comes
-    out of the old shape is the document that goes into the new one, which is
+    out of the old layout is the document that goes into the new one, which is
     why a section was made a whole entity document in the first place. Every
     reference to the entity keeps resolving because the id never moved — only
     the storage did, and no relation has ever named a path.
 
-    Order matters: the new shape is written first and the old one removed
+    Order matters: the new layout is written first and the old one removed
     after, so an interruption leaves the id claimed twice — which `validate`
     reports, with both paths — rather than not at all.
     """
     if layout == entity.layout:
-        raise InternalError(f"{entity.id.text} is already stored as a {layout}")
+        raise InternalError(f"{entity.id.text} is already laid out as a {layout}")
 
     basename = ids.basename(entity.id, entity.title)
     home, path = _storage_for(config, entity.type, layout, basename)
@@ -600,7 +600,7 @@ def relayout(config: Config, ids: IdSpace, entity: Entity, layout: str) -> Entit
 
 def _storage_for(config: Config, entity_type: EntityType, layout: str,
                  basename: str) -> tuple[Path | None, Path]:
-    """Where an entry of this shape lives: its directory, and its markdown."""
+    """Where an entry of this layout lives: its directory, and its markdown."""
     directory = config.dir_for(entity_type)
     if layout == "directory":
         home = directory / basename

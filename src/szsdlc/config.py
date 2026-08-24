@@ -59,7 +59,7 @@ DEFAULT_SECTION_FILE = "index.md"
 LAYOUTS = ("section", "file", "directory")
 
 #: Where a `dynamic` type puts an entry it has just been handed. The cheapest
-#: shape that fits, for the same reason `workflow.initial` is the cheapest
+#: layout that fits, for the same reason `workflow.initial` is the cheapest
 #: status: something that has just arrived has not earned anything more.
 DEFAULT_INITIAL_LAYOUT = "section"
 
@@ -171,12 +171,12 @@ class EntityType:
 
     @property
     def is_dynamic_layout(self) -> bool:
-        """Entries may take any shape, and may change which one they are in."""
+        """Entries may take any layout, and may be laid out again later."""
         return self.layout == "dynamic"
 
     @property
     def layouts(self) -> tuple[str, ...]:
-        """Every shape an entry of this type may be found in.
+        """Every layout an entry of this type may be found in.
 
         One value for a type that declared a layout, all three for `dynamic`.
         Callers ask this rather than comparing the string, which is why adding
@@ -199,7 +199,7 @@ class EntityType:
 
     @property
     def new_entry_layout(self) -> str:
-        """The shape an entry arrives in."""
+        """The layout an entry arrives in."""
         return self.initial_layout if self.is_dynamic_layout else self.layout
 
     @property
@@ -618,7 +618,7 @@ def _check_entity_types(data: dict[str, Any]) -> None:
 
         if spec.get("initial_layout") and layout != "dynamic":
             _fail(f"{base}.initial_layout",
-                  f"a `{layout}` layout entity has only one shape to arrive in.",
+                  f"a `{layout}` layout entity has only one layout to arrive in.",
                   f"set {base}.layout to dynamic, or remove {base}.initial_layout")
 
         for slot in ("progress_artifact", "journal_artifact"):

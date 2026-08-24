@@ -67,8 +67,8 @@ def unmet_gates(entity: Entity, status: str) -> list[Gate]:
             remedy = f"write {path}, then rerun"
         elif entity.type.is_dynamic_layout:
             # It has nowhere to put one *yet*. Needing an artifact is how an
-            # entry earns a directory, so the fix is the move, not a shrug.
-            remedy = f"szsdlc move {entity.id.text} directory, then write {artifact}"
+            # entry earns a directory, so the fix is to give it one, not a shrug.
+            remedy = f"szsdlc layout {entity.id.text} directory, then write {artifact}"
         else:
             remedy = f"write {artifact} (this type has no directory), then rerun"
         gates.append(Gate(

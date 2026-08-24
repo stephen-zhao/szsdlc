@@ -44,12 +44,12 @@ def make(cfg, type_name: str, *names: str) -> None:
     """Create entities on disk by name alone — this module only reads names."""
     entity_type = cfg.type_for(type_name)
     directory = cfg.dir_for(entity_type)
-    shape = entity_type.new_entry_layout
+    arrives_as = entity_type.new_entry_layout
     for name in names:
-        if shape == "directory":
+        if arrives_as == "directory":
             (directory / name).mkdir(parents=True, exist_ok=True)
             (directory / name / "entity.md").write_text("", encoding="utf-8")
-        elif shape == "section":
+        elif arrives_as == "section":
             path = cfg.section_path(entity_type)
             existing = path.read_text(encoding="utf-8") if path.is_file() else ""
             section = f"## {name}\n\n---\n---\n\n"
@@ -189,7 +189,7 @@ def test_scan_ignores_names_that_are_not_ids(project):
 def test_scan_respects_each_type_layout(project):
     cfg = project({"entity_types": {"idea": {"layout": "file"}}})
     # An idea here is a single file; a work item is a directory. Putting each
-    # in the other's shape must not register.
+    # in the other's layout must not register.
     (cfg.dir_for("idea") / "IDEA-0005-thought.md").write_text("", encoding="utf-8")
     (cfg.dir_for("idea") / "IDEA-0006-dir").mkdir()
     (cfg.dir_for("work_item") / "WI-0005-loose.md").write_text("", encoding="utf-8")
@@ -211,9 +211,9 @@ def test_a_section_type_scans_its_shared_file_and_nothing_else(project):
     assert ids.next_id("idea").text == "IDEA-0007"
 
 
-def test_a_dynamic_type_scans_all_three_shapes(project):
+def test_a_dynamic_type_scans_all_three_layouts(project):
     """The shipped `idea` type. An entry is wherever it currently is, and the
-    scan is what makes an id allocated in one shape unavailable in another."""
+    scan is what makes an id allocated in one layout unavailable in another."""
     cfg = project()
     make(cfg, "idea", "IDEA-0001-in-the-shared-file")
     (cfg.dir_for("idea") / "IDEA-0002-its-own-file.md").write_text("", encoding="utf-8")
@@ -252,8 +252,8 @@ def test_a_section_entry_reports_the_shared_file_as_its_path(project):
     assert [path for _, path in found] == [cfg.section_path("idea")]
 
 
-def test_an_id_in_two_shapes_survives_the_scan_as_two_rows(project):
-    """A half-finished move is the one failure a dynamic type adds. `scan`
+def test_an_id_in_two_layouts_survives_the_scan_as_two_rows(project):
+    """A half-finished relayout is the one failure a dynamic type adds. `scan`
     returns a list, not a mapping, precisely so both places are reportable."""
     cfg = project()
     make(cfg, "idea", "IDEA-0001-a-thought")

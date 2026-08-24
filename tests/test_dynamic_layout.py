@@ -7,16 +7,16 @@ directory the moment something has to live beside it. Deciding at capture is
 the same mistake as asserting a type at capture, and intake has been typeless
 since Task 7 for exactly that reason.
 
-What has to hold through a move:
+What has to hold when an entry is laid out again:
 
 - **The id never changes**, so nothing that referenced it has to be found and
   rewritten. Relations name ids, never paths, so this is free — but free only
   as long as nothing ever renumbers, which is asserted here.
-- **The bytes never change.** A section is a whole entity document, so a move
-  is a move rather than a re-serialisation.
-- **A half-finished move is reportable.** The new shape is written before the
-  old one is removed, so an interruption claims the id twice — which
-  `validate` reports with both paths — rather than losing it.
+- **The bytes never change.** A section is a whole entity document, so a
+  relayout moves bytes rather than re-serialising them.
+- **A half-finished relayout is reportable.** The new layout is written
+  before the old one is removed, so an interruption claims the id twice —
+  which `validate` reports with both paths — rather than losing it.
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ def reload(project, id_text: str):
     return load_all(project).by_text(id_text)
 
 
-def move(project, id_text: str, layout: str):
+def lay_out(project, id_text: str, layout: str):
     entity = reload(project, id_text)
     return relayout(project, IdSpace(project), entity, layout)
 
@@ -62,7 +62,7 @@ def move(project, id_text: str, layout: str):
 # ---------------------------------------------------------------------------
 
 
-def test_a_dynamic_type_accepts_all_three_shapes(project):
+def test_a_dynamic_type_accepts_all_three_layouts(project):
     idea = project.type_for("idea")
     assert idea.is_dynamic_layout
     assert set(idea.layouts) == set(SHAPES)
@@ -76,15 +76,15 @@ def test_a_declared_layout_accepts_only_itself(make_project):
     assert not project.type_for("idea").is_dynamic_layout
 
 
-def test_initial_layout_is_refused_on_a_type_with_one_shape(make_project):
+def test_initial_layout_is_refused_on_a_type_with_one_layout(make_project):
     """A key that does nothing is a key someone is relying on."""
     with pytest.raises(C.ConfigError) as excinfo:
         make_project({"entity_types": {"idea": {"layout": "file",
                                                 "initial_layout": "file"}}})
-    assert "only one shape to arrive in" in excinfo.value.problem
+    assert "only one layout to arrive in" in excinfo.value.problem
 
 
-def test_the_arrival_shape_is_configurable(make_project):
+def test_the_arrival_layout_is_configurable(make_project):
     project = make_project({"entity_types": {"idea": {"initial_layout": "file"}}})
     entity = capture(project)
     assert entity.layout == "file"
@@ -92,7 +92,7 @@ def test_the_arrival_shape_is_configurable(make_project):
 
 
 # ---------------------------------------------------------------------------
-# Moving
+# Laying an entry out again
 # ---------------------------------------------------------------------------
 
 
@@ -101,7 +101,7 @@ def test_an_entry_moves_out_of_the_shared_file(project, target):
     capture(project, "drafts are lost on refresh")
     before = reload(project, "IDEA-0001")
 
-    moved = move(project, "IDEA-0001", target)
+    moved = lay_out(project, "IDEA-0001", target)
 
     assert moved.layout == target
     assert moved.id == before.id
@@ -113,23 +113,23 @@ def test_an_entry_moves_out_of_the_shared_file(project, target):
 @pytest.mark.parametrize("start", ["file", "directory"])
 def test_an_entry_moves_back_into_the_shared_file(project, start):
     capture(project, "drafts are lost on refresh")
-    move(project, "IDEA-0001", start)
+    lay_out(project, "IDEA-0001", start)
     before = reload(project, "IDEA-0001")
 
-    moved = move(project, "IDEA-0001", "section")
+    moved = lay_out(project, "IDEA-0001", "section")
 
     assert moved.layout == "section"
     assert moved.render() == before.render()
     assert moved.path == project.section_path("idea")
 
 
-def test_a_move_leaves_the_other_entries_alone(project):
+def test_a_relayout_leaves_the_other_entries_alone(project):
     for body in ("first", "second", "third"):
         capture(project, body)
     path = project.section_path("idea")
     before = path.read_text(encoding="utf-8")
 
-    move(project, "IDEA-0002", "file")
+    lay_out(project, "IDEA-0002", "file")
 
     after = path.read_text(encoding="utf-8")
     # Byte-for-byte what was there, minus the one entry that left.
@@ -137,21 +137,21 @@ def test_a_move_leaves_the_other_entries_alone(project):
     assert after == head + "## IDEA-0003" + rest.split("## IDEA-0003", 1)[1]
 
 
-def test_a_move_never_renumbers(project):
-    """Every relation names an id. A move that reissued one would silently
+def test_a_relayout_never_renumbers(project):
+    """Every relation names an id. A relayout that reissued one would silently
     repoint every reference to it."""
     capture(project, "drafts are lost on refresh")
     for target in ("file", "directory", "section"):
-        assert move(project, "IDEA-0001", target).id.text == "IDEA-0001"
+        assert lay_out(project, "IDEA-0001", target).id.text == "IDEA-0001"
     assert IdSpace(project).next_id("idea").text == "IDEA-0002"
 
 
-def test_relations_survive_a_move(project):
+def test_relations_survive_a_relayout(project):
     idea = capture(project, "drafts are lost on refresh")
     work = create_entity(project, IdSpace(project), project.type_for("work_item"),
                          title="Autosave", relations={"refined_from": idea.id.text})
 
-    move(project, "IDEA-0001", "directory")
+    lay_out(project, "IDEA-0001", "directory")
 
     store = load_all(project)
     graph = Graph(project, store, IdSpace(project))
@@ -164,46 +164,46 @@ def test_relations_survive_a_move(project):
 # ---------------------------------------------------------------------------
 
 
-def test_move_reports_where_it_went(run, project):
+def test_layout_reports_where_it_went(run, project):
     run("capture", "drafts are lost on refresh")
-    code, output, _ = run("move", "IDEA-0001", "file")
+    code, output, _ = run("layout", "IDEA-0001", "file")
     assert code == 0
     assert "section → file" in output
     assert "ideas/IDEA-0001" in output
 
 
-def test_moving_a_type_with_one_shape_is_refused(run, project):
+def test_relaying_out_a_type_with_one_shape_is_refused(run, project):
     run("new", "requirement", "--title", "Reachable over TLS")
-    code, _, err = run("move", "REQ-0001", "file")
+    code, _, err = run("layout", "REQ-0001", "file")
     assert code == EXIT_BAD_INPUT
-    assert "nothing to move it to" in err
+    assert "no other layout to give it" in err
     assert "layout to dynamic" in err
 
 
-def test_moving_where_it_already_is_is_refused(run, project):
+def test_asking_for_the_layout_it_already_has_is_refused(run, project):
     run("capture", "a thought")
-    code, _, err = run("move", "IDEA-0001", "section")
+    code, _, err = run("layout", "IDEA-0001", "section")
     assert code == EXIT_BAD_INPUT
-    assert "already stored as a section" in err
+    assert "already laid out as a section" in err
 
 
-def test_moving_artifacts_somewhere_they_do_not_fit_is_refused(run, project):
+def test_a_layout_with_nowhere_for_the_artifacts_is_refused(run, project):
     run("capture", "a thought")
-    run("move", "IDEA-0001", "directory")
+    run("layout", "IDEA-0001", "directory")
     entity = reload(project, "IDEA-0001")
     (entity.home / "screenshot.txt").write_text("evidence\n", encoding="utf-8")
 
-    code, _, err = run("move", "IDEA-0001", "section")
+    code, _, err = run("layout", "IDEA-0001", "section")
     assert code == EXIT_BAD_INPUT
     assert "screenshot.txt" in err
-    # Not "move it to a directory" — it is already in one. The only thing that
-    # can actually be done is to deal with the files.
+    # Not "give it a directory" — it already has one. The only thing that can
+    # actually be done is to deal with the files.
     assert "remove those artifacts" in err
 
 
 def test_an_unknown_layout_is_refused_by_the_parser(run, project):
     run("capture", "a thought")
-    code, _, err = run("move", "IDEA-0001", "folder")
+    code, _, err = run("layout", "IDEA-0001", "folder")
     assert code == EXIT_BAD_INPUT
     assert "folder" in err
 
@@ -234,7 +234,7 @@ def test_logging_promotes_an_entry_rather_than_refusing(journalled, capsys):
 
 def test_a_gate_on_a_missing_artifact_names_the_move(make_project):
     """The refusal has to end in something runnable. For a dynamic entry with
-    nowhere to write yet, that is the move."""
+    nowhere to write yet, that is a directory."""
     from szsdlc.workflow import unmet_gates
 
     project = make_project({"entity_types": {"idea": {
@@ -247,16 +247,16 @@ def test_a_gate_on_a_missing_artifact_names_the_move(make_project):
 
     gates = unmet_gates(reload(project, "IDEA-0001"), "refined")
     assert gates
-    assert "szsdlc move IDEA-0001 directory" in gates[0].remedy
+    assert "szsdlc layout IDEA-0001 directory" in gates[0].remedy
 
 
 # ---------------------------------------------------------------------------
-# A half-finished move
+# A half-finished relayout
 # ---------------------------------------------------------------------------
 
 
 def test_one_id_in_two_shapes_is_reported_with_both_places(project):
-    """The move writes the new shape before removing the old, deliberately:
+    """A relayout writes the new layout before removing the old, deliberately:
     an interruption claims the id twice, which is reportable, rather than
     losing it, which is not."""
     capture(project, "drafts are lost on refresh")
@@ -276,7 +276,7 @@ def test_an_attached_file_is_not_reported_as_an_orphan(project):
     """A dynamic type that declares no artifacts has said the opposite of a
     fixed artifact set: whatever turned up is why the directory exists."""
     capture(project, "drafts are lost on refresh")
-    home = move(project, "IDEA-0001", "directory").home
+    home = lay_out(project, "IDEA-0001", "directory").home
     (home / "screenshot.txt").write_text("evidence\n", encoding="utf-8")
 
     store = load_all(project)
@@ -287,7 +287,7 @@ def test_an_attached_file_is_not_reported_as_an_orphan(project):
 def test_a_declared_artifact_set_is_still_enforced(make_project):
     project = make_project({"entity_types": {"idea": {"artifacts": ["findings.md"]}}})
     capture(project, "drafts are lost on refresh")
-    home = move(project, "IDEA-0001", "directory").home
+    home = lay_out(project, "IDEA-0001", "directory").home
     (home / "stray.txt").write_text("x\n", encoding="utf-8")
 
     store = load_all(project)

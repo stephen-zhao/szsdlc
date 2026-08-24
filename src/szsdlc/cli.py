@@ -79,7 +79,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("tag|untag <ref> <tag>", "add or remove tags, normalized on write"),
     ("link|unlink a <r> b", "author or remove one edge; inverses are generated"),
     ("convert <ref> <TYPE>", "reclassify, leaving a resolving tombstone"),
-    ("move <ref> <LAYOUT>", "store an entry as a section, file or directory"),
+    ("layout <ref> <LAYOUT>", "lay an entry out as a section, file or directory"),
     ("log <ref> [msg]", "append a dated line to the journal artifact"),
     ("schedule <ref> -H h", "place on a roadmap; --after/--before/--top"),
     ("unschedule <ref>", "take off the roadmap"),
@@ -175,10 +175,10 @@ def build_parser() -> Parser:
     convert.add_argument("type_name", metavar="TYPE")
     convert.set_defaults(run=cmd_convert)
 
-    move = subparsers.add_parser("move", prog="szsdlc move")
-    move.add_argument("ref")
-    move.add_argument("layout", metavar="LAYOUT", choices=list(LAYOUTS))
-    move.set_defaults(run=cmd_move)
+    layout = subparsers.add_parser("layout", prog="szsdlc layout")
+    layout.add_argument("ref")
+    layout.add_argument("layout", metavar="LAYOUT", choices=list(LAYOUTS))
+    layout.set_defaults(run=cmd_layout)
 
     log = subparsers.add_parser("log", prog="szsdlc log")
     log.add_argument("ref")
@@ -887,8 +887,8 @@ def cmd_convert(args: argparse.Namespace) -> int:
             f"but {entity.id.text} carries {', '.join(extra)}.",
             fix=f"remove those artifacts, then rerun",
         )
-    # Artifacts decide the child's shape when the type leaves it open. The
-    # alternative is creating it in the cheapest shape and dropping them.
+    # Artifacts decide the child's layout when the type leaves it open. The
+    # alternative is creating it in the cheapest one and dropping them.
     landing = "directory" if extra and target_type.is_dynamic_layout else None
 
     new_id = session.ids.next_id(target_type)
@@ -924,37 +924,43 @@ def cmd_convert(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# move
+# layout
+#
+# Named for the thing it changes, not the thing it does to the disk. `layout`
+# is already the word in the config key, in the schema and on the entity, and
+# a fifth word for the same idea is a translation step at every reading. It is
+# `convert` for the other axis: convert changes an entry's type, layout
+# changes what it occupies.
 # ---------------------------------------------------------------------------
 
 
-def cmd_move(args: argparse.Namespace) -> int:
+def cmd_layout(args: argparse.Namespace) -> int:
     session = Session(args.project)
     entity = session.entity(args.ref)
     target = args.layout
 
     if not entity.type.is_dynamic_layout:
         raise BadInput(
-            f"move: every {entity.type.name} is stored as a {entity.type.layout}, "
-            f"so there is nothing to move it to.",
+            f"layout: every {entity.type.name} is laid out as a "
+            f"{entity.type.layout}, so there is no other layout to give it.",
             fix=f"set entity_types.{entity.type.name}.layout to dynamic",
         )
     if target == entity.layout:
         raise BadInput(
-            f"move: {entity.id.text} is already stored as a {target}.",
+            f"layout: {entity.id.text} is already laid out as a {target}.",
             fix=f"szsdlc show {entity.id.text}",
         )
 
     carried = [p.name for p in entity.artifact_files()]
     if carried and target != "directory":
         raise BadInput(
-            f"move: a {target} has nowhere to put an artifact, but "
+            f"layout: a {target} has nowhere to put an artifact, but "
             f"{entity.id.text} carries {', '.join(carried)}.",
             fix="remove those artifacts, then rerun",
         )
 
-    moved = relayout(session.config, session.ids, entity, target)
-    out(f"{moved.id.text}  ({entity.layout} → {target}) {display_path(session, moved)}")
+    laid = relayout(session.config, session.ids, entity, target)
+    out(f"{laid.id.text}  ({entity.layout} → {target}) {display_path(session, laid)}")
     return 0
 
 
@@ -983,8 +989,8 @@ def cmd_log(args: argparse.Namespace) -> int:
             fix=f"set entity_types.{entity.type.name}.journal_artifact",
         )
     if entity.home is None and entity.type.is_dynamic_layout:
-        # The only fix for the refusal would have been `move … directory`, and
-        # a refusal whose fix is one unconditional command is a step nobody
+        # The only fix for the refusal would have been `layout … directory`,
+        # and a refusal whose fix is one unconditional command is a step nobody
         # should have to type. Wanting a journal *is* earning the directory.
         entity = relayout(session.config, session.ids, entity, "directory")
     if entity.home is None:

@@ -60,10 +60,11 @@ def unparseable_files(store: EntityStore) -> list[Finding]:
 def duplicate_ids(config: Config, store: EntityStore) -> list[Finding]:
     """One id claimed twice, reported with both places it was found.
 
-    A `dynamic` type is where this now most often comes from: a move writes the
-    new shape before removing the old one, deliberately, so that an interrupted
-    move leaves the id claimed twice rather than not at all. Both places are
-    named, because that is the whole difference between a report and a riddle.
+    A `dynamic` type is where this now most often comes from: a relayout writes
+    the new layout before removing the old one, deliberately, so that an
+    interrupted one leaves the id claimed twice rather than not at all. Both
+    places are named, because that is the whole difference between a report and
+    a riddle.
     """
     findings = []
     for entity_id, path in store.duplicates:

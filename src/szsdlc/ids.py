@@ -257,9 +257,9 @@ class IdSpace:
         Returns a list rather than a mapping so a duplicated id survives to be
         reported with *both* paths. Collapsing it here would hide the one
         failure mode directory-scan allocation can produce — and a `dynamic`
-        type, whose entries may be in any of three shapes, is where that
-        failure is most likely: a half-finished move leaves the same id in two
-        of them.
+        type, whose entries may be in any of three layouts, is where that
+        failure is most likely: a half-finished relayout leaves the same id in
+        two of them.
         """
         et = (entity_type if not isinstance(entity_type, str)
               else self.config.type_for(entity_type))

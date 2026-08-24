@@ -66,7 +66,7 @@ def _writer(project):
         entity_type = project.type_for(type_name)
         # The shape an entry *arrives* in, which is the only one a type with
         # more than one of them can be asked for without being told.
-        shape = layout or entity_type.new_entry_layout
+        arrives_as = layout or entity_type.new_entry_layout
         ids = IdSpace(project)
         entity_id = ids.make(entity_type.prefix, number)
         name = f"{entity_id.text}-{slug}" if slug else entity_id.text
@@ -79,7 +79,7 @@ def _writer(project):
         # would make every fixture CRLF on Windows and silently change what
         # these tests are asserting about. CRLF has its own coverage in
         # test_frontmatter.py, by design rather than by accident.
-        if shape == "directory":
+        if arrives_as == "directory":
             home = project.dir_for(entity_type) / name
             home.mkdir(parents=True, exist_ok=True)
             (home / project.entity_filename).write_bytes(text.encode("utf-8"))
@@ -87,7 +87,7 @@ def _writer(project):
                 (home / artifact_name).write_bytes(artifact_text.encode("utf-8"))
             return home
 
-        if shape == "section":
+        if arrives_as == "section":
             def names(heading: str) -> str | None:
                 found = ids.section_id(entity_type, heading)
                 return found.text if found else None
