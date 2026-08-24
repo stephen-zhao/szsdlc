@@ -89,7 +89,7 @@ name — drive behaviour:
 |---|---|---|---|---|---|---|---|---|---|
 | `IDEA` | idea (typeless intake) | `inbox → refining → refined \| dropped` | **dynamic** (arrives as a section) | **yes** | no | no | no | no | no |
 | `EPIC` | epic (grouping of work) | `open → active → closed` | directory | no | no | derived | **yes** | yes | no |
-| `REQ` | requirement (product definition) | `draft → reviewed → approved → superseded \| retired` | directory | no | no | **none** | no | no | **yes** |
+| `REQ` | requirement (product definition) | `draft → reviewed → approved → superseded \| retired` | **file** | no | no | **none** | no | no | **yes** |
 | `SPK` | spike (investigation) | `open → researching → answered` | directory | no | yes | no | no | yes | no |
 | `WI` | work item (unit of delivery) | `idea → groomed → ready → designing → planned → executing → review → done` (+ `dropped`) | directory | no | yes | yes | no | yes | no |
 | `ADR` | decision | `proposed → accepted → superseded` | directory | no | no | none | no | no | **yes** |
@@ -1288,6 +1288,32 @@ thing.
 > - **The old generated files in every project are one `sync` behind.** No
 >   migration: the first sync after this rewrites `inbox.md` once, and then it
 >   stops moving. That is the last clock-driven diff any project takes.
+
+---
+
+### Task 22: A requirement is one file — **DONE**
+
+**Requirement.** A `directory` layout has to earn itself with something to put
+in it. A requirement carries no artifacts — its coverage and delivery are read
+off the graph and never written down, which is the whole point of Task 5 — so
+its directory held exactly one file and charged a level of nesting to say so.
+
+- [x] **Step 1:** `requirement.layout: file` in the shipped defaults. Nothing else changes: no artifacts to move, no gate that names one, no view that reads a path.
+- [x] **Step 2:** `test_new_respects_each_type_layout` now covers one of each shipped layout through the CLI, rather than asserting a directory and a not-directory.
+
+> **Decisions taken while implementing:**
+>
+> - **`epic` was considered and left alone.** It declares `artifacts:
+>   [journal.md]`, and a `file` layout may not carry an artifact, so the same
+>   change there would have deleted the epic journal rather than restowing it.
+>   `layout: dynamic` with `initial_layout: file` would have kept both — an
+>   epic as a plain file until someone logs against it — and is one line away
+>   if that is ever wanted. Deferred deliberately rather than overlooked.
+> - **No migration.** An existing project keeps `layout: directory` by writing
+>   that one line on its own `requirement` type. Existing requirement
+>   directories are still scanned by a type declaring `directory`, and a
+>   project that wants the flat form moves them with `szsdlc layout` after
+>   declaring `dynamic`.
 
 ---
 

@@ -106,10 +106,21 @@ def test_new_reports_the_id_and_path(run, project):
 
 
 def test_new_respects_each_type_layout(run, project):
+    """One of each shipped layout, created through the CLI.
+
+    A work item earns a directory because it carries a design, a plan and a
+    journal. A requirement carries nothing — its coverage is read off the
+    graph — so it is one file. An idea starts as a section of the shared one.
+    """
+    run("new", "work_item", "--title", "Reachable over TLS")
     run("new", "requirement", "--title", "Reachable over TLS")
-    _, output, _ = run("capture", "a thought")
-    assert entities(project).by_text("REQ-0001").home is not None
-    assert entities(project).by_text("IDEA-0001").home is None
+    run("capture", "a thought")
+
+    store = entities(project)
+    assert store.by_text("WI-0001").layout == "directory"
+    assert store.by_text("REQ-0001").layout == "file"
+    assert store.by_text("REQ-0001").path.name.startswith("REQ-0001")
+    assert store.by_text("IDEA-0001").layout == "section"
 
 
 def test_new_with_an_unknown_type_lists_the_known_ones(run):
