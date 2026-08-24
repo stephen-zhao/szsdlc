@@ -29,6 +29,23 @@ item and decision ship as replaceable defaults, each declaring capability flags
 `persistent`) so behaviour follows declared capability rather than a hardcoded
 type name.
 
+Each type also declares a `layout`, which names **what one entry occupies** —
+so that storage cost matches fidelity, and nothing above this line has to know
+which it got:
+
+| `layout` | One entry is | For |
+|---|---|---|
+| `section` | a section of one shared file, named by a `## <ID> — title` heading | High-volume intake. Ten one-line thoughts should not cost ten files; `idea` ships on this |
+| `file` | `<dir>/<ID>-<slug>.md` | A thought that has outgrown a section but carries nothing beside it |
+| `directory` | `<dir>/<ID>-<slug>/entity.md`, plus artifacts | Anything with a design, a plan or a journal |
+
+A section is *a whole entity document* — the same frontmatter and body the
+other two layouts store — with a heading above it carrying the name its
+filename would have carried. A heading delimits an entry only if it parses as
+an id of that type, so a `## Notes` written inside a body does not split it.
+`section_file` names the shared file, and defaults to `index.md` inside the
+type's own directory.
+
 Three properties fall out of that, and they are the ones worth knowing:
 
 - **Derived facts are never stored.** Whether a requirement is covered, whether

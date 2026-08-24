@@ -48,6 +48,11 @@ def make(cfg, type_name: str, *names: str) -> None:
         if entity_type.is_directory_layout:
             (directory / name).mkdir(parents=True, exist_ok=True)
             (directory / name / "entity.md").write_text("", encoding="utf-8")
+        elif entity_type.is_section_layout:
+            path = cfg.section_path(entity_type)
+            existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+            section = f"## {name}\n\n---\n---\n\n"
+            path.write_text(existing + section, encoding="utf-8")
         else:
             (directory / f"{name}.md").write_text("", encoding="utf-8")
 
@@ -181,9 +186,9 @@ def test_scan_ignores_names_that_are_not_ids(project):
 
 
 def test_scan_respects_each_type_layout(project):
-    cfg = project()
-    # An idea is a single file; a work item is a directory. Putting each in the
-    # other's shape must not register.
+    cfg = project({"entity_types": {"idea": {"layout": "file"}}})
+    # An idea here is a single file; a work item is a directory. Putting each
+    # in the other's shape must not register.
     (cfg.dir_for("idea") / "IDEA-0005-thought.md").write_text("", encoding="utf-8")
     (cfg.dir_for("idea") / "IDEA-0006-dir").mkdir()
     (cfg.dir_for("work_item") / "WI-0005-loose.md").write_text("", encoding="utf-8")
@@ -191,6 +196,37 @@ def test_scan_respects_each_type_layout(project):
     ids = IdSpace(cfg)
     assert {i.text for i in ids.entries("idea")} == {"IDEA-0005"}
     assert ids.entries("work_item") == {}
+
+
+def test_a_section_type_scans_its_shared_file_and_nothing_else(project):
+    """The shipped `idea` type: entries are sections, and a stray file is not
+    one. A loose IDEA-0009.md in the directory is somebody's half-done move,
+    and counting it would hand out an id that is already spoken for."""
+    cfg = project()
+    make(cfg, "idea", "IDEA-0005-a-thought", "IDEA-0006-another")
+    (cfg.dir_for("idea") / "IDEA-0009-loose.md").write_text("", encoding="utf-8")
+
+    ids = IdSpace(cfg)
+    assert {i.text for i in ids.entries("idea")} == {"IDEA-0005", "IDEA-0006"}
+    assert ids.next_id("idea").text == "IDEA-0007"
+
+
+def test_a_heading_that_is_not_an_id_does_not_start_an_entry(project):
+    """`## Notes` inside an entry's body must not split it in two, and the
+    file's own title must not read as an entry."""
+    cfg = project()
+    cfg.section_path("idea").write_text(
+        "# Ideas\n\nEverything not yet triaged.\n\n"
+        "## IDEA-0001 — a thought\n\n---\n---\n\n## Notes\n\nmore\n",
+        encoding="utf-8")
+    assert {i.text for i in IdSpace(cfg).entries("idea")} == {"IDEA-0001"}
+
+
+def test_a_section_entry_reports_the_shared_file_as_its_path(project):
+    cfg = project()
+    make(cfg, "idea", "IDEA-0001-a")
+    found = IdSpace(cfg).scan("idea")
+    assert [path for _, path in found] == [cfg.section_path("idea")]
 
 
 def test_all_entries_spans_every_type(project):

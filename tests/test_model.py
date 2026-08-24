@@ -1,10 +1,10 @@
 """Task 4 — the entity model.
 
 Two properties matter most. Nothing downstream may branch on storage layout:
-a `file` entity and a `directory` entity answer the same questions. And loading
-must be permissive, because `sync` has to render a half-built project — a
-corrupt file becomes a node in the graph carrying its error, not an exception
-that stops the other 199 entities from loading.
+a `section` entity, a `file` entity and a `directory` entity all answer the
+same questions. And loading must be permissive, because `sync` has to render a
+half-built project — a corrupt file becomes a node in the graph carrying its
+error, not an exception that stops the other 199 entities from loading.
 """
 
 from __future__ import annotations
@@ -35,29 +35,41 @@ def one(project, type_name: str, number: int) -> Entity:
 
 
 # ---------------------------------------------------------------------------
-# Both layouts, one interface
+# Every layout, one interface
 # ---------------------------------------------------------------------------
 
 
-def test_a_file_entity_and_a_directory_entity_answer_the_same_questions(
-    project, write_entity
-):
-    write_entity("idea", 1, "status: inbox\ncaptured: 2026-08-16\n", "A loose thought\n")
-    write_entity("work_item", 1, "title: Do it\nstatus: idea\nopened: 2026-08-16\n")
+def test_every_layout_answers_the_same_questions(make_project, write_entity_in):
+    """A section, a file and a directory, asked the same things.
+
+    The three shapes exist so that storage cost matches fidelity, not so that
+    callers can tell them apart. The moment a view or a command has to know
+    which one it is holding, the abstraction has stopped paying for itself.
+    """
+    project = make_project({"entity_types": {"decision": {"layout": "file"}}})
+    write = write_entity_in(project)
+
+    write("idea", 1, "status: inbox\ncaptured: 2026-08-16\n", "A loose thought\n")
+    write("decision", 1, "title: Use X\nstatus: proposed\nopened: 2026-08-16\n")
+    write("work_item", 1, "title: Do it\nstatus: idea\nopened: 2026-08-16\n")
 
     store = load(project)
     idea = store.by_text("IDEA-0001")
+    decision = store.by_text("ADR-0001")
     work_item = store.by_text("WI-0001")
 
-    for entity in (idea, work_item):
+    for entity in (idea, decision, work_item):
         assert entity.status
         assert entity.title
         assert entity.tags == []
         assert entity.relations == {}
-        # Asking a file entity for an artifact answers "no" rather than raising.
+        # Asking for an artifact it cannot have answers "no" rather than raising.
         assert entity.has_artifact("design.md") is False
+        assert entity.stored_name.startswith(entity.id.text)
 
-    assert idea.home is None
+    assert idea.home is None and decision.home is None
+    assert idea.path == project.section_path("idea")
+    assert decision.path.name.startswith("ADR-0001")
     assert work_item.home is not None
     assert work_item.path.name == "entity.md"
 

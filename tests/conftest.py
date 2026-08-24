@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from szsdlc import config as C
+from szsdlc import sections
 from szsdlc.ids import IdSpace
 
 
@@ -37,11 +38,26 @@ def project(make_project):
 
 
 @pytest.fixture
+def write_entity_in():
+    """`write_entity`, but against a project the test built itself.
+
+    Needed wherever a test covers a layout the shipped config does not use for
+    any type, which is the price of the defaults being opinionated.
+    """
+    return _writer
+
+
+@pytest.fixture
 def write_entity(project):
+    return _writer(project)
+
+
+def _writer(project):
     """Write one entity to disk in whatever layout its type declares.
 
-    Returns the entity's directory for a `directory` type and its file for a
-    `file` type — the same thing `IdSpace.scan` reports.
+    Returns the entity's directory for a `directory` type, its own file for a
+    `file` type, and the shared file for a `section` type — the same thing
+    `IdSpace.scan` reports in each case.
     """
 
     def write(type_name: str, number: int, frontmatter: str = "", body: str = "",
@@ -67,6 +83,18 @@ def write_entity(project):
             for artifact_name, artifact_text in (artifacts or {}).items():
                 (home / artifact_name).write_bytes(artifact_text.encode("utf-8"))
             return home
+
+        if entity_type.is_section_layout:
+            def names(heading: str) -> str | None:
+                found = ids.section_id(entity_type, heading)
+                return found.text if found else None
+
+            path = project.section_path(entity_type)
+            heading = sections.heading_for(entity_id.text,
+                                           slug.replace("-", " ") if slug else None)
+            sections.write(path, sections.upsert(sections.read(path), names,
+                                                 entity_id.text, heading, text))
+            return path
 
         path = project.dir_for(entity_type) / f"{name}.md"
         path.write_bytes(text.encode("utf-8"))

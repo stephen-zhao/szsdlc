@@ -54,8 +54,11 @@ entity_types:
     prefix: IDEA
     title: Idea
     dir: ideas
-    # A one-line thought should not cost a directory.
-    layout: file
+    # A one-line thought should not cost a directory, and ten of them should
+    # not cost ten files. Capture arrives in bursts — a dump of half-formed
+    # things is the commonest intake there is — so entries are sections of one
+    # shared file, and capturing appends to it.
+    layout: section
     intake: true
     actionable: false
     tracks_progress: false

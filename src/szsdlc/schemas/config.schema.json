@@ -205,8 +205,14 @@
           "type": "string"
         },
         "layout": {
-          "description": "`file` for a low-fidelity type — a one-line thought should not cost a directory. `directory` for types that carry artifacts.",
-          "enum": ["file", "directory"]
+          "description": "What one entry occupies. `section` for a high-volume type — ten one-line thoughts should not cost ten files, so entries are sections of one shared file. `file` for a low-fidelity type. `directory` for types that carry artifacts.",
+          "enum": ["section", "file", "directory"]
+        },
+        "section_file": {
+          "description": "The shared file holding a `section`-layout type's entries, relative to its `dir`. Defaults to index.md.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[^/\\\\]+$"
         },
 
         "intake": {

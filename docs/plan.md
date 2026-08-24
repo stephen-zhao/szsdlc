@@ -59,7 +59,7 @@ automatic and the gates non-optional; skills carry only judgment.
 
 | Concept | Storage | Notes |
 |---|---|---|
-| **Entity** | `file` layout: `<dir>/<ID>-<slug>.md`. `directory` layout: `<dir>/<ID>-<slug>/entity.md` | Frontmatter is the only hand-authored state |
+| **Entity** | `section` layout: a `## <ID> — title` section of `<dir>/<section_file>`. `file` layout: `<dir>/<ID>-<slug>.md`. `directory` layout: `<dir>/<ID>-<slug>/entity.md` | Frontmatter is the only hand-authored state, and a section holds exactly the same frontmatter the other two do |
 | **Artifacts** | further files in a `directory`-layout entity | Optional; presence can gate transitions |
 | **Relations** | `relations:` in frontmatter | Typed, cross-entity, validated globally, inverses generated |
 | **Roadmap** | `<roadmaps>/<name>.yml` — horizon buckets of ids | The single home for priority *and* schedule placement |
@@ -75,7 +75,7 @@ name — drive behaviour:
 
 | Flag | Meaning |
 |---|---|
-| `layout` | `file` or `directory` |
+| `layout` | `section`, `file` or `directory` — what one entry occupies |
 | `intake` | accepts typeless capture; appears in the inbox view |
 | `actionable` | appears in `szsdlc next` |
 | `tracks_progress` | has a checkbox artifact parsed for progress |
@@ -87,7 +87,7 @@ name — drive behaviour:
 
 | Prefix | Type | Default workflow | layout | intake | action­able | progress | can_parent | schedulable | persistent |
 |---|---|---|---|---|---|---|---|---|---|
-| `IDEA` | idea (typeless intake) | `inbox → refining → refined \| dropped` | **file** | **yes** | no | no | no | no | no |
+| `IDEA` | idea (typeless intake) | `inbox → refining → refined \| dropped` | **section** | **yes** | no | no | no | no | no |
 | `EPIC` | epic (grouping of work) | `open → active → closed` | directory | no | no | derived | **yes** | yes | no |
 | `REQ` | requirement (product definition) | `draft → reviewed → approved → superseded \| retired` | directory | no | no | **none** | no | no | **yes** |
 | `SPK` | spike (investigation) | `open → researching → answered` | directory | no | yes | no | no | yes | no |
@@ -429,7 +429,8 @@ corrected call rather than a search.
 | `src/szsdlc/ids.py` | Id pattern, prefix/key registry, per-(type,key) counters, tombstone resolution |
 | `src/szsdlc/text.py` | Every normalization in one place: slugs, tags, edit distance, nearest-match |
 | `src/szsdlc/frontmatter.py` | Surgical block-level frontmatter editing: change one field, leave every other byte alone |
-| `src/szsdlc/model.py` | Entity parsing for both layouts, frontmatter round-trip, progress parsing |
+| `src/szsdlc/model.py` | Entity parsing for every layout, frontmatter round-trip, progress parsing |
+| `src/szsdlc/sections.py` | The `section` layout's storage: split one shared file into entries, and write one back without disturbing its neighbours |
 | `src/szsdlc/graph.py` | Relation graph, inverse derivation, derived attributes, cycle detection |
 | `src/szsdlc/roadmap.py` | Roadmap records, horizons, placement operations |
 | `src/szsdlc/workflow.py` | Status transitions and gate evaluation |
@@ -1107,7 +1108,7 @@ session boundary and the ideas must not.
 >   ten `capture` calls and ten files; a `--each` flag would have hidden that
 >   cost rather than removed it, and the file churn is the actual complaint.
 
-### Task 19: A `section` layout, and `idea` defaults to it
+### Task 19: A `section` layout, and `idea` defaults to it — **DONE**
 
 **Requirement.** An intake type stores every entry as a section of one shared
 file, so capturing ten thoughts touches one file instead of creating ten.
@@ -1119,12 +1120,51 @@ file, so capturing ten thoughts touches one file instead of creating ten.
 `shared`, each of which names the *container* while the other two name the
 *entry*, so the three would stop reading as one axis.
 
-- [ ] **Step 1:** `layout: section` in the config schema and in `EntityType`, with `is_directory_layout` joined by a predicate the rest of the code branches on instead of the raw string.
-- [ ] **Step 2:** A per-type key naming the shared file (default `<dir>/index.md`). Artifacts stay refused, exactly as for `file`.
-- [ ] **Step 3:** A section format that round-trips: a heading carrying id and title, a field block, then the body. The Task 4 property test — parse, re-emit, compare bytes — extends to it and gates this task the same way it gated that one.
-- [ ] **Step 4:** `ids.scan`, `model.load`, `create_entity`, `set`, `drop` and `convert` all work through the one interface. Nothing downstream may branch on layout; `tests/test_model.py` asserts that already and grows a third case.
-- [ ] **Step 5:** Two captures in a row must both survive: assert the second appends rather than rewrites, so a lost first capture cannot pass.
-- [ ] **Step 6:** Switch `defaults/config.yml`'s `idea.layout` to `section`, and say what a project holding `file`-layout ideas today does about it.
+- [x] **Step 1:** `layout: section` in the config schema and in `EntityType`, with `is_directory_layout` joined by a predicate the rest of the code branches on instead of the raw string.
+- [x] **Step 2:** A per-type key naming the shared file (default `<dir>/index.md`). Artifacts stay refused, exactly as for `file`.
+- [x] **Step 3:** A section format that round-trips: a heading carrying id and title, a field block, then the body. The Task 4 property test — parse, re-emit, compare bytes — extends to it and gates this task the same way it gated that one.
+- [x] **Step 4:** `ids.scan`, `model.load`, `create_entity`, `set`, `drop` and `convert` all work through the one interface. Nothing downstream may branch on layout; `tests/test_model.py` asserts that already and grows a third case.
+- [x] **Step 5:** Two captures in a row must both survive: assert the second appends rather than rewrites, so a lost first capture cannot pass.
+- [x] **Step 6:** Switch `defaults/config.yml`'s `idea.layout` to `section`, and say what a project holding `file`-layout ideas today does about it.
+
+> **Decisions taken while implementing:**
+>
+> - **A section is a whole entity document.** Cut the heading off and what is
+>   left is the same `---` frontmatter and body the other two layouts store,
+>   byte for byte. That was chosen over a lighter per-entry format for one
+>   reason: it makes Task 20's move between shapes a move of *these bytes*
+>   rather than a re-serialisation, and it means every existing reader and
+>   writer of frontmatter works here unchanged. The cost is that a rendered
+>   view of the file shows the frontmatter as body text — accepted, because
+>   this is a working file for agents, not a published one.
+> - **A heading delimits an entry only if it parses as an id of that type.**
+>   So `## Notes` inside a body stays part of the entry it was written in, and
+>   the file's own title and preamble belong to the file. The residual cost is
+>   that `## IDEA-0002` written *inside* a body does split — the trade, and the
+>   one that fails visibly.
+> - **The trailing blank line belongs to the file, not to the entry.** Found by
+>   watching `set` add one blank line per call: the split kept the separator,
+>   the compose added another. `Section.document` now drops trailing blanks and
+>   `compose` re-adds exactly one, so writing an unchanged entity is a no-op.
+>   Asserted, because "the file drifts a little on every command" is precisely
+>   the kind of thing nobody notices until the diff is unreadable.
+> - **Every write re-reads the file first.** A shared file introduces exactly
+>   one new failure mode — a save based on a stale read losing a neighbour —
+>   and it is the one this layout must not have. `Entity.save()` re-reads,
+>   replaces its own lines, writes back.
+> - **`convert` grew an `Entity.delete()`.** It was unlinking `entity.path`,
+>   which is right for two layouts and catastrophic for the third, where that
+>   path is every other entry's file. Deleting storage is a question only the
+>   model can answer, so it moved there.
+> - **`section_file` is not written into the shipped defaults.** Stating a
+>   default in the config it defaults from means a project that overrides
+>   `idea.layout` to `file` inherits a key that is then refused. Found by a
+>   test doing exactly that.
+> - **Nothing migrates automatically.** A project holding `file`-layout ideas
+>   today keeps them by writing `layout: file` on its own `idea` type — one
+>   line, and the example project already does it. There is no bulk mover,
+>   because Task 20 is the mover, and building a throwaway one first would be
+>   two answers to one question.
 
 ### Task 20: `layout: dynamic` — one type, entries in any shape
 
