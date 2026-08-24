@@ -134,7 +134,10 @@ entity_types:
     prefix: REQ
     title: Requirement
     dir: requirements
-    layout: directory
+    # A statement, and nothing beside it. A requirement carries no artifacts —
+    # coverage and delivery are read off the graph, never written here — so a
+    # directory would hold one file and cost a level of nesting to say so.
+    layout: file
     intake: false
     # A requirement is a definition, not a unit of work: no progress states,
     # never in `next`, never a parent, never scheduled, never archived. Its
