@@ -124,15 +124,23 @@ jobs:
           
           # Extract messages using jq (installed on ubuntu-latest)
           # Check for tags in priority order: major > minor > patch
-          if jq -r '.[].message' commits.json | grep -q "#major"; then
+          #
+          # The marker has to stand on its own as a word. A plain substring
+          # match reads a commit that merely *mentions* the convention as a
+          # commit requesting it — which is not hypothetical: the commit that
+          # introduced this workflow described these markers in its own body,
+          # and the first release after it went out as a major version bump.
+          # Requiring whitespace or a line edge on both sides leaves the
+          # documented usage working and stops a quoted mention firing.
+          if jq -r '.[].message' commits.json | grep -qE '(^|[[:space:]])#major([[:space:]]|$)'; then
             echo "part=major" >> $GITHUB_OUTPUT
-            echo "Detected #major"
-          elif jq -r '.[].message' commits.json | grep -q "#minor"; then
+            echo "Detected a major marker"
+          elif jq -r '.[].message' commits.json | grep -qE '(^|[[:space:]])#minor([[:space:]]|$)'; then
             echo "part=minor" >> $GITHUB_OUTPUT
-            echo "Detected #minor"
-          elif jq -r '.[].message' commits.json | grep -q "#patch"; then
+            echo "Detected a minor marker"
+          elif jq -r '.[].message' commits.json | grep -qE '(^|[[:space:]])#patch([[:space:]]|$)'; then
             echo "part=patch" >> $GITHUB_OUTPUT
-            echo "Detected #patch"
+            echo "Detected a patch marker"
           else
             echo "part=patch" >> $GITHUB_OUTPUT
             echo "No tag detected, defaulting to patch"
