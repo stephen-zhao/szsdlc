@@ -14,10 +14,10 @@ As a Claude Code plugin — this brings the hooks and the ten skills:
 /plugin install szsdlc@szccpmp
 ```
 
-Or as a plain CLI:
+Or as a plain CLI — installed under a namespaced name, run as `szsdlc`:
 
 ```bash
-pip install szsdlc
+pip install zhaostephen-szsdlc
 ```
 
 Then, in any project:

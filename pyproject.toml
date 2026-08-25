@@ -3,7 +3,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "szsdlc"
+# The distribution name on PyPI. The import package, the console script and
+# the Claude Code plugin are all still `szsdlc`; only the name the package is
+# published and installed under carries the namespace.
+name = "zhaostephen-szsdlc"
 description = "Project-agnostic agentic SDLC framework: entities as the single source of truth, generated views, enforced consistency."
 readme = "README.md"
 requires-python = ">=3.12"
