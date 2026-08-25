@@ -3,7 +3,10 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "szsdlc"
+# The distribution name on PyPI. The import package, the console script and
+# the Claude Code plugin are all still `szsdlc`; only the name the package is
+# published and installed under carries the namespace.
+name = "zhaostephen-szsdlc"
 description = "Project-agnostic agentic SDLC framework: entities as the single source of truth, generated views, enforced consistency."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -21,6 +24,16 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
+# What `uv run` installs, and what the release workflow needs present. Kept in
+# step with the other Python repos here: bump-my-version does the bumping, uv
+# does the building, pytest does the rest.
+[tool.uv]
+dev-dependencies = [
+    "bump-my-version>=1.2.1",
+    "pytest>=8.0",
+    "uv>=0.8.11",
+]
+
 [project.scripts]
 szsdlc = "szsdlc.cli:main"
 
@@ -34,3 +47,40 @@ packages = ["src/szsdlc"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+# The version lives in one place — src/szsdlc/__init__.py, which hatchling
+# reads for the package version. Two other files quote it and must move with
+# it, so both are listed rather than left to drift: the plugin manifest, whose
+# agreement with the package is asserted by tests/test_hooks.py, and this
+# block's own current_version.
+[tool.bumpversion]
+current_version = "0.1.3"
+parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
+serialize = ["{major}.{minor}.{patch}"]
+search = "{current_version}"
+replace = "{new_version}"
+regex = false
+ignore_missing_version = false
+ignore_missing_files = false
+tag = true
+sign_tags = false
+tag_name = "v{new_version}"
+tag_message = "Bump version: {current_version} → {new_version}"
+allow_dirty = false
+commit = true
+message = "Bump version: {current_version} → {new_version}"
+moveable_tags = []
+commit_args = ""
+setup_hooks = []
+pre_commit_hooks = []
+post_commit_hooks = []
+
+[[tool.bumpversion.files]]
+filename = "src/szsdlc/__init__.py"
+search = '__version__ = "{current_version}"'
+replace = '__version__ = "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = ".claude-plugin/plugin.json"
+search = '"version": "{current_version}"'
+replace = '"version": "{new_version}"'
