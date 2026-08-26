@@ -31,6 +31,7 @@ from typing import Any, Callable
 from . import __version__, config as config_module, hooks as hooks_module
 from .config import LAYOUTS
 from .errors import EXIT_ERROR, EXIT_INVALID, BadInput, InternalError, SzsdlcError
+from .frontmatter import jsonify
 from .ids import IdSpace
 from .model import Entity, EntityStore, create_entity, load_all, relayout
 from .text import add_tags, clip, nearest, remove_tags
@@ -1175,6 +1176,12 @@ def cmd_show(args: argparse.Namespace) -> int:
             "title": entity.title,
             "tags": entity.tags,
             "relations": entity.relations,
+            # Keyed off the fields the *type* declares, not off whatever this
+            # entity's frontmatter happens to hold: the key set is the type's
+            # contract, so a declared field nobody wrote reads as null rather
+            # than going missing, and a stray hand-written key stays out.
+            "fields": jsonify({name: entity.field(name)
+                               for name in entity.type.fields}),
             "derived": {k: str(v) for k, v in graph.derived(entity).items()},
             "path": _relative(session, entity.path),
         })
@@ -1238,7 +1245,10 @@ def cmd_list(args: argparse.Namespace) -> int:
         # --json is exempt from the limit: it has a programmatic consumer that
         # is not paying context for it.
         emit_json([{"id": e.id.text, "type": e.type.name, "status": e.status,
-                    "tags": e.tags, "title": e.title} for e in entities])
+                    "tags": e.tags, "title": e.title,
+                    "fields": jsonify({name: e.field(name)
+                                       for name in e.type.fields})}
+                   for e in entities])
         return 0
 
     rows, note = truncate(entities, args.limit)

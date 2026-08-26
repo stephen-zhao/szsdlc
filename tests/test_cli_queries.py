@@ -11,6 +11,7 @@ hurt most.
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 
 import pytest
@@ -181,6 +182,67 @@ def test_show_json_carries_the_derived_attributes(run, world):
     assert payload["relations"] == {}
 
 
+def test_show_json_carries_the_declared_fields(run, world):
+    """A type's own fields travel in `--json`.
+
+    Without them a programmatic caller has to re-parse the frontmatter it just
+    asked for, which is the one copy of the file it should never need to read.
+    """
+    _, output, _ = run("show", "REQ-0001", "--json")
+    assert json.loads(output)["fields"] == {"opened": "2026-08-01"}
+
+
+@pytest.fixture
+def typed(make_project):
+    """A requirement carrying a field this project declared, as szmde does."""
+    return make_project({"entity_types": {"requirement": {
+        "fields": {"test_type": {"type": "text"}}}}})
+
+
+def written(project, **fields):
+    """One requirement, in whatever layout its type declares."""
+    return create_entity(project, IdSpace(project), project.type_for("requirement"),
+                         title="Quorum survives", fields=fields)
+
+
+def test_json_fields_carry_a_field_the_project_declared(typed, capsys):
+    """The point of the key: a field this project declared, not a shipped one.
+
+    A consuming project adds fields to a type and then needs them by script —
+    reading them off the entity is what `--json` is for.
+    """
+    written(typed, opened="2026-08-01", test_type="unit")
+
+    main(["-C", str(typed.root), "show", "REQ-0001", "--json"])
+    assert json.loads(capsys.readouterr().out)["fields"] == {
+        "opened": "2026-08-01", "test_type": "unit"}
+
+
+def test_json_fields_hold_a_declared_field_nobody_filled_in(typed, capsys):
+    """An optional field that was never written reads as null, not as absent.
+
+    A caller branching on the value should not also have to branch on whether
+    the key is there.
+    """
+    written(typed, opened="2026-08-01")
+
+    main(["-C", str(typed.root), "show", "REQ-0001", "--json"])
+    assert json.loads(capsys.readouterr().out)["fields"]["test_type"] is None
+
+
+def test_json_fields_date_survives_as_an_iso_string(typed, capsys):
+    """A date field crosses as ISO, the same encoding the schema is shown.
+
+    YAML hands back a `date` — or a `datetime` for a timestamp — and only
+    `jsonify` renders both the way every other date at a machine boundary is
+    rendered. `str()` would put a space where a timestamp needs its `T`.
+    """
+    written(typed, opened=dt.datetime(2026, 8, 1, 10, 0))
+
+    main(["-C", str(typed.root), "show", "REQ-0001", "--json"])
+    assert json.loads(capsys.readouterr().out)["fields"]["opened"] == "2026-08-01T10:00:00"
+
+
 # ---------------------------------------------------------------------------
 # context
 # ---------------------------------------------------------------------------
@@ -314,6 +376,13 @@ def test_json_is_exempt_from_the_limit(run, bulk):
     bulk()
     _, output, _ = run("list", "--json")
     assert len(json.loads(output)) == 201
+
+
+def test_list_json_carries_the_declared_fields(run, world):
+    _, output, _ = run("list", "--type", "requirement", "--json")
+    listed = {e["id"]: e["fields"] for e in json.loads(output)}
+    assert listed == {"REQ-0001": {"opened": "2026-08-01"},
+                      "REQ-0002": {"opened": "2026-08-01"}}
 
 
 def test_an_unknown_type_filter_lists_the_known_ones(run, world):
