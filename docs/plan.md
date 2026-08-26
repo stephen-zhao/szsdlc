@@ -1317,6 +1317,50 @@ its directory held exactly one file and charged a level of nesting to say so.
 
 ---
 
+### Task 23: `--json` carries a type's own fields — **DONE**
+
+**Requirement.** `show --json` reported the core frontmatter and the derived
+attributes, `list --json` a subset of the core, and neither reported the fields
+the *project* declared on a type. A caller that needed one had to open the
+entity file and parse the frontmatter it had just asked the CLI for — the one
+copy of a fact it should never have to read twice, and a re-implementation of
+the loader that breaks the moment a layout changes.
+
+Found while adopting szsdlc in `szmde`: its requirement↔test traceability gate
+classifies each requirement by the `test_type` field that project declares, and
+the only way to reach it was to walk `docs/sdlc/requirements/` by hand.
+
+- [x] **Step 1:** `"fields": jsonify({name: entity.field(name) for name in entity.type.fields})` in both JSON payloads, keyed off the *type's declared* fields rather than whatever the frontmatter happens to hold.
+- [x] **Step 2:** Five tests — the shipped `opened` field through both commands, a project-declared field, a declared-but-unwritten field, and a date crossing as ISO.
+
+> **Decisions taken while implementing:**
+>
+> - **Declared fields, not raw frontmatter.** Iterating `entity.type.fields`
+>   rather than `entity.data` means the key set is the type's contract: stable
+>   across entities, and it cannot leak a stray hand-written key into what
+>   reads as schema. A declared field nobody filled in is present and `null`,
+>   so a caller branches on the value and never on the key's existence. A
+>   declared `default` is not resolved on read either — `create_entity` seeds
+>   one only for a required field — so an unwritten field with a default also
+>   reads `null`, consistent with everywhere else the frontmatter is the truth.
+> - **`jsonify`, not `json.dumps(default=str)`.** The framework already has one
+>   frontmatter→JSON encoder, used at this same boundary before schema
+>   validation, and it exists because YAML hands back `date`/`datetime`
+>   objects. Leaning on `emit_json`'s `default=str` instead would have agreed
+>   with it for a plain date and quietly disagreed for a timestamp — `str()`
+>   puts a space where ISO wants its `T`. One encoder, one answer.
+> - **No change to the human output.** The fields are already visible in the
+>   rendered entity; this is only the machine encoding catching up, and C5 —
+>   human output is the default — is untouched.
+> - **`inbox --json` and `next --json` were left alone.** Both were considered.
+>   They are curated task-shaped payloads, not entity queries — `inbox` already
+>   reports the derived `age_days` rather than the `captured` it comes from —
+>   and widening them is a separate question about what those two views are
+>   *for*. `list` and `show` are the general entity queries and the ones a
+>   script reaches for. Deferred deliberately rather than overlooked.
+
+---
+
 ## Out of scope (separate items, after this lands)
 
 1. ~~**Adopting `szsdlc` in its first consumer (`s-s1-lab`)**~~ — done 2026-08-17. Config, an environment parity ledger as a record, and `docs/standards/` seeded from that project's `CLAUDE.md`.
