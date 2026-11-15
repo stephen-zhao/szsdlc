@@ -133,10 +133,15 @@ def test_a_parent_cycle_is_an_error(clean, write_entity):
     assert findings(clean, "cycle")
 
 
-def test_a_work_item_with_no_parent_is_an_error(clean, write_entity):
+def test_a_work_item_with_no_parent_is_not_an_error(clean, write_entity):
+    """An epic is nice to have, so an item without one is not a finding.
+
+    The `required_on` machinery that used to raise this is still covered, in
+    tests/test_graph.py, against a project that asks for it.
+    """
     write_entity("work_item", 9, "title: T\nstatus: idea\nopened: 2026-08-01\n",
                  slug="orphan")
-    assert findings(clean, "missing-relation")
+    assert not findings(clean, "missing-relation")
 
 
 def test_a_reference_to_a_tombstoned_id_is_a_warning_with_the_rewrite(clean,
@@ -429,7 +434,8 @@ def test_findings_are_grouped_most_severe_first(run, clean, write_entity):
 def test_the_listing_is_bounded_and_the_total_is_printed(run, clean, write_entity):
     for number in range(30):
         write_entity("work_item", 100 + number,
-                     "title: T\nstatus: idea\nopened: 2026-08-01\n", slug=f"o{number}")
+                     "title: T\nstatus: idea\nopened: 2026-08-01\n"
+                     "relations:\n  implements: [REQ-0420]\n", slug=f"o{number}")
     _, output, _ = run("validate")
     lines = output.strip().splitlines()
     assert len(lines) == 22  # 20 findings + truncation note + totals
@@ -438,8 +444,9 @@ def test_the_listing_is_bounded_and_the_total_is_printed(run, clean, write_entit
 
 
 def test_json_carries_every_finding_with_its_fix(run, clean, write_entity):
-    write_entity("work_item", 9, "title: T\nstatus: idea\nopened: 2026-08-01\n",
-                 slug="no-parent")
+    write_entity("work_item", 9, "title: T\nstatus: idea\nopened: 2026-08-01\n"
+                                 "relations:\n  implements: [REQ-0420]\n",
+                 slug="dangles")
     code, output, _ = run("validate", "--json")
     payload = json.loads(output)
     assert code == EXIT_INVALID

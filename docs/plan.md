@@ -1309,11 +1309,130 @@ its directory held exactly one file and charged a level of nesting to say so.
 >   `layout: dynamic` with `initial_layout: file` would have kept both — an
 >   epic as a plain file until someone logs against it — and is one line away
 >   if that is ever wanted. Deferred deliberately rather than overlooked.
+>   *(Taken up in Task 25, which drops the epic journal outright rather than
+>   restowing it.)*
 > - **No migration.** An existing project keeps `layout: directory` by writing
 >   that one line on its own `requirement` type. Existing requirement
 >   directories are still scanned by a type declaring `directory`, and a
 >   project that wants the flat form moves them with `szsdlc layout` after
 >   declaring `dynamic`.
+
+---
+
+### Task 23: The launcher tries every compatible interpreter — **DONE**
+
+**Requirement.** The launcher probed three bare names — `python3`, `python`,
+`py` — and gave up on the box if none of them cleared 3.12. A distro whose
+`python3` is 3.9 very often ships python3.12 right alongside it, so the common
+case reported "no working Python 3.12+" with a usable one on `PATH`. A hook
+that silently does nothing is the worst available outcome, because nothing says
+why.
+
+- [x] **Step 1:** Candidate sources, best first: an active `VIRTUAL_ENV`, a `.venv` beside the project and in each parent, every `python3.N` on `PATH` newest first, then the bare names, then an interpreter `uv` manages. `uv python find` never downloads, so this stays a lookup rather than a hook reaching for the network.
+- [x] **Step 2:** Building the venv is a loop over every compatible interpreter, not a single choice: `ensurepip` is packaged separately on Debian and Ubuntu, so a perfectly good 3.12 can pass the probe and still fail `-m venv`.
+- [x] **Step 3:** A last resort that runs from the checkout under `PYTHONPATH` when some probed interpreter already imports the three dependencies.
+- [x] **Step 4:** The same order in `bin/szsdlc.cmd`, which asks `py --list` for the versioned set since the Windows launcher already reports newest first.
+- [x] **Step 5:** `tests/test_hooks.py` builds a `PATH` containing the bug — a `python3` below the floor beside a compatible versioned name — and runs the real launcher against it.
+- [x] **Step 6:** `${CLAUDE_PLUGIN_ROOT}` quoted in all four hook commands. These are shell-form commands, so an install path containing a space — `C:\Users\First Last\...` is the ordinary case on Windows — split into several words and every hook silently failed to run before reaching any of the above. `claude plugin validate` reports this, and now passes clean.
+
+> **Decisions taken while implementing:**
+>
+> - **It belongs in the launcher, not the package.** By the time any szsdlc
+>   module is imported the interpreter has already been chosen, and a package
+>   cannot portably re-exec itself into a different one. The precedent is
+>   unanimous: pip and hatchling bake a shebang at install time, pipx and `uv
+>   tool` build one venv per tool, pre-commit resolves `language_version` in
+>   the framework, and `py` (PEP 397, python-launcher on Unix) is a separate
+>   binary. The package's only say is `requires-python`.
+> - **The floor is asserted, not deduplicated.** It is stated in
+>   `requires-python` and quoted twice in each launcher, because parsing TOML
+>   in POSIX `sh` to avoid that is worse than a test that fails when the three
+>   drift apart. That test is new.
+> - **An active venv is preferred over a newer `PATH` python**, following uv
+>   and the Unix `py` launcher: if a developer picked a Python for this tree,
+>   that is the one whose version and packages they maintain. Previously a venv
+>   was only ever noticed when szsdlc happened to be installed into it.
+> - **No `uv python install`.** Downloading an interpreter is not something a
+>   hook should do unasked.
+
+---
+
+### Task 24: Sync at the end of every turn — **DONE**
+
+**Requirement.** `sync` ran on `PostToolUse`, so a turn that moved an entity by
+any other means — a `Bash` heredoc, a status change, a roadmap edit through the
+CLI — left the views stale until the next file write. The turn boundary is the
+natural place to catch that, and it has to be switchable, because a hook that
+runs on every turn and cannot be turned off is one people uninstall.
+
+- [x] **Step 1:** `Stop` syncs, then validates, in the one handler. Two entries under the event would be two processes and two full loads of the project.
+- [x] **Step 2:** `sync_on_turn_end` declared in `plugin.json` under `userConfig`, read from `CLAUDE_PLUGIN_OPTION_SYNC_ON_TURN_END`, defaulting to on.
+- [x] **Step 3:** `render.sync` grows `keep_hand_edited`, and the turn-end sync passes it.
+- [x] **Step 4:** `Stop`'s timeout raised to 60s, now that it does both.
+
+> **Decisions taken while implementing:**
+>
+> - **Sync before validate.** Validating first reports every view the turn
+>   touched as out of date and blocks naming a fix — `szsdlc sync` — that was
+>   about to happen anyway, which is the most irritating kind of true
+>   statement.
+> - **An unprompted sync must not destroy work.** A hand-edited generated file
+>   is a blocking error, and the evidence for it *is* the file: syncing over it
+>   would have taken the error quiet along with whatever somebody typed. So
+>   `keep_hand_edited` regenerates around it and leaves both the text and the
+>   complaint, while an explicit `szsdlc sync` still overwrites. This was found
+>   by reading `validate.stale_generated` rather than by a failing test, and
+>   the test that now covers it fails without the flag.
+> - **The setting is a plugin setting, not a config.yml key.** config.yml is
+>   the project's model, read by the CLI, by CI and by the next front end;
+>   "sync when a Claude Code turn ends" is a fact about Claude Code and would
+>   be a flag all of them have to know to ignore. A test asserts the key
+>   appears in neither the schema nor the shipped defaults.
+> - **Every spelling of the boolean is accepted.** Claude Code documents the
+>   variable name but not how a boolean value is serialised on the way through,
+>   so guessing one spelling would mean silently taking the default forever on
+>   a version that picked another. Unrecognised and empty both mean the
+>   declared default.
+> - **`stop_hook_active` is deliberately not consulted.** Blocking again on a
+>   turn that still has errors is the gate working; the documented
+>   continuation cap is what stops it looping.
+> - **No `options` field anywhere in the manifest.** Declaring one pins the
+>   whole plugin to Claude Code v2.1.271 or later.
+
+---
+
+### Task 25: An epic and a decision are one file; a parent is optional — **DONE**
+
+**Requirement.** Two defaults charged a level of nesting for nothing, and one
+turned a nice-to-have into a gate. Backwards-incompatible on purpose.
+
+- [x] **Step 1:** `epic.layout: file`, with `artifacts` and `journal_artifact` dropped — a `file` layout may not carry an artifact, and config validation says so.
+- [x] **Step 2:** `decision.layout: file`. The record *is* the document.
+- [x] **Step 3:** `parent.required_on: []`.
+- [x] **Step 4:** Five tests encoded the old rule. Two inverted; three had used a missing parent as a cheap way to make N errors and now use a dangling reference instead.
+
+> **Decisions taken while implementing:**
+>
+> - **The epic journal is dropped, not restowed.** Task 22 left the door open
+>   to `layout: dynamic` with `initial_layout: file`, which would have kept
+>   both. An epic is a grouping whose narrative lives in its children, and a
+>   log on the bundle duplicates theirs and goes stale first. `szsdlc log`
+>   already refuses a type with no `journal_artifact` and names the setting to
+>   add, which is the right answer for a project that disagrees.
+> - **`required_on` is kept, not removed.** It is now unused by the shipped
+>   defaults, so a project that wants the gate writes one line — and the
+>   mechanism keeps its tests, against a project that opts in, because an
+>   unexercised mechanism stops working without anybody hearing about it.
+> - **Why the gate was wrong.** An item is not more valid for having a bundle
+>   to belong to. Requiring one meant epics got invented to satisfy a check
+>   rather than because anything had been grouped, and sequence already comes
+>   from the roadmap while traceability runs through `implements` — nothing
+>   downstream reads `parent` at all.
+> - **No migration.** An existing project keeps the old shape by declaring
+>   `layout: directory` on its own `epic` or `decision` type; a project that
+>   wants the flat form declares `dynamic` and moves entries with `szsdlc
+>   layout`. Existing directories are still scanned by a type declaring
+>   `directory`.
 
 ---
 

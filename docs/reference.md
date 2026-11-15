@@ -130,10 +130,74 @@ The plugin wires four:
 | `SessionStart` | Prepends `szsdlc context` — a session begins knowing the state without searching for it |
 | `PreToolUse` | Blocks edits to generated files, and injects the standards governing the file being edited |
 | `PostToolUse` | Runs `sync` when an entity or roadmap file changes |
-| `Stop` | Runs `validate`, blocking on errors only |
+| `Stop` | Runs `sync`, then `validate` — blocking on errors only |
+
+`Stop` fires when Claude finishes responding, which is the end of a
+conversation turn and the closest thing Claude Code offers to a post-turn
+event; there is no separate one. Both halves run in that one handler rather
+than as two entries under the event, because each entry is its own process and
+its own full load of the project, and there is no reason to pay for the graph
+twice at the end of every turn.
+
+The order is deliberate. Syncing first means `validate` judges the state the
+turn actually leaves behind; validating first finds every view the turn touched
+out of date and blocks naming a fix — `szsdlc sync` — that was about to happen
+anyway. The turn-end sync is also the one sync nobody asked for, so it leaves a
+hand-edited generated file alone and lets `validate` report it as the error it
+is: typed-in text cannot be recovered once overwritten, and the evidence for
+that error is the file itself. Typing `szsdlc sync` still overwrites, because
+that is a person saying so.
 
 Every hook is a silent no-op in a project without `.szsdlc/config.yml`, so the
 plugin is harmless installed globally.
+
+### Settings
+
+Declared in [`.claude-plugin/plugin.json`](../.claude-plugin/plugin.json) under
+`userConfig`, and edited with `/config`:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `sync_on_turn_end` | `true` | Run `sync` as the turn ends, not only when a source file is written. Off, `Stop` is `validate` alone |
+
+These are deliberately *not* in `.szsdlc/config.yml`. That file is the
+project's model and is read by the CLI, by CI and by whatever front end comes
+next, while "sync when a Claude Code turn ends" is a fact about Claude Code —
+parked in config.yml it would be a flag every other consumer has to know to
+ignore. Claude Code hands each one to the hook process as
+`CLAUDE_PLUGIN_OPTION_<KEY>`, with the key uppercased.
+
+### Resolving an interpreter
+
+The launchers in [`bin/`](../bin) are the only thing a hook invokes, and they
+have to find a Python without asking anyone anything. In order:
+
+1. an installed `szsdlc` already on `PATH` — a developer's own venv wins;
+2. a venv the launcher built earlier, reinstalled over when the release moved;
+3. otherwise build that venv, with the first interpreter that works of: an
+   active `VIRTUAL_ENV`; a `.venv` beside the project or in any parent; every
+   `python3.N` on `PATH`, newest first (on Windows, everything `py --list`
+   reports); `python3`, `python`, `py`; and an interpreter `uv` manages;
+4. failing all of that, run from the checkout with whichever of those already
+   imports the three dependencies.
+
+Candidates are *probed* by running them rather than trusted to work because
+they exist. On Windows `python` is frequently a Store stub — on `PATH`, at the
+front of it, and unable to run anything — and probing is also what enforces the
+`requires-python` floor, which matters more than it sounds: a `python3` that is
+3.9 on a box that also ships 3.12 is the common case, not the exotic one.
+Step 3 is a loop for the same reason, since a compatible interpreter can still
+fail to build a venv where `ensurepip` is packaged separately, and the next one
+along is usually fine.
+
+This lives in the launcher and not in the Python package because by the time
+any szsdlc module is imported the interpreter has already been chosen, and a
+package cannot portably re-exec itself into a different one. It is also where
+every comparable tool puts it: pip and hatchling bake a shebang at install
+time, pipx and `uv tool` build one venv per tool, pre-commit resolves
+`language_version` in the framework, and `py` is a separate binary. The
+package's only say is the floor it declares in `requires-python`, which the
+test suite holds the launchers to.
 
 ## Development
 

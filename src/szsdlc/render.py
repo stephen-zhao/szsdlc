@@ -67,6 +67,18 @@ class Rendered:
             return False
         return self.path.read_bytes().decode("utf-8", "replace") == self.content
 
+    def was_hand_edited(self) -> bool:
+        """Has somebody typed into the file this would overwrite?
+
+        Lives here beside `matches_disk` rather than next to the `hand_edited`
+        predicate it defers to, because the question is only answerable against
+        the disk — and because the one caller that needs it is deciding whether
+        it is about to destroy someone's work.
+        """
+        if not self.path.is_file():
+            return False
+        return hand_edited(self.path.read_bytes().decode("utf-8", "replace"))
+
     def write(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_bytes(self.content.encode("utf-8"))
@@ -267,10 +279,21 @@ def compare(rendered: list[Rendered]) -> list[Rendered]:
 
 
 def sync(config: Config, store: EntityStore, graph: Graph,
-         roadmaps: dict[str, Roadmap] | None = None) -> list[Rendered]:
-    """Regenerate everything, writing only what changed. Never validates."""
+         roadmaps: dict[str, Roadmap] | None = None, *,
+         keep_hand_edited: bool = False) -> list[Rendered]:
+    """Regenerate everything, writing only what changed. Never validates.
+
+    `keep_hand_edited` leaves alone any file somebody has typed into. Typed-in
+    text cannot be recovered once it has been overwritten, so a sync nobody
+    asked for — the one on a turn end — passes this and leaves the file for
+    `validate` to report as an error. Typing `szsdlc sync` is a person saying
+    overwrite it, and still does.
+    """
     renderer = Renderer(config, store, graph, roadmaps)
-    changed = compare(renderer.all())
+    items = renderer.all()
+    if keep_hand_edited:
+        items = [item for item in items if not item.was_hand_edited()]
+    changed = compare(items)
     for item in changed:
         item.write()
     return changed

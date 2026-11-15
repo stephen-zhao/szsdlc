@@ -6,7 +6,17 @@
 #
 #   1. an installed `szsdlc` already on PATH — a developer's own venv wins;
 #   2. a venv this launcher previously created, refreshed when it is stale;
-#   3. create that venv from the plugin source, once, on first run.
+#   3. build that venv, trying *every* compatible interpreter it can find;
+#   4. failing that, run from the checkout with one that already has the deps.
+#
+# Why the resolving lives here and not in the Python package: by the time any
+# szsdlc module is imported the interpreter has already been chosen, and a
+# package cannot portably re-exec itself into a different one. Every precedent
+# puts this in a launcher rather than in the library — pip and hatchling bake a
+# shebang at install time, pipx and `uv tool` build one venv per tool, and `py`
+# (PEP 397 on Windows, python-launcher on Unix) is a separate binary. The
+# package's only say is the floor it declares in `requires-python`, which
+# tests/test_hooks.py holds this script to.
 #
 # Failure is silent-ish by design: a hook that dies noisily in a project which
 # does not even use szsdlc is worse than one that does nothing.
@@ -72,48 +82,148 @@ for candidate in "$venv/bin/python" "$venv/Scripts/python.exe"; do
     fi
 done
 
-# 3. First run: build the venv.
-#
-# Candidates are *probed*, not merely found. Under Git Bash on Windows,
-# `python3` resolves to the Microsoft Store stub in WindowsApps — present on
-# PATH, on the front of it, and unable to run anything. Taking the first name
-# that exists picks the stub every time and the hook silently does nothing.
-# Running each candidate also enforces the 3.12 floor for free.
-probe='import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)'
-interpreter=""
-for candidate in python3 python py; do
-    command -v "$candidate" >/dev/null 2>&1 || continue
-    if "$candidate" -c "$probe" >/dev/null 2>&1; then
-        interpreter="$candidate"
-        break
-    fi
-done
-if [ -z "$interpreter" ]; then
-    echo "szsdlc: no working Python 3.12+ found (tried python3, python, py)." >&2
-    echo "Fix: install Python 3.12 or later and rerun" >&2
-    exit 5
-fi
+# ---------------------------------------------------------------------------
+# 3. First run: find an interpreter and build the venv.
+# ---------------------------------------------------------------------------
 
-mkdir -p "$data_dir" || exit 5
-"$interpreter" -m venv "$venv" >/dev/null 2>&1 || {
-    echo "szsdlc: could not create a virtualenv at $venv." >&2
-    echo "Fix: pip install $plugin_root" >&2
-    exit 5
+# Candidates are *probed*, not merely found, for two separate reasons. Under
+# Git Bash on Windows, `python3` resolves to the Microsoft Store stub — present
+# on PATH, at the front of it, and unable to run anything; taking the first
+# name that exists picks the stub every time and the hook silently does
+# nothing. And running the candidate is also what enforces the floor, which is
+# the common case rather than the exotic one: a great many boxes have a
+# `python3` that is 3.9.
+#
+# The floor is stated twice in this file, here and in the message at the
+# bottom, and it must agree with `requires-python` in pyproject.toml.
+# tests/test_hooks.py fails if any of the three drift apart.
+probe='import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)'
+
+usable() {
+    [ -n "${1:-}" ] || return 1
+    "$1" -c "$probe" >/dev/null 2>&1
 }
 
-for candidate in "$venv/bin/python" "$venv/Scripts/python.exe"; do
-    if [ -x "$candidate" ]; then
-        "$candidate" -m pip install --quiet --disable-pip-version-check \
-            "$plugin_root" >/dev/null 2>&1 || {
-            echo "szsdlc: could not install szsdlc into $venv." >&2
-            echo "Fix: $candidate -m pip install $plugin_root" >&2
-            exit 5
-        }
+# Where to look, best first, one per line.
+candidates() {
+    # An interpreter somebody already chose for this shell or this tree. Both
+    # uv and the Unix `py` launcher consult these ahead of PATH, for the same
+    # reason: if a developer picked a Python here, that is the one whose
+    # version and packages they actually maintain.
+    if [ -n "${VIRTUAL_ENV:-}" ]; then
+        printf '%s\n' "$VIRTUAL_ENV/bin/python" "$VIRTUAL_ENV/Scripts/python.exe"
+    fi
+
+    scan="${CLAUDE_PROJECT_DIR:-$PWD}"
+    while : ; do
+        printf '%s\n' "$scan/.venv/bin/python" "$scan/.venv/Scripts/python.exe"
+        parent="$(dirname -- "$scan")"
+        [ "$parent" != "$scan" ] || break
+        scan="$parent"
+    done
+
+    # Every `python3.N` on PATH, newest N first, keeping the earliest copy of
+    # each version. This is the Unix `py` launcher's rule, and it closes the
+    # gap that actually bit: a distro whose `python3` is 3.9 very often ships
+    # python3.12 right alongside it, and probing three bare names never sees
+    # it — the launcher said "no working Python 3.12+" with one on the box.
+    (
+        IFS=:
+        for dir in $PATH; do
+            [ -n "$dir" ] || continue
+            for exe in "$dir"/python3.*; do
+                minor="${exe##*/python3.}"
+                case "$minor" in ''|*[!0-9]*) continue ;; esac
+                [ -x "$exe" ] && printf '%s %s\n' "$minor" "$exe"
+            done
+        done
+    ) 2>/dev/null | awk '!seen[$1]++' | sort -k1,1nr | cut -d' ' -f2-
+
+    # The bare names last among those on PATH, because they are the ambiguous
+    # ones: whatever they point at, a versioned name above said it better.
+    printf '%s\n' python3 python py
+
+    # An interpreter uv manages. Somebody who installs Python only through uv
+    # has nothing that matches any of the above. `uv python find` is a lookup
+    # and never downloads, so this stays a search rather than a hook that
+    # quietly reaches for the network.
+    if command -v uv >/dev/null 2>&1; then
+        uv python find ">=3.12" 2>/dev/null | head -1
+    fi
+}
+
+# Split on newlines only, so a path with a space in it survives. The `for`
+# list is expanded once, before the first iteration, so restoring IFS inside
+# the body is safe — and the loop has to stay in this shell rather than behind
+# a pipe, because `exec` in a subshell would replace the subshell and let this
+# script carry on past it.
+outer_ifs="$IFS"
+list="$(candidates)"
+usables=""
+
+IFS='
+'
+for candidate in $list; do
+    IFS="$outer_ifs"
+    usable "$candidate" || continue
+    usables="$usables$candidate
+"
+
+    mkdir -p "$data_dir" 2>/dev/null || true
+
+    # A candidate can pass the version probe and still not be able to make a
+    # virtualenv: Debian and Ubuntu split `ensurepip` out into python3-venv, so
+    # `-m venv` fails on an otherwise perfectly good 3.12. That is why this is
+    # a loop over every compatible interpreter rather than a single choice —
+    # the next one along is usually fine, and giving up on the whole box
+    # because the first answer was incomplete is the behaviour being fixed.
+    rm -rf "$venv" >/dev/null 2>&1 || true
+    "$candidate" -m venv "$venv" >/dev/null 2>&1 || continue
+
+    for python in "$venv/bin/python" "$venv/Scripts/python.exe"; do
+        [ -x "$python" ] || continue
+        "$python" -m pip install --quiet --disable-pip-version-check \
+            "$plugin_root" >/dev/null 2>&1 || continue
         printf '%s\n' "$want" > "$stamp" 2>/dev/null || true
+        exec "$python" -m szsdlc.cli "$@"
+    done
+    IFS='
+'
+done
+IFS="$outer_ifs"
+
+# ---------------------------------------------------------------------------
+# 4. No venv could be built anywhere. If one of the interpreters that passed
+#    the probe already imports the three dependencies, run straight from the
+#    checkout. Slower to start and not hermetic, but a hook that works beats a
+#    correct explanation of why it does not.
+# ---------------------------------------------------------------------------
+
+IFS='
+'
+for candidate in $usables; do
+    IFS="$outer_ifs"
+    if PYTHONPATH="$plugin_root/src${PYTHONPATH:+:$PYTHONPATH}" \
+            "$candidate" -c 'import yaml, jinja2, jsonschema' >/dev/null 2>&1; then
+        PYTHONPATH="$plugin_root/src${PYTHONPATH:+:$PYTHONPATH}"
+        export PYTHONPATH
         exec "$candidate" -m szsdlc.cli "$@"
     fi
+    IFS='
+'
 done
+IFS="$outer_ifs"
 
-echo "szsdlc: virtualenv at $venv has no python executable." >&2
-echo "Fix: rm -rf $venv and rerun" >&2
+# Both messages name the thing to run next, and which of the two failures this
+# was: nothing compatible exists, or something does and could not be installed.
+if [ -z "$usables" ]; then
+    echo "szsdlc: no working Python 3.12+ found." >&2
+    echo "Tried \$VIRTUAL_ENV, .venv up the tree, every python3.N on PATH, python3, python, py, uv." >&2
+    echo "Fix: install Python 3.12 or later, then rerun" >&2
+else
+    first="$(printf '%s' "$usables" | head -1)"
+    echo "szsdlc: found Python 3.12+ but could not build a virtualenv at $venv." >&2
+    echo "Fix: $first -m pip install $plugin_root" >&2
+    echo "  (on Debian or Ubuntu, apt install python3-venv first)" >&2
+fi
 exit 5

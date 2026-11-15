@@ -100,7 +100,11 @@ entity_types:
     prefix: EPIC
     title: Epic
     dir: epics
-    layout: directory
+    # A bundle, and nothing beside it. An epic's substance is its children and
+    # the progress rolled up from them, and both are read off the graph rather
+    # than written here — so there is no artifact left for it to carry and a
+    # directory would cost a level of nesting to hold a single entity.md.
+    layout: file
     intake: false
     actionable: false
     tracks_progress: false
@@ -111,8 +115,9 @@ entity_types:
       opened:
         type: date
         required: true
-    artifacts: [journal.md]
-    journal_artifact: journal.md
+    # No journal. An epic is a grouping whose narrative lives in its children;
+    # a log on the bundle duplicates theirs and goes stale first. `szsdlc log`
+    # refuses a type with no journal_artifact, which is the intended answer.
     workflow:
       initial: open
       states:
@@ -260,7 +265,10 @@ entity_types:
     prefix: ADR
     title: Decision
     dir: decisions
-    layout: directory
+    # The record *is* the document: context, options and consequence all sit in
+    # the one file, and nothing accumulates beside it afterwards. A decision
+    # that needs an attachment is citing evidence that belongs in a spike.
+    layout: file
     intake: false
     actionable: false
     tracks_progress: false
@@ -302,8 +310,14 @@ relations:
     source_types: [work_item, spike, epic]
     cardinality: one
     acyclic: true
-    required_on: [work_item]
-    description: Toward what outcome this work sits. One deliberate bundle, with its own lifecycle.
+    # Required on nothing, deliberately. An epic is worth having, not worth
+    # blocking on: requiring one means every work item must be handed a bundle
+    # to belong to before it can pass validate, and epics then get invented to
+    # satisfy the check rather than because anything was actually grouped.
+    # Nothing downstream needs this populated — sequence comes from the
+    # roadmap, and traceability runs through `implements`.
+    required_on: []
+    description: Toward what outcome this work sits. One deliberate bundle, with its own lifecycle. Optional.
 
   implements:
     inverse: implemented_by
