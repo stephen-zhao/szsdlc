@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/szsdlc hook session-start",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/szsdlc hook session-start",
             "timeout": 20
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/szsdlc hook pre-edit",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/szsdlc hook pre-edit",
             "timeout": 20
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/szsdlc hook post-edit",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/szsdlc hook post-edit",
             "timeout": 30
           }
         ]
@@ -40,8 +40,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/szsdlc hook stop",
-            "timeout": 30
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/szsdlc hook stop",
+            "timeout": 60
           }
         ]
       }

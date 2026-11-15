@@ -1,16 +1,9 @@
 # szsdlc built-in defaults — data, not code.
 #
-# Every entity type, relation, workflow and horizon below is a *replaceable
-# default*. A project's .szsdlc/config.yml is deep-merged over this file, so it
-# may adjust one flag, delete a type it does not want (`spike: null`), or
-# replace a whole section outright (`entity_types: {_replace: true, ...}`).
-# Nothing in the framework's code names any of these types; behaviour follows
-# the capability flags.
-#
-# The six shipped types are generic SDLC concepts. Note that `requirement` and
-# `decision` land on identical flags — both are long-lived definitions rather
-# than work — which is the sign the flags carve at the joint rather than
-# encoding type names.
+# A project's .szsdlc/config.yml is deep-merged over this file: adjust one
+# flag, delete a type (`spike: null`), or replace a section outright
+# (`entity_types: {_replace: true, ...}`). No framework code names any type;
+# behaviour follows the capability flags.
 
 version: 1
 
@@ -24,9 +17,6 @@ paths:
   entity_file: entity.md
 
 id:
-  # Opaque by design: a type prefix and a sequential number, and nothing else.
-  # Anything embedded that can change or be got wrong invalidates every
-  # published reference to it.
   pattern: "{prefix}-{number}"
   key: null
   padding: 4
@@ -54,14 +44,6 @@ entity_types:
     prefix: IDEA
     title: Idea
     dir: ideas
-    # A one-line thought should not cost a directory, and ten of them should
-    # not cost ten files. Capture arrives in bursts — a dump of half-formed
-    # things is the commonest intake there is — so a thought arrives as a
-    # section of one shared file, and capturing appends to it.
-    #
-    # `dynamic` is the other half: an idea that grows earns its own file, and
-    # one that acquires something to keep beside it earns a directory. Nothing
-    # is decided at capture time, which is the same reason intake is typeless.
     layout: dynamic
     intake: true
     actionable: false
@@ -92,15 +74,12 @@ entity_types:
           terminal: true
           abandoned: true
           description: Deliberately killed, with a reason, so the same thought arriving twice is recognisable.
-    # No `derived` block: the entities spawned from an idea already arrive as
-    # `refined_into`, the generated inverse of `refined_from`. Declaring a
-    # derived attribute of the same name would state one fact twice.
 
   epic:
     prefix: EPIC
     title: Epic
     dir: epics
-    layout: directory
+    layout: file
     intake: false
     actionable: false
     tracks_progress: false
@@ -111,8 +90,6 @@ entity_types:
       opened:
         type: date
         required: true
-    artifacts: [journal.md]
-    journal_artifact: journal.md
     workflow:
       initial: open
       states:
@@ -123,8 +100,6 @@ entity_types:
         closed:
           terminal: true
     derived:
-      # Aggregate, never stored — an epic must not hold a percentage that can
-      # go stale the moment a child moves.
       progress:
         kind: aggregate_progress
         relation: parent
@@ -134,14 +109,8 @@ entity_types:
     prefix: REQ
     title: Requirement
     dir: requirements
-    # A statement, and nothing beside it. A requirement carries no artifacts —
-    # coverage and delivery are read off the graph, never written here — so a
-    # directory would hold one file and cost a level of nesting to say so.
     layout: file
     intake: false
-    # A requirement is a definition, not a unit of work: no progress states,
-    # never in `next`, never a parent, never scheduled, never archived. Its
-    # lifecycle describes the validity of the *statement*, never its delivery.
     actionable: false
     tracks_progress: false
     can_parent: false
@@ -165,9 +134,6 @@ entity_types:
         retired:
           terminal: true
     derived:
-      # Coverage and delivery are computed from traceability links rather than
-      # stored, so nothing is written to a requirement when work against it
-      # starts or finishes.
       covered:
         kind: has_incoming
         relation: implements
@@ -187,9 +153,6 @@ entity_types:
     tracks_progress: false
     can_parent: false
     schedulable: true
-    # Sits on the work side: an answered spike ages out with completed work.
-    # Promoting this to true is a one-line change if findings turn out to be
-    # long-lived reference material in practice.
     persistent: false
     fields:
       opened:
@@ -260,7 +223,7 @@ entity_types:
     prefix: ADR
     title: Decision
     dir: decisions
-    layout: directory
+    layout: file
     intake: false
     actionable: false
     tracks_progress: false
@@ -286,24 +249,18 @@ entity_types:
 
 # ---------------------------------------------------------------------------
 # Relations
-#
-# Authored on one side only; every inverse below is generated at render time
-# and never written to a file. `source_types` doubles as the per-type list of
-# allowed relations — stated once, here.
 # ---------------------------------------------------------------------------
 
 relations:
 
   parent:
     inverse: children
-    # target_types omitted on purpose: the legal targets are exactly the types
-    # flagged can_parent, and that fact already has a home.
     target_types: null
     source_types: [work_item, spike, epic]
     cardinality: one
     acyclic: true
-    required_on: [work_item]
-    description: Toward what outcome this work sits. One deliberate bundle, with its own lifecycle.
+    required_on: []
+    description: Toward what outcome this work sits. One deliberate bundle, with its own lifecycle. Optional.
 
   implements:
     inverse: implemented_by
@@ -344,18 +301,13 @@ relations:
 
 # ---------------------------------------------------------------------------
 # Roadmaps
-#
-# Placement is a fact about a *set*, not about a member, so it lives here and
-# not as a field on every entity. Rescheduling then edits one file, not N.
 # ---------------------------------------------------------------------------
 
 roadmaps:
   roadmap:
     title: Roadmap
     horizons: [now, next, later]
-    # type -> the status at which an entity of that type must appear on this
-    # roadmap. `validate` enforces exactly once, nothing dangling, and no
-    # non-schedulable type leaking in.
+    # type -> the status at which it must appear on this roadmap.
     requires_scheduling:
       work_item: ready
       spike: open
@@ -363,10 +315,6 @@ roadmaps:
 
 # ---------------------------------------------------------------------------
 # Views — generated markdown, written only by `sync`.
-#
-# "List my ideas", "list all requirements" and "list all epics" are genuinely
-# different questions, so they get different views rather than one index with
-# filters.
 # ---------------------------------------------------------------------------
 
 views:
@@ -403,5 +351,4 @@ views:
     template: views/decisions.md.j2
     output: decisions.md
 
-# Nothing project-specific ships built in.
 records: {}
