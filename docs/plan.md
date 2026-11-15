@@ -1344,10 +1344,11 @@ why.
 >   tool` build one venv per tool, pre-commit resolves `language_version` in
 >   the framework, and `py` (PEP 397, python-launcher on Unix) is a separate
 >   binary. The package's only say is `requires-python`.
-> - **The floor is asserted, not deduplicated.** It is stated in
->   `requires-python` and quoted twice in each launcher, because parsing TOML
->   in POSIX `sh` to avoid that is worse than a test that fails when the three
->   drift apart. That test is new.
+> - **The floor is stated once per launcher**, in `minimum_python_version`,
+>   and a new test ties it to `requires-python`. Reading pyproject.toml from
+>   `sh` would remove even that, but an empty parse would reject every
+>   interpreter on a healthy box, so the cross-file constraint is documented
+>   in one line and enforced by the test instead.
 > - **An active venv is preferred over a newer `PATH` python**, following uv
 >   and the Unix `py` launcher: if a developer picked a Python for this tree,
 >   that is the one whose version and packages they maintain. Previously a venv
@@ -1367,7 +1368,7 @@ runs on every turn and cannot be turned off is one people uninstall.
 
 - [x] **Step 1:** `Stop` syncs, then validates, in the one handler. Two entries under the event would be two processes and two full loads of the project.
 - [x] **Step 2:** `sync_on_turn_end` declared in `plugin.json` under `userConfig`, read from `CLAUDE_PLUGIN_OPTION_SYNC_ON_TURN_END`, defaulting to on.
-- [x] **Step 3:** `render.sync` grows `keep_hand_edited`, and the turn-end sync passes it.
+- [x] **Step 3:** `render.sync` grows `should_keep_hand_edited`, and the turn-end sync passes it.
 - [x] **Step 4:** `Stop`'s timeout raised to 60s, now that it does both.
 
 > **Decisions taken while implementing:**
@@ -1379,8 +1380,8 @@ runs on every turn and cannot be turned off is one people uninstall.
 > - **An unprompted sync must not destroy work.** A hand-edited generated file
 >   is a blocking error, and the evidence for it *is* the file: syncing over it
 >   would have taken the error quiet along with whatever somebody typed. So
->   `keep_hand_edited` regenerates around it and leaves both the text and the
->   complaint, while an explicit `szsdlc sync` still overwrites. This was found
+>   `should_keep_hand_edited` regenerates around it and leaves both the text
+>   and the complaint, while an explicit `szsdlc sync` still overwrites. Found
 >   by reading `validate.stale_generated` rather than by a failing test, and
 >   the test that now covers it fails without the flag.
 > - **The setting is a plugin setting, not a config.yml key.** config.yml is

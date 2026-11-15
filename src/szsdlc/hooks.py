@@ -2,8 +2,8 @@
 
 Hooks are what make the deterministic operations automatic and the gates
 non-optional. The division of labour matters: `sync` runs constantly and
-tolerantly — on every write during a turn, and again as the turn ends — while
-`validate` runs once, at the end, and strictly.
+tolerantly — on every write, and again as the turn ends — while `validate` runs
+once, at the end, and strictly.
 
 Every handler is a **silent no-op outside a szsdlc project**, so the plugin is
 harmless installed globally. That is not politeness — a hook that errors in a
@@ -24,28 +24,26 @@ from .errors import EXIT_OK
 #: the user what stderr said".
 EXIT_BLOCK = 2
 
-#: How a `userConfig` boolean arrives. Claude Code documents the variable name
-#: — `CLAUDE_PLUGIN_OPTION_<KEY>`, with the key uppercased — but not how a
-#: boolean value is spelled on the way through, so read every spelling it could
-#: plausibly use rather than guessing one and silently taking the default
-#: forever after.
+#: Claude Code documents the variable name but not how a boolean is spelled on
+#: the way through, so every plausible spelling is accepted.
 TRUTHY = {"1", "true", "yes", "on"}
 FALSEY = {"0", "false", "no", "off"}
 
 
 def option(key: str, default: bool) -> bool:
-    """A plugin setting, as Claude Code hands it to a hook process.
+    """Read a plugin setting from the environment Claude Code provides.
 
-    These are declared in `.claude-plugin/plugin.json` under `userConfig` and
-    edited with `/config`. They are deliberately *not* in `.szsdlc/config.yml`,
-    and the split is the whole point: config.yml is the project's model, read by
-    anything that uses szsdlc at all, while "sync when a Claude Code turn ends"
-    is a fact about Claude Code and means nothing to the CLI, to CI, or to the
-    next editor to grow a plugin. A setting kept on the wrong side of that line
-    is one every other front end has to know to ignore.
+    Settings are declared under `userConfig` in `.claude-plugin/plugin.json`,
+    not in `.szsdlc/config.yml`, which is also read by the CLI and by CI.
 
-    An unrecognised or empty value is the declared default rather than an error:
-    a hook is not the place to litigate a typo in a settings dialog.
+    Args:
+        key: The `userConfig` key. Uppercased to form the variable name
+            `CLAUDE_PLUGIN_OPTION_<KEY>`.
+        default: Returned when the variable is unset, empty, or holds a value
+            matching neither TRUTHY nor FALSEY.
+
+    Returns:
+        The configured value, or `default`.
     """
     raw = os.environ.get(f"CLAUDE_PLUGIN_OPTION_{key.upper()}")
     if raw is None:
@@ -245,17 +243,18 @@ def _is_source(session, path: Path) -> bool:
 
 
 def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
-    """The end of a turn: regenerate, then enforce — strictly, once.
+    """Sync, then validate, at the end of a turn.
 
-    Both halves run in this one handler rather than as two `Stop` entries in
-    hooks.json, because each entry is its own process and its own full load of
-    the project, and there is no reason to pay for the graph twice at the end of
-    every turn.
+    One handler rather than two `Stop` entries, which would each load the
+    project. Sync runs first so validate judges the state the turn leaves
+    behind rather than naming a fix that was about to happen anyway.
 
-    The order is not arbitrary. `sync` first, so the check judges the state the
-    turn actually leaves behind. Validating first reports every view the turn
-    touched as out of date and names a fix — `szsdlc sync` — that was about to
-    happen anyway, which is the most irritating kind of true statement.
+    Args:
+        payload: The hook's JSON input; `cwd` is read from it when not passed.
+        cwd: Project directory to load, overriding the payload.
+
+    Returns:
+        EXIT_OK, or EXIT_BLOCK when validate found errors.
     """
     from . import render as render_module
     from . import validate as validate_module
@@ -269,16 +268,10 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
 
     if option("sync_on_turn_end", default=True):
         try:
-            # Tolerant and silent, exactly as on PostToolUse: a redraw must
-            # never be the thing that ends a turn.
-            #
-            # `keep_hand_edited` is what makes an unprompted sync safe. A
-            # hand-edited generated file is a blocking error two lines below,
-            # and the evidence for it is the file itself — overwrite it here
-            # and the error disappears along with whatever somebody typed.
-            # Regenerating around it leaves both the text and the complaint.
+            # A hand-edited generated file is a blocking error below, and the
+            # evidence for it is the file itself.
             render_module.sync(session.config, session.store, graph,
-                               keep_hand_edited=True)
+                               should_keep_hand_edited=True)
         except Exception:  # pragma: no cover - never break a turn over a redraw
             pass
 

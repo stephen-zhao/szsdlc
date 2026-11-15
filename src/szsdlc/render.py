@@ -67,13 +67,11 @@ class Rendered:
             return False
         return self.path.read_bytes().decode("utf-8", "replace") == self.content
 
-    def was_hand_edited(self) -> bool:
-        """Has somebody typed into the file this would overwrite?
+    def has_been_hand_edited(self) -> bool:
+        """Whether the file this would overwrite no longer matches its own hash.
 
-        Lives here beside `matches_disk` rather than next to the `hand_edited`
-        predicate it defers to, because the question is only answerable against
-        the disk — and because the one caller that needs it is deciding whether
-        it is about to destroy someone's work.
+        Returns:
+            False when the file does not exist yet.
         """
         if not self.path.is_file():
             return False
@@ -280,19 +278,26 @@ def compare(rendered: list[Rendered]) -> list[Rendered]:
 
 def sync(config: Config, store: EntityStore, graph: Graph,
          roadmaps: dict[str, Roadmap] | None = None, *,
-         keep_hand_edited: bool = False) -> list[Rendered]:
+         should_keep_hand_edited: bool = False) -> list[Rendered]:
     """Regenerate everything, writing only what changed. Never validates.
 
-    `keep_hand_edited` leaves alone any file somebody has typed into. Typed-in
-    text cannot be recovered once it has been overwritten, so a sync nobody
-    asked for — the one on a turn end — passes this and leaves the file for
-    `validate` to report as an error. Typing `szsdlc sync` is a person saying
-    overwrite it, and still does.
+    Args:
+        config: The loaded project config.
+        store: Entities to render from.
+        graph: Relations and derived attributes to render from.
+        roadmaps: Loaded roadmaps; loaded from disk when None.
+        should_keep_hand_edited: Skip files whose body no longer matches their
+            own hash. Set by the turn-end hook, which nobody asked for and
+            which cannot recover text it overwrites; `szsdlc sync` leaves it
+            unset and overwrites.
+
+    Returns:
+        The files actually written.
     """
     renderer = Renderer(config, store, graph, roadmaps)
     items = renderer.all()
-    if keep_hand_edited:
-        items = [item for item in items if not item.was_hand_edited()]
+    if should_keep_hand_edited:
+        items = [item for item in items if not item.has_been_hand_edited()]
     changed = compare(items)
     for item in changed:
         item.write()

@@ -138,84 +138,65 @@ def test_the_launchers_agree_on_resolution_order():
         assert "-m szsdlc.cli" in text
 
 
-def test_both_launchers_prefer_an_interpreter_somebody_already_chose():
-    """An active virtualenv, then a `.venv` beside the project and above it.
+#: Each source the launchers are documented to consult, and the marker that
+#: proves it. Shared so neither launcher can quietly drop one.
+CANDIDATE_SOURCES = [
+    ("an active virtualenv", "VIRTUAL_ENV", "VIRTUAL_ENV"),
+    ("a .venv up the tree", ".venv", ".venv"),
+    ("the project directory", "CLAUDE_PROJECT_DIR", "CLAUDE_PROJECT_DIR"),
+    ("every version, not one bare name", '"$path_dir"/python3.*', "py --list"),
+    ("newest version first", "sort -k1,1nr", "py --list"),
+    ("a uv-managed interpreter",
+     'uv python find ">=$minimum_python_version"',
+     'uv python find ">=%MINIMUM_PYTHON_VERSION%"'),
+    ("the checkout, when no venv can be built",
+     "import yaml, jinja2, jsonschema", "import yaml, jinja2, jsonschema"),
+]
 
-    uv and the Unix `py` launcher both consult these ahead of PATH, for the
-    same reason: if a developer has picked a Python for this tree, that is the
-    one whose version and packages they actually maintain. The old launcher saw
-    a venv only when szsdlc happened to be installed into it.
-    """
-    for name, text in launchers().items():
-        assert "VIRTUAL_ENV" in text, name
-        assert ".venv" in text, name
-        assert "CLAUDE_PROJECT_DIR" in text, name
+
+@pytest.mark.parametrize("source, posix_marker, windows_marker", CANDIDATE_SOURCES,
+                         ids=[source for source, _, _ in CANDIDATE_SOURCES])
+def test_both_launchers_consult_every_documented_source(source, posix_marker,
+                                                        windows_marker):
+    """The bug this fixes: `python3` is 3.9 on many boxes that also ship
+    python3.12, and three bare names never saw it."""
+    assert posix_marker in launchers()["szsdlc"], source
+    assert windows_marker in launchers()["szsdlc.cmd"], source
 
 
-def test_both_launchers_consider_every_version_not_one_bare_name():
-    """The bug this fixes: `python3` is 3.9 on a great many boxes that also
-    ship python3.12, and asking three bare names for one answer each reported
-    "no working Python 3.12+" with a usable one sitting right there on PATH.
-
-    POSIX scans PATH for every `python3.N`, newest first, which is the Unix
-    `py` launcher's own rule; Windows asks `py --list`, which already reports
-    newest first.
-    """
+def test_both_launchers_leave_the_ambiguous_names_for_last():
+    """Whatever a bare name points at, a versioned one said it better — and on
+    Windows `python` is frequently a Store stub."""
     posix, windows = launchers()["szsdlc"], launchers()["szsdlc.cmd"]
-    assert '"$dir"/python3.*' in posix
-    assert "sort -k1,1nr" in posix          # newest minor version first
-    assert "py --list" in windows
-
-    # The ambiguous bare names go last: whatever they point at, a versioned
-    # name said it better, and on Windows `python` is frequently a Store stub.
-    assert posix.index('"$dir"/python3.*') < posix.index("printf '%s\\n' python3 python py")
+    assert posix.index('"$path_dir"/python3.*') < posix.index("printf '%s\\n' python3 python py")
     assert windows.index("py --list") < windows.index("echo python>>")
 
 
 def test_both_launchers_keep_trying_after_a_compatible_python_fails():
-    """Passing the version probe does not mean `-m venv` will work: Debian and
-    Ubuntu split `ensurepip` into python3-venv, so a perfectly good 3.12 can
-    fail to make one. Giving up on the box at that point is what made this a
-    loop rather than a single choice.
-    """
+    """Passing the probe does not mean `-m venv` works: Debian packages
+    `ensurepip` separately."""
     for name, text in launchers().items():
-        assert "python3-venv" in text or "could not build a virtualenv" in text, name
-    # And when no venv can be built anywhere, run from the checkout instead.
-    for name, text in launchers().items():
-        assert "import yaml, jinja2, jsonschema" in text, name
-        assert "PYTHONPATH" in text, name
-
-
-def test_both_launchers_ask_uv_before_giving_up():
-    """Somebody who installs Python only through uv has nothing on PATH that
-    matches. `uv python find` is a lookup and never downloads, so this stays a
-    search rather than a hook that quietly reaches for the network.
-    """
-    for name, text in launchers().items():
-        assert 'uv python find ">=3.12"' in text, name
+        assert "could not build a virtualenv" in text, name
 
 
 def test_the_launchers_floor_is_the_one_the_package_declares():
-    """`requires-python` is the source of truth and the launchers quote it.
-
-    Three copies of "3.12" is two too many to leave unchecked: a floor raised
-    in pyproject.toml and not here would have the launchers build a venv the
-    package then refuses to install into, and the hook would fail with pip's
-    error rather than the launcher's.
-    """
+    """A floor raised in pyproject.toml and not here would have the launchers
+    build a venv the package then refuses to install into, and the hook would
+    fail with pip's error rather than the launcher's."""
     import re
     import tomllib
 
     pyproject = tomllib.loads((REPO / "pyproject.toml").read_text("utf-8"))
     declared = pyproject["project"]["requires-python"]
-    floor = re.fullmatch(r">=\s*(\d+)\.(\d+)", declared.strip())
+    floor = re.fullmatch(r">=\s*(\d+\.\d+)", declared.strip())
     assert floor, f"requires-python is {declared!r}; this test assumes `>=X.Y`"
-    major, minor = floor.group(1), floor.group(2)
 
+    patterns = {"szsdlc": r'minimum_python_version="([^"]+)"',
+                "szsdlc.cmd": r'MINIMUM_PYTHON_VERSION=([^"]+)"'}
     for name, text in launchers().items():
-        assert f"sys.version_info >= ({major}, {minor})" in text, name
-        assert f"no working Python {major}.{minor}+" in text, name
-        assert f'uv python find ">={major}.{minor}"' in text, name
+        stated = re.search(patterns[name], text)
+        assert stated, f"{name} states no minimum version"
+        assert stated.group(1) == floor.group(1), name
 
 
 def test_both_launchers_probe_interpreters_rather_than_merely_finding_them():
@@ -223,25 +204,21 @@ def test_both_launchers_probe_interpreters_rather_than_merely_finding_them():
     stub: on PATH, at the front of it, and unable to run anything. Taking the
     first name that exists picks the stub every time and the hook silently
     does nothing — which is what the first version of this launcher did.
-
-    Running each candidate also enforces the 3.12 floor for free.
     """
-    for name in ("szsdlc", "szsdlc.cmd"):
-        text = (REPO / "bin" / name).read_text("utf-8")
-        assert "sys.version_info >= (3, 12)" in text, name
-        assert "no working Python 3.12+" in text, name
+    posix, windows = launchers()["szsdlc"], launchers()["szsdlc.cmd"]
+    assert 'sys.version_info >=' in posix and '-c "$version_probe"' in posix
+    assert 'sys.version_info >=' in windows and '-c "%VERSION_PROBE%"' in windows
+    for name, text in launchers().items():
+        assert "no working Python" in text, name
 
 
 @pytest.mark.skipif(os.name == "nt", reason="exercises the POSIX launcher")
 def test_the_posix_launcher_picks_a_versioned_python_over_an_old_default(tmp_path):
     """The regression, end to end, on a PATH built to contain it.
 
-    `python3` fails the floor however it is asked; `python3.99` passes and then
-    refuses to build a venv or to import the dependencies. So the launcher gets
-    as far as *choosing* it and reports that it could not install — which is a
-    cheap way to observe which interpreter it chose without waiting for a real
-    pip install. The old launcher never saw python3.99 at all and said there
-    was no working Python on the box.
+    `python3` fails the floor; `python3.99` passes, then refuses to build a
+    venv or import the dependencies. Naming it in the failure is a cheap way
+    to observe which interpreter was chosen without a real pip install.
     """
     tools = ["sh", "sed", "awk", "sort", "cut", "head", "dirname", "rm", "mkdir", "cat"]
     sandbox = tmp_path / "bin"
@@ -495,12 +472,8 @@ def drift(seeded) -> Path:
 
 
 def test_stop_syncs_before_it_validates(seeded, capsys):
-    """The order is the whole point of doing both in one handler.
-
-    Validating first finds every view the turn touched out of date and blocks
-    the turn naming a fix — `szsdlc sync` — that was about to happen anyway.
-    Syncing first means the check judges the state the turn actually leaves.
-    """
+    """Validating first would block the turn naming a fix that was about to
+    happen anyway."""
     board = drift(seeded)
     assert "Renamed in the turn" not in board.read_text("utf-8")
 
@@ -513,12 +486,7 @@ def test_stop_syncs_before_it_validates(seeded, capsys):
 
 
 def test_the_turn_end_sync_can_be_switched_off(seeded, capsys, monkeypatch):
-    """Off, the handler is exactly what it was before: validate, strictly.
-
-    The setting is a plugin setting rather than anything in config.yml, so it
-    arrives the way Claude Code passes those — an environment variable on the
-    hook process.
-    """
+    """Off, the handler is what it was before: validate, strictly."""
     monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_SYNC_ON_TURN_END", "false")
     board = drift(seeded)
 
@@ -531,14 +499,8 @@ def test_the_turn_end_sync_can_be_switched_off(seeded, capsys, monkeypatch):
 
 
 def test_the_turn_end_sync_refuses_to_overwrite_a_hand_edited_view(seeded, capsys):
-    """An unprompted sync must not be how somebody's text disappears.
-
-    A hand-edited generated file is a blocking error, and the evidence for it
-    *is* the file: overwrite it here and the error goes quiet along with
-    whatever was typed. So the turn-end sync regenerates around it and leaves
-    both the text and the complaint — while `szsdlc sync`, which is a person
-    saying overwrite it, still does.
-    """
+    """A hand-edited generated file is a blocking error whose evidence is the
+    file: overwriting it here takes the error quiet with it."""
     board = seeded.views_dir / "board.md"
     board.write_text(board.read_text("utf-8") + "\nA note somebody typed here.\n",
                      encoding="utf-8")
@@ -571,9 +533,8 @@ def test_an_explicit_sync_still_overwrites_a_hand_edited_view(seeded, capsys):
 ])
 def test_a_plugin_setting_is_read_in_every_spelling_it_could_arrive_in(
         monkeypatch, raw, expected):
-    """Claude Code documents the variable name but not how a boolean is spelled
-    on the way through, so guessing one spelling would mean silently taking the
-    default forever on a version that picked another."""
+    """Claude Code documents the variable name but not the spelling of a
+    boolean, so guessing one would silently take the default forever."""
     monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_SYNC_ON_TURN_END", raw)
     assert hooks.option("sync_on_turn_end", default=not expected) is expected
 
@@ -586,11 +547,9 @@ def test_an_unset_or_unrecognised_setting_is_the_declared_default(monkeypatch, r
 
 
 def test_the_setting_is_declared_in_the_manifest_so_config_can_show_it():
-    """An undeclared setting is one nobody can find: `/config` lists what the
-    manifest declares, and a hook reading an env var nothing writes is a flag
-    with no switch. Declared `boolean` with a default, and no `options` field —
-    one of those would pin the whole plugin to Claude Code v2.1.271 or later.
-    """
+    """`/config` lists what the manifest declares, so an undeclared setting is
+    a flag with no switch. No `options` field: that would pin the plugin to
+    Claude Code v2.1.271 or later."""
     manifest = json.loads((REPO / ".claude-plugin" / "plugin.json").read_text("utf-8"))
     declared = manifest["userConfig"]["sync_on_turn_end"]
     assert declared["type"] == "boolean"
@@ -601,12 +560,8 @@ def test_the_setting_is_declared_in_the_manifest_so_config_can_show_it():
 
 
 def test_nothing_about_this_setting_leaks_into_the_project_config():
-    """It is a fact about Claude Code, not about the project.
-
-    config.yml is read by the CLI, by CI and by whatever front end comes next;
-    a Claude-Code-only flag parked in it is one they all have to know to
-    ignore. The plugin layer owns it, and that boundary is worth a test.
-    """
+    """config.yml is read by the CLI and by CI, which have no turns to sync
+    at. The plugin layer owns this setting."""
     schema = (REPO / "src" / "szsdlc" / "schemas" / "config.schema.json").read_text("utf-8")
     defaults = (REPO / "src" / "szsdlc" / "defaults" / "config.yml").read_text("utf-8")
     for text in (schema, defaults):
@@ -674,7 +629,8 @@ def test_both_launchers_refresh_a_venv_left_from_an_earlier_release():
     a data directory nobody knows exists. The stamp records which release the
     venv holds; a mismatch reinstalls over it.
     """
-    for name, stamp in (("szsdlc", '"$stamp"'), ("szsdlc.cmd", '"%STAMP%"')):
+    for name, stamp in (("szsdlc", '"$stamp_file_path"'),
+                        ("szsdlc.cmd", '"%STAMP_FILE_PATH%"')):
         text = (REPO / "bin" / name).read_text("utf-8")
         assert "installed-from" in text, name
         assert "--upgrade" in text, name
