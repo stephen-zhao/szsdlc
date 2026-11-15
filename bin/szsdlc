@@ -1,19 +1,14 @@
 #!/bin/sh
 # szsdlc launcher — POSIX sh, for WSL, Linux, macOS and Git Bash on Windows.
 #
-# Hooks invoke this on every file write and every turn end, so it has to
-# resolve an interpreter without asking anyone anything. The order is:
-#
-#   1. an installed `szsdlc` already on PATH — a developer's own venv wins;
-#   2. a venv this launcher previously created, refreshed when it is stale;
-#   3. create that venv from the plugin source, once, on first run.
+# Resolution order, and why it is here rather than in the package:
+# docs/reference.md, "Resolving an interpreter".
 #
 # Failure is silent-ish by design: a hook that dies noisily in a project which
 # does not even use szsdlc is worse than one that does nothing.
 
 set -u
 
-# Guard against resolving to ourselves if this directory is on PATH.
 if [ "${SZSDLC_LAUNCHER:-}" = "1" ]; then
     echo "szsdlc: launcher recursion; is bin/ on PATH?" >&2
     exit 5
@@ -21,99 +16,156 @@ fi
 SZSDLC_LAUNCHER=1
 export SZSDLC_LAUNCHER
 
-# 1. An installed console script — but never this launcher itself.
-#
-# The plugin puts this directory on PATH, so a bare `command -v szsdlc` finds
-# *us*, execs us, and the recursion guard above fires on every hook invocation.
-# Compare directories rather than exact paths so a sibling `szsdlc.exe` in this
-# same bin/ is excluded too.
-self_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-found="$(command -v szsdlc 2>/dev/null || true)"
-if [ -n "$found" ] && [ -x "$found" ]; then
-    found_dir="$(CDPATH= cd -- "$(dirname -- "$found")" 2>/dev/null && pwd || true)"
-    if [ "$found_dir" != "$self_dir" ]; then
-        exec "$found" "$@"
+# 1. An installed console script. Compared by directory, not by path, because
+#    this bin/ is on PATH: a bare `command -v szsdlc` finds us and execs us.
+launcher_dir_path="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+installed_script_path="$(command -v szsdlc 2>/dev/null || true)"
+if [ -n "$installed_script_path" ] && [ -x "$installed_script_path" ]; then
+    installed_script_dir_path="$(CDPATH= cd -- "$(dirname -- "$installed_script_path")" \
+        2>/dev/null && pwd || true)"
+    if [ "$installed_script_dir_path" != "$launcher_dir_path" ]; then
+        exec "$installed_script_path" "$@"
     fi
 fi
 
-plugin_root="${CLAUDE_PLUGIN_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}"
-data_dir="${CLAUDE_PLUGIN_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/szsdlc}"
-venv="$data_dir/venv"
-stamp="$data_dir/installed-from"
+plugin_root_path="${CLAUDE_PLUGIN_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}"
+data_dir_path="${CLAUDE_PLUGIN_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/szsdlc}"
+venv_path="$data_dir_path/venv"
+stamp_file_path="$data_dir_path/installed-from"
 
-# What the venv is supposed to contain. Claude Code installs each release into
-# its own cache directory and leaves the old ones in place, so the path alone
-# catches an update; the version also catches a checkout updated in place.
-release=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-    "$plugin_root/.claude-plugin/plugin.json" 2>/dev/null | head -1)
-want="$plugin_root@$release"
+release_version=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    "$plugin_root_path/.claude-plugin/plugin.json" 2>/dev/null | head -1)
+expected_stamp="$plugin_root_path@$release_version"
 
-# 2. A venv this launcher built earlier — but only if it holds *this* release.
-#
-# Without the check the launcher execs whichever venv it built first, forever:
-# `/plugin update` writes new code to disk that nothing ever runs, and the fix
-# is an `rm -rf` nobody knows to perform.
-for candidate in "$venv/bin/python" "$venv/Scripts/python.exe"; do
-    if [ -x "$candidate" ]; then
-        if [ "$(cat "$stamp" 2>/dev/null || true)" != "$want" ]; then
-            # Install over the venv rather than rebuilding it: the interpreter
-            # is already there and pip replaces the package. Stamped only on
-            # success, so a broken pip keeps retrying and keeps saying so
-            # rather than silently pinning the caller to old code.
-            if "$candidate" -m pip install --quiet --disable-pip-version-check \
-                    --upgrade "$plugin_root" >/dev/null 2>&1; then
-                printf '%s\n' "$want" > "$stamp" 2>/dev/null || true
+# 2. A venv built earlier, reinstalled over when it holds an older release:
+#    Claude Code installs each release beside the last, so without the stamp
+#    `/plugin update` writes code that nothing ever runs.
+for venv_python_path in "$venv_path/bin/python" "$venv_path/Scripts/python.exe"; do
+    if [ -x "$venv_python_path" ]; then
+        if [ "$(cat "$stamp_file_path" 2>/dev/null || true)" != "$expected_stamp" ]; then
+            if "$venv_python_path" -m pip install --quiet --disable-pip-version-check \
+                    --upgrade "$plugin_root_path" >/dev/null 2>&1; then
+                printf '%s\n' "$expected_stamp" > "$stamp_file_path" 2>/dev/null || true
             else
-                echo "szsdlc: could not refresh $venv to $release; running what is there." >&2
-                echo "Fix: $candidate -m pip install --upgrade $plugin_root" >&2
+                echo "szsdlc: could not refresh $venv_path to $release_version; running what is there." >&2
+                echo "Fix: $venv_python_path -m pip install --upgrade $plugin_root_path" >&2
             fi
         fi
-        exec "$candidate" -m szsdlc.cli "$@"
+        exec "$venv_python_path" -m szsdlc.cli "$@"
     fi
 done
 
-# 3. First run: build the venv.
+# 3. First run: build that venv, with the first interpreter that can.
 #
-# Candidates are *probed*, not merely found. Under Git Bash on Windows,
-# `python3` resolves to the Microsoft Store stub in WindowsApps — present on
-# PATH, on the front of it, and unable to run anything. Taking the first name
-# that exists picks the stub every time and the hook silently does nothing.
-# Running each candidate also enforces the 3.12 floor for free.
-probe='import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)'
-interpreter=""
-for candidate in python3 python py; do
-    command -v "$candidate" >/dev/null 2>&1 || continue
-    if "$candidate" -c "$probe" >/dev/null 2>&1; then
-        interpreter="$candidate"
-        break
-    fi
-done
-if [ -z "$interpreter" ]; then
-    echo "szsdlc: no working Python 3.12+ found (tried python3, python, py)." >&2
-    echo "Fix: install Python 3.12 or later and rerun" >&2
-    exit 5
-fi
+# Must agree with `requires-python` in pyproject.toml; tests/test_hooks.py
+# fails if they drift apart.
+minimum_python_version="3.12"
+version_probe="import sys; sys.exit(0 if sys.version_info >= \
+tuple(map(int, '$minimum_python_version'.split('.'))) else 1)"
 
-mkdir -p "$data_dir" || exit 5
-"$interpreter" -m venv "$venv" >/dev/null 2>&1 || {
-    echo "szsdlc: could not create a virtualenv at $venv." >&2
-    echo "Fix: pip install $plugin_root" >&2
-    exit 5
+# Candidates are probed by running them: on Windows `python3` is frequently the
+# Microsoft Store stub, which is on PATH and cannot run anything.
+is_compatible_python() {
+    [ -n "${1:-}" ] || return 1
+    "$1" -c "$version_probe" >/dev/null 2>&1
 }
 
-for candidate in "$venv/bin/python" "$venv/Scripts/python.exe"; do
-    if [ -x "$candidate" ]; then
-        "$candidate" -m pip install --quiet --disable-pip-version-check \
-            "$plugin_root" >/dev/null 2>&1 || {
-            echo "szsdlc: could not install szsdlc into $venv." >&2
-            echo "Fix: $candidate -m pip install $plugin_root" >&2
-            exit 5
-        }
-        printf '%s\n' "$want" > "$stamp" 2>/dev/null || true
-        exec "$candidate" -m szsdlc.cli "$@"
+list_candidate_pythons() {
+    if [ -n "${VIRTUAL_ENV:-}" ]; then
+        printf '%s\n' "$VIRTUAL_ENV/bin/python" "$VIRTUAL_ENV/Scripts/python.exe"
     fi
-done
 
-echo "szsdlc: virtualenv at $venv has no python executable." >&2
-echo "Fix: rm -rf $venv and rerun" >&2
+    scan_dir_path="${CLAUDE_PROJECT_DIR:-$PWD}"
+    while : ; do
+        printf '%s\n' "$scan_dir_path/.venv/bin/python" \
+                      "$scan_dir_path/.venv/Scripts/python.exe"
+        parent_dir_path="$(dirname -- "$scan_dir_path")"
+        [ "$parent_dir_path" != "$scan_dir_path" ] || break
+        scan_dir_path="$parent_dir_path"
+    done
+
+    # Every python3.N on PATH, newest N first, earliest copy of each.
+    (
+        IFS=:
+        for path_dir in $PATH; do
+            [ -n "$path_dir" ] || continue
+            for executable_path in "$path_dir"/python3.*; do
+                minor_version="${executable_path##*/python3.}"
+                case "$minor_version" in ''|*[!0-9]*) continue ;; esac
+                [ -x "$executable_path" ] \
+                    && printf '%s %s\n' "$minor_version" "$executable_path"
+            done
+        done
+    ) 2>/dev/null | awk '!seen[$1]++' | sort -k1,1nr | cut -d' ' -f2-
+
+    printf '%s\n' python3 python py
+
+    # `uv python find` is a lookup and never downloads.
+    if command -v uv >/dev/null 2>&1; then
+        uv python find ">=$minimum_python_version" 2>/dev/null | head -1
+    fi
+}
+
+# Split on newlines only, so a path containing a space survives. The loop body
+# cannot move behind a pipe: `exec` in a subshell would replace the subshell
+# and let this script carry on past it.
+saved_ifs="$IFS"
+candidate_paths="$(list_candidate_pythons)"
+usable_pythons=""
+
+IFS='
+'
+for candidate_python in $candidate_paths; do
+    IFS="$saved_ifs"
+    is_compatible_python "$candidate_python" || continue
+    usable_pythons="$usable_pythons$candidate_python
+"
+
+    mkdir -p "$data_dir_path" 2>/dev/null || true
+
+    # Compatible is not sufficient: Debian and Ubuntu package `ensurepip`
+    # separately, so `-m venv` fails on an otherwise good interpreter. Hence a
+    # loop over all of them rather than a single choice.
+    rm -rf "$venv_path" >/dev/null 2>&1 || true
+    "$candidate_python" -m venv "$venv_path" >/dev/null 2>&1 || continue
+
+    for venv_python_path in "$venv_path/bin/python" "$venv_path/Scripts/python.exe"; do
+        [ -x "$venv_python_path" ] || continue
+        "$venv_python_path" -m pip install --quiet --disable-pip-version-check \
+            "$plugin_root_path" >/dev/null 2>&1 || continue
+        printf '%s\n' "$expected_stamp" > "$stamp_file_path" 2>/dev/null || true
+        exec "$venv_python_path" -m szsdlc.cli "$@"
+    done
+    IFS='
+'
+done
+IFS="$saved_ifs"
+
+# 4. No venv anywhere. Run from the checkout if the dependencies are already
+#    importable: not hermetic, but a working hook beats an explanation.
+IFS='
+'
+for candidate_python in $usable_pythons; do
+    IFS="$saved_ifs"
+    if PYTHONPATH="$plugin_root_path/src${PYTHONPATH:+:$PYTHONPATH}" \
+            "$candidate_python" -c 'import yaml, jinja2, jsonschema' >/dev/null 2>&1; then
+        PYTHONPATH="$plugin_root_path/src${PYTHONPATH:+:$PYTHONPATH}"
+        export PYTHONPATH
+        exec "$candidate_python" -m szsdlc.cli "$@"
+    fi
+    IFS='
+'
+done
+IFS="$saved_ifs"
+
+if [ -z "$usable_pythons" ]; then
+    echo "szsdlc: no working Python $minimum_python_version+ found." >&2
+    echo "Tried \$VIRTUAL_ENV, .venv up the tree, every python3.N on PATH, python3, python, py, uv." >&2
+    echo "Fix: install Python $minimum_python_version or later, then rerun" >&2
+else
+    first_usable_python="$(printf '%s' "$usable_pythons" | head -1)"
+    echo "szsdlc: found Python $minimum_python_version+ but could not build a virtualenv at $venv_path." >&2
+    echo "Fix: $first_usable_python -m pip install $plugin_root_path" >&2
+    echo "  (on Debian or Ubuntu, apt install python3-venv first)" >&2
+fi
 exit 5

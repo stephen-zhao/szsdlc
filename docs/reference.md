@@ -130,10 +130,61 @@ The plugin wires four:
 | `SessionStart` | Prepends `szsdlc context` — a session begins knowing the state without searching for it |
 | `PreToolUse` | Blocks edits to generated files, and injects the standards governing the file being edited |
 | `PostToolUse` | Runs `sync` when an entity or roadmap file changes |
-| `Stop` | Runs `validate`, blocking on errors only |
+| `Stop` | Runs `sync`, then `validate` — blocking on errors only |
+
+`Stop` fires when Claude finishes responding — the end of a turn, and the
+closest Claude Code has to a post-turn event. Both halves run in the one
+handler because each entry under the event is its own process and its own load
+of the project.
+
+Sync runs first so `validate` judges the state the turn leaves behind rather
+than blocking on a fix that was about to happen anyway. It is also the one
+sync nobody asked for, so it leaves a hand-edited generated file alone for
+`validate` to report: overwritten text cannot be recovered, and the evidence
+for that error is the file. `szsdlc sync` still overwrites.
 
 Every hook is a silent no-op in a project without `.szsdlc/config.yml`, so the
 plugin is harmless installed globally.
+
+### Settings
+
+Declared in [`.claude-plugin/plugin.json`](../.claude-plugin/plugin.json) under
+`userConfig`, edited with `/config`, and reaching the hook process as
+`CLAUDE_PLUGIN_OPTION_<KEY>`:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `sync_on_turn_end` | `true` | Run `sync` as the turn ends, not only when a source file is written. Off, `Stop` is `validate` alone |
+
+Not `.szsdlc/config.yml` keys: that file is the project's model, read by the
+CLI and by CI, which have no turns to sync at.
+
+### Resolving an interpreter
+
+The launchers in [`bin/`](../bin) are all a hook invokes, and have to find a
+Python without asking anyone anything. In order:
+
+1. an installed `szsdlc` already on `PATH` — a developer's own venv wins;
+2. a venv the launcher built earlier, reinstalled over when the release moved;
+3. otherwise build that venv, with the first interpreter that works of: an
+   active `VIRTUAL_ENV`; a `.venv` beside the project or in any parent; every
+   `python3.N` on `PATH`, newest first (on Windows, everything `py --list`
+   reports); `python3`, `python`, `py`; and an interpreter `uv` manages;
+4. failing that, run from the checkout with whichever of those already imports
+   the three dependencies.
+
+Candidates are probed by running them: on Windows `python` is frequently a
+Store stub, which is on `PATH` and cannot run anything, and a `python3` that
+is 3.9 on a box also shipping 3.12 is the common case rather than the exotic
+one. Step 3 is a loop because a compatible interpreter can still fail to build
+a venv where `ensurepip` is packaged separately.
+
+This is in the launcher rather than the package because the interpreter is
+already chosen by the time any szsdlc module is imported, and a package cannot
+portably re-exec itself into another one — the same reason pip bakes a shebang
+at install time, `uv tool` builds one venv per tool, and `py` is a separate
+binary. The package's only say is `requires-python`, which the test suite
+holds the launchers to.
 
 ## Development
 

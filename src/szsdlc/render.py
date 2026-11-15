@@ -67,6 +67,16 @@ class Rendered:
             return False
         return self.path.read_bytes().decode("utf-8", "replace") == self.content
 
+    def has_been_hand_edited(self) -> bool:
+        """Whether the file this would overwrite no longer matches its own hash.
+
+        Returns:
+            False when the file does not exist yet.
+        """
+        if not self.path.is_file():
+            return False
+        return hand_edited(self.path.read_bytes().decode("utf-8", "replace"))
+
     def write(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_bytes(self.content.encode("utf-8"))
@@ -267,10 +277,28 @@ def compare(rendered: list[Rendered]) -> list[Rendered]:
 
 
 def sync(config: Config, store: EntityStore, graph: Graph,
-         roadmaps: dict[str, Roadmap] | None = None) -> list[Rendered]:
-    """Regenerate everything, writing only what changed. Never validates."""
+         roadmaps: dict[str, Roadmap] | None = None, *,
+         should_keep_hand_edited: bool = False) -> list[Rendered]:
+    """Regenerate everything, writing only what changed. Never validates.
+
+    Args:
+        config: The loaded project config.
+        store: Entities to render from.
+        graph: Relations and derived attributes to render from.
+        roadmaps: Loaded roadmaps; loaded from disk when None.
+        should_keep_hand_edited: Skip files whose body no longer matches their
+            own hash. Set by the turn-end hook, which nobody asked for and
+            which cannot recover text it overwrites; `szsdlc sync` leaves it
+            unset and overwrites.
+
+    Returns:
+        The files actually written.
+    """
     renderer = Renderer(config, store, graph, roadmaps)
-    changed = compare(renderer.all())
+    items = renderer.all()
+    if should_keep_hand_edited:
+        items = [item for item in items if not item.has_been_hand_edited()]
+    changed = compare(items)
     for item in changed:
         item.write()
     return changed

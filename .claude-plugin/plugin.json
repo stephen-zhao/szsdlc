@@ -5,5 +5,13 @@
   "author": { "name": "Stephen Zhao" },
   "homepage": "https://github.com/stephen-zhao/szsdlc",
   "license": "MIT",
-  "keywords": ["sdlc", "backlog", "traceability", "requirements", "roadmap"]
+  "keywords": ["sdlc", "backlog", "traceability", "requirements", "roadmap"],
+  "userConfig": {
+    "sync_on_turn_end": {
+      "type": "boolean",
+      "title": "Sync at the end of every turn",
+      "description": "Regenerate the views when Claude finishes responding, not only when a source file is written. A file somebody typed into is left alone for szsdlc validate to report.",
+      "default": true
+    }
+  }
 }
