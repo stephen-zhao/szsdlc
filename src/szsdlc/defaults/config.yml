@@ -17,8 +17,6 @@ paths:
   entity_file: entity.md
 
 id:
-  # Opaque by design: anything embedded that can change invalidates every
-  # published reference to it.
   pattern: "{prefix}-{number}"
   key: null
   padding: 4
@@ -46,8 +44,6 @@ entity_types:
     prefix: IDEA
     title: Idea
     dir: ideas
-    # Arrives as a section of one shared file; earns a file, then a
-    # directory, as it grows. Nothing is decided at capture time.
     layout: dynamic
     intake: true
     actionable: false
@@ -78,15 +74,11 @@ entity_types:
           terminal: true
           abandoned: true
           description: Deliberately killed, with a reason, so the same thought arriving twice is recognisable.
-    # No `derived` block: `refined_into` is already the generated inverse of
-    # `refined_from`.
 
   epic:
     prefix: EPIC
     title: Epic
     dir: epics
-    # Children and rolled-up progress are read off the graph, leaving no
-    # artifact to carry.
     layout: file
     intake: false
     actionable: false
@@ -108,7 +100,6 @@ entity_types:
         closed:
           terminal: true
     derived:
-      # Never stored: a held percentage goes stale when a child moves.
       progress:
         kind: aggregate_progress
         relation: parent
@@ -118,12 +109,8 @@ entity_types:
     prefix: REQ
     title: Requirement
     dir: requirements
-    # Coverage and delivery are read off the graph, leaving no artifact to
-    # carry.
     layout: file
     intake: false
-    # A definition, not a unit of work: its lifecycle describes the validity
-    # of the statement, never its delivery.
     actionable: false
     tracks_progress: false
     can_parent: false
@@ -147,8 +134,6 @@ entity_types:
         retired:
           terminal: true
     derived:
-      # Computed from traceability links, so starting or finishing work
-      # writes nothing here.
       covered:
         kind: has_incoming
         relation: implements
@@ -168,7 +153,6 @@ entity_types:
     tracks_progress: false
     can_parent: false
     schedulable: true
-    # Sits on the work side: an answered spike ages out with completed work.
     persistent: false
     fields:
       opened:
@@ -239,7 +223,6 @@ entity_types:
     prefix: ADR
     title: Decision
     dir: decisions
-    # The record is the document; nothing accumulates beside it.
     layout: file
     intake: false
     actionable: false
@@ -266,22 +249,16 @@ entity_types:
 
 # ---------------------------------------------------------------------------
 # Relations
-#
-# Authored on one side only; every inverse is generated at render time.
-# `source_types` doubles as the per-type list of allowed relations.
 # ---------------------------------------------------------------------------
 
 relations:
 
   parent:
     inverse: children
-    # Legal targets are exactly the types flagged can_parent.
     target_types: null
     source_types: [work_item, spike, epic]
     cardinality: one
     acyclic: true
-    # Required on nothing: an epic is worth having, not worth blocking on.
-    # Sequence comes from the roadmap, traceability from `implements`.
     required_on: []
     description: Toward what outcome this work sits. One deliberate bundle, with its own lifecycle. Optional.
 
@@ -324,9 +301,6 @@ relations:
 
 # ---------------------------------------------------------------------------
 # Roadmaps
-#
-# Placement is a fact about a set, not a member, so rescheduling edits one
-# file rather than N.
 # ---------------------------------------------------------------------------
 
 roadmaps:
@@ -341,8 +315,6 @@ roadmaps:
 
 # ---------------------------------------------------------------------------
 # Views — generated markdown, written only by `sync`.
-#
-# Different questions get different views rather than one filtered index.
 # ---------------------------------------------------------------------------
 
 views:
@@ -379,5 +351,4 @@ views:
     template: views/decisions.md.j2
     output: decisions.md
 
-# Nothing project-specific ships built in.
 records: {}
