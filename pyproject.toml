@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0"]
 
 # What `uv run` installs, and what the release workflow needs present. Kept in
 # step with the other Python repos here: bump-my-version does the bumping, uv
@@ -31,6 +31,7 @@ dev = ["pytest>=8.0"]
 dev-dependencies = [
     "bump-my-version>=1.2.1",
     "pytest>=8.0",
+    "pytest-cov>=5.0",
     "uv>=0.8.11",
 ]
 
@@ -47,6 +48,33 @@ packages = ["src/szsdlc"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# Tests import shared constants from one another (`from tests.test_contract
+# import ...`), which needs the repository root importable however pytest is
+# launched — `pytest`, `uv run pytest` or `python -m pytest`.
+pythonpath = ["."]
+
+# Coverage is opt-in per run (`make test-coverage`, or `pytest --cov`) so a plain
+# `pytest` stays fast. CI runs it with the same flags.
+[tool.coverage.run]
+source = ["szsdlc"]
+branch = true
+
+[tool.coverage.report]
+# Minimum total coverage; `pytest --cov` (and so CI) fails below it.
+fail_under = 90
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.coverage.xml]
+output = "coverage.xml"
 
 # The version lives in one place — src/szsdlc/__init__.py, which hatchling
 # reads for the package version. Two other files quote it and must move with
