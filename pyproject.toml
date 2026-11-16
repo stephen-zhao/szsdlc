@@ -60,6 +60,8 @@ source = ["szsdlc"]
 branch = true
 
 [tool.coverage.report]
+# Minimum total coverage; `pytest --cov` (and so CI) fails below it.
+fail_under = 90
 show_missing = true
 skip_covered = true
 exclude_also = [
