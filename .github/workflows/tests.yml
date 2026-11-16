@@ -1,8 +1,6 @@
 # Generic pytest + coverage gate for uv-managed Python repositories.
 #
-# Nothing here names this repository, so the file can be copied verbatim into
-# any other Python repo that uses uv. Per-repo behaviour lives in that repo's
-# pyproject.toml, not here:
+# Per-repo behaviour lives in pyproject.toml, not here:
 #   - Python version:   requires-python / .python-version (uv picks it)
 #   - test paths/flags: [tool.pytest.ini_options]
 #   - what is measured: [tool.coverage.run] source (falls back to the repo root)
