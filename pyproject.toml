@@ -53,7 +53,7 @@ addopts = "-q"
 # launched — `pytest`, `uv run pytest` or `python -m pytest`.
 pythonpath = ["."]
 
-# Coverage is opt-in per run (`make coverage`, or `pytest --cov`) so a plain
+# Coverage is opt-in per run (`make test-coverage`, or `pytest --cov`) so a plain
 # `pytest` stays fast. CI runs it with the same flags.
 [tool.coverage.run]
 source = ["szsdlc"]
