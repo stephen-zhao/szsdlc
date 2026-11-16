@@ -2,7 +2,8 @@
 
 Hooks are what make the deterministic operations automatic and the gates
 non-optional. The division of labour matters: `sync` runs constantly and
-tolerantly *during* a turn, and `validate` runs once at the end and strictly.
+tolerantly — on every write, and again as the turn ends — while `validate` runs
+once, at the end, and strictly.
 
 Every handler is a **silent no-op outside a szsdlc project**, so the plugin is
 harmless installed globally. That is not politeness — a hook that errors in a
@@ -12,6 +13,7 @@ repo which has never heard of szsdlc is a hook people uninstall.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,37 @@ from .errors import EXIT_OK
 #: Claude Code reads exit 2 on a PreToolUse or Stop hook as "block, and show
 #: the user what stderr said".
 EXIT_BLOCK = 2
+
+#: Claude Code documents the variable name but not how a boolean is spelled on
+#: the way through, so every plausible spelling is accepted.
+TRUTHY = {"1", "true", "yes", "on"}
+FALSEY = {"0", "false", "no", "off"}
+
+
+def option(key: str, default: bool) -> bool:
+    """Read a plugin setting from the environment Claude Code provides.
+
+    Settings are declared under `userConfig` in `.claude-plugin/plugin.json`,
+    not in `.szsdlc/config.yml`, which is also read by the CLI and by CI.
+
+    Args:
+        key: The `userConfig` key. Uppercased to form the variable name
+            `CLAUDE_PLUGIN_OPTION_<KEY>`.
+        default: Returned when the variable is unset, empty, or holds a value
+            matching neither TRUTHY nor FALSEY.
+
+    Returns:
+        The configured value, or `default`.
+    """
+    raw = os.environ.get(f"CLAUDE_PLUGIN_OPTION_{key.upper()}")
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in TRUTHY:
+        return True
+    if value in FALSEY:
+        return False
+    return default
 
 
 def read_payload(stream: Any = None) -> dict[str, Any]:
@@ -210,7 +243,20 @@ def _is_source(session, path: Path) -> bool:
 
 
 def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
-    """The single enforcement point: strict, once, at the end of the turn."""
+    """Sync, then validate, at the end of a turn.
+
+    One handler rather than two `Stop` entries, which would each load the
+    project. Sync runs first so validate judges the state the turn leaves
+    behind rather than naming a fix that was about to happen anyway.
+
+    Args:
+        payload: The hook's JSON input; `cwd` is read from it when not passed.
+        cwd: Project directory to load, overriding the payload.
+
+    Returns:
+        EXIT_OK, or EXIT_BLOCK when validate found errors.
+    """
+    from . import render as render_module
     from . import validate as validate_module
     from .graph import Graph
 
@@ -219,6 +265,16 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
         return EXIT_OK
 
     graph = Graph(session.config, session.store, session.ids)
+
+    if option("sync_on_turn_end", default=True):
+        try:
+            # A hand-edited generated file is a blocking error below, and the
+            # evidence for it is the file itself.
+            render_module.sync(session.config, session.store, graph,
+                               should_keep_hand_edited=True)
+        except Exception:  # pragma: no cover - never break a turn over a redraw
+            pass
+
     findings = validate_module.run(session.config, session.store, graph)
     errors = [f for f in findings if f.is_error]
     if not errors:

@@ -17,6 +17,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -102,7 +103,11 @@ def test_all_four_events_are_wired_through_one_launcher():
     assert len(commands) == 4
     for command in commands:
         # One resolution path, so there is one thing to get wrong on Windows.
-        assert command.startswith("${CLAUDE_PLUGIN_ROOT}/bin/szsdlc hook ")
+        # The placeholder is quoted: these are shell-form commands, and an
+        # install path containing a space — `C:\\Users\\First Last\\...` is the
+        # ordinary case on Windows — otherwise splits into several words and
+        # the hook silently fails to run. `claude plugin validate` says so too.
+        assert command.startswith('"${CLAUDE_PLUGIN_ROOT}"/bin/szsdlc hook ')
         assert command.rsplit(" ", 1)[-1] in hooks.HANDLERS
 
 
@@ -119,17 +124,79 @@ def test_both_launchers_exist_and_the_posix_one_is_executable():
         assert posix.stat().st_mode & stat.S_IXUSR
 
 
+def launchers() -> dict[str, str]:
+    return {name: (REPO / "bin" / name).read_text("utf-8")
+            for name in ("szsdlc", "szsdlc.cmd")}
+
+
 def test_the_launchers_agree_on_resolution_order():
     """PATH, then a cached venv, then build one. Same order on both platforms."""
-    posix = (REPO / "bin" / "szsdlc").read_text("utf-8")
-    windows = (REPO / "bin" / "szsdlc.cmd").read_text("utf-8")
-    for text in (posix, windows):
+    for text in launchers().values():
         assert "CLAUDE_PLUGIN_ROOT" in text
         assert "CLAUDE_PLUGIN_DATA" in text
         assert "SZSDLC_LAUNCHER" in text  # the recursion guard
         assert "-m szsdlc.cli" in text
-    # `py -3` before `python`: on Windows `python` is often a Store stub.
-    assert windows.index("py -3") < windows.index("python -c")
+
+
+#: Each source the launchers are documented to consult, and the marker that
+#: proves it. Shared so neither launcher can quietly drop one.
+CANDIDATE_SOURCES = [
+    ("an active virtualenv", "VIRTUAL_ENV", "VIRTUAL_ENV"),
+    ("a .venv up the tree", ".venv", ".venv"),
+    ("the project directory", "CLAUDE_PROJECT_DIR", "CLAUDE_PROJECT_DIR"),
+    ("every version, not one bare name", '"$path_dir"/python3.*', "py --list"),
+    ("newest version first", "sort -k1,1nr", "py --list"),
+    ("a uv-managed interpreter",
+     'uv python find ">=$minimum_python_version"',
+     'uv python find ">=%MINIMUM_PYTHON_VERSION%"'),
+    ("the checkout, when no venv can be built",
+     "import yaml, jinja2, jsonschema", "import yaml, jinja2, jsonschema"),
+]
+
+
+@pytest.mark.parametrize("source, posix_marker, windows_marker", CANDIDATE_SOURCES,
+                         ids=[source for source, _, _ in CANDIDATE_SOURCES])
+def test_both_launchers_consult_every_documented_source(source, posix_marker,
+                                                        windows_marker):
+    """The bug this fixes: `python3` is 3.9 on many boxes that also ship
+    python3.12, and three bare names never saw it."""
+    assert posix_marker in launchers()["szsdlc"], source
+    assert windows_marker in launchers()["szsdlc.cmd"], source
+
+
+def test_both_launchers_leave_the_ambiguous_names_for_last():
+    """Whatever a bare name points at, a versioned one said it better — and on
+    Windows `python` is frequently a Store stub."""
+    posix, windows = launchers()["szsdlc"], launchers()["szsdlc.cmd"]
+    assert posix.index('"$path_dir"/python3.*') < posix.index("printf '%s\\n' python3 python py")
+    assert windows.index("py --list") < windows.index("echo python>>")
+
+
+def test_both_launchers_keep_trying_after_a_compatible_python_fails():
+    """Passing the probe does not mean `-m venv` works: Debian packages
+    `ensurepip` separately."""
+    for name, text in launchers().items():
+        assert "could not build a virtualenv" in text, name
+
+
+def test_the_launchers_floor_is_the_one_the_package_declares():
+    """A floor raised in pyproject.toml and not here would have the launchers
+    build a venv the package then refuses to install into, and the hook would
+    fail with pip's error rather than the launcher's."""
+    import re
+    import tomllib
+
+    pyproject = tomllib.loads((REPO / "pyproject.toml").read_text("utf-8"))
+    declared = pyproject["project"]["requires-python"]
+    floor = re.fullmatch(r">=\s*(\d+\.\d+)", declared.strip())
+    assert floor, f"requires-python is {declared!r}; this test assumes `>=X.Y`"
+
+    patterns = {"szsdlc": r'minimum_python_version="([^"]+)"',
+                "szsdlc.cmd": r'MINIMUM_PYTHON_VERSION=([^"]+)"'}
+    for name, text in launchers().items():
+        stated = re.search(patterns[name], text)
+        assert stated, f"{name} states no minimum version"
+        assert stated.group(1) == floor.group(1), name
 
 
 def test_both_launchers_probe_interpreters_rather_than_merely_finding_them():
@@ -137,13 +204,56 @@ def test_both_launchers_probe_interpreters_rather_than_merely_finding_them():
     stub: on PATH, at the front of it, and unable to run anything. Taking the
     first name that exists picks the stub every time and the hook silently
     does nothing — which is what the first version of this launcher did.
-
-    Running each candidate also enforces the 3.12 floor for free.
     """
-    for name in ("szsdlc", "szsdlc.cmd"):
-        text = (REPO / "bin" / name).read_text("utf-8")
-        assert "sys.version_info >= (3, 12)" in text, name
-        assert "no working Python 3.12+" in text, name
+    posix, windows = launchers()["szsdlc"], launchers()["szsdlc.cmd"]
+    assert 'sys.version_info >=' in posix and '-c "$version_probe"' in posix
+    assert 'sys.version_info >=' in windows and '-c "%VERSION_PROBE%"' in windows
+    for name, text in launchers().items():
+        assert "no working Python" in text, name
+
+
+@pytest.mark.skipif(os.name == "nt", reason="exercises the POSIX launcher")
+def test_the_posix_launcher_picks_a_versioned_python_over_an_old_default(tmp_path):
+    """The regression, end to end, on a PATH built to contain it.
+
+    `python3` fails the floor; `python3.99` passes, then refuses to build a
+    venv or import the dependencies. Naming it in the failure is a cheap way
+    to observe which interpreter was chosen without a real pip install.
+    """
+    tools = ["sh", "sed", "awk", "sort", "cut", "head", "dirname", "rm", "mkdir", "cat"]
+    sandbox = tmp_path / "bin"
+    sandbox.mkdir()
+    for tool in tools:
+        found = shutil.which(tool)
+        if not found:
+            pytest.skip(f"{tool} is not on PATH")
+        (sandbox / tool).symlink_to(found)
+
+    (sandbox / "python3").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    (sandbox / "python3.99").write_text(
+        "#!/bin/sh\n"
+        'for a in "$@"; do [ "$a" = venv ] && exit 1; done\n'
+        'case "$*" in *jinja2*) exit 1 ;; esac\n'
+        f'exec {sys.executable} "$@"\n', encoding="utf-8")
+    for name in ("python3", "python3.99"):
+        (sandbox / name).chmod(0o755)
+
+    # cwd and CLAUDE_PROJECT_DIR are isolated on purpose: the `.venv` walk is
+    # part of what is being tested, and this checkout has one.
+    home = tmp_path / "home"
+    home.mkdir()
+    result = subprocess.run(
+        ["sh", str(REPO / "bin" / "szsdlc"), "--version"],
+        cwd=str(home),
+        env={"PATH": str(sandbox), "HOME": str(home),
+             "CLAUDE_PROJECT_DIR": str(home),
+             "CLAUDE_PLUGIN_ROOT": str(REPO),
+             "CLAUDE_PLUGIN_DATA": str(tmp_path / "data")},
+        capture_output=True, text=True, timeout=180)
+
+    assert "python3.99" in result.stderr, result.stderr
+    assert "could not build a virtualenv" in result.stderr, result.stderr
+    assert "no working Python" not in result.stderr, result.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -316,14 +426,15 @@ def test_stop_passes_a_clean_project_silently(seeded, capsys):
 
 
 def test_stop_blocks_on_errors_and_names_each_fix(seeded, capsys, write_entity):
-    write_entity("work_item", 9, "title: No parent\nstatus: idea\nopened: 2026-08-01\n",
-                 slug="orphan")
+    write_entity("work_item", 9, "title: Dangles\nstatus: idea\nopened: 2026-08-01\n"
+                                 "relations:\n  implements: [REQ-0420]\n",
+                 slug="dangles")
     code = hooks.dispatch("stop", io.StringIO(""), cwd=str(seeded.root))
     err = capsys.readouterr().err
 
     assert code == hooks.EXIT_BLOCK
     assert "WI-0009" in err
-    assert "szsdlc link WI-0009 parent" in err
+    assert "szsdlc unlink WI-0009 implements REQ-0420" in err
 
 
 def test_stop_does_not_block_on_warnings_alone(seeded, capsys, write_entity):
@@ -339,11 +450,122 @@ def test_stop_does_not_block_on_warnings_alone(seeded, capsys, write_entity):
 def test_the_blocked_listing_is_bounded(seeded, capsys, write_entity):
     for number in range(20):
         write_entity("work_item", 100 + number,
-                     "title: T\nstatus: idea\nopened: 2026-08-01\n", slug=f"o{number}")
+                     "title: T\nstatus: idea\nopened: 2026-08-01\n"
+                     "relations:\n  implements: [REQ-0420]\n", slug=f"o{number}")
     hooks.dispatch("stop", io.StringIO(""), cwd=str(seeded.root))
     lines = capsys.readouterr().err.strip().splitlines()
     assert len(lines) <= 12
     assert "more — szsdlc validate" in lines[-1]
+
+
+# ---------------------------------------------------------------------------
+# Stop — the turn-end sync, and the setting that governs it
+# ---------------------------------------------------------------------------
+
+
+def drift(seeded) -> Path:
+    """Change a source file behind sync's back, as a turn full of edits does."""
+    entity = next(seeded.dir_for("work_item").glob("WI-0001-*")) / "entity.md"
+    entity.write_bytes(entity.read_bytes().replace(b"title: Add config",
+                                                   b"title: Renamed in the turn"))
+    return seeded.views_dir / "board.md"
+
+
+def test_stop_syncs_before_it_validates(seeded, capsys):
+    """Validating first would block the turn naming a fix that was about to
+    happen anyway."""
+    board = drift(seeded)
+    assert "Renamed in the turn" not in board.read_text("utf-8")
+
+    code = hooks.dispatch("stop", io.StringIO(""), cwd=str(seeded.root))
+    captured = capsys.readouterr()
+
+    assert code == 0, captured.err
+    assert captured.out == "" and captured.err == ""
+    assert "Renamed in the turn" in board.read_text("utf-8")
+
+
+def test_the_turn_end_sync_can_be_switched_off(seeded, capsys, monkeypatch):
+    """Off, the handler is what it was before: validate, strictly."""
+    monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_SYNC_ON_TURN_END", "false")
+    board = drift(seeded)
+
+    code = hooks.dispatch("stop", io.StringIO(""), cwd=str(seeded.root))
+    err = capsys.readouterr().err
+
+    assert code == hooks.EXIT_BLOCK
+    assert "out of date" in err
+    assert "Renamed in the turn" not in board.read_text("utf-8")
+
+
+def test_the_turn_end_sync_refuses_to_overwrite_a_hand_edited_view(seeded, capsys):
+    """A hand-edited generated file is a blocking error whose evidence is the
+    file: overwriting it here takes the error quiet with it."""
+    board = seeded.views_dir / "board.md"
+    board.write_text(board.read_text("utf-8") + "\nA note somebody typed here.\n",
+                     encoding="utf-8")
+    before = board.read_text("utf-8")
+    drift(seeded)
+
+    code = hooks.dispatch("stop", io.StringIO(""), cwd=str(seeded.root))
+    err = capsys.readouterr().err
+
+    assert code == hooks.EXIT_BLOCK
+    assert "edited by hand" in err
+    assert board.read_text("utf-8") == before, "the turn-end sync clobbered a hand edit"
+
+
+def test_an_explicit_sync_still_overwrites_a_hand_edited_view(seeded, capsys):
+    """The counterpart: typing the command means what it has always meant."""
+    board = seeded.views_dir / "board.md"
+    board.write_text(board.read_text("utf-8") + "\nA note somebody typed here.\n",
+                     encoding="utf-8")
+
+    main(["-C", str(seeded.root), "sync"])
+    capsys.readouterr()
+    assert "A note somebody typed here." not in board.read_text("utf-8")
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("true", True), ("TRUE", True), ("1", True), ("yes", True), ("on", True),
+    ("false", False), ("False", False), ("0", False), ("no", False), ("off", False),
+    (" true ", True),
+])
+def test_a_plugin_setting_is_read_in_every_spelling_it_could_arrive_in(
+        monkeypatch, raw, expected):
+    """Claude Code documents the variable name but not the spelling of a
+    boolean, so guessing one would silently take the default forever."""
+    monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_SYNC_ON_TURN_END", raw)
+    assert hooks.option("sync_on_turn_end", default=not expected) is expected
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "perhaps"])
+def test_an_unset_or_unrecognised_setting_is_the_declared_default(monkeypatch, raw):
+    monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_SYNC_ON_TURN_END", raw)
+    assert hooks.option("sync_on_turn_end", default=True) is True
+    assert hooks.option("sync_on_turn_end", default=False) is False
+
+
+def test_the_setting_is_declared_in_the_manifest_so_config_can_show_it():
+    """`/config` lists what the manifest declares, so an undeclared setting is
+    a flag with no switch. No `options` field: that would pin the plugin to
+    Claude Code v2.1.271 or later."""
+    manifest = json.loads((REPO / ".claude-plugin" / "plugin.json").read_text("utf-8"))
+    declared = manifest["userConfig"]["sync_on_turn_end"]
+    assert declared["type"] == "boolean"
+    assert declared["default"] is True
+    assert declared["title"] and declared["description"]
+    for option in manifest["userConfig"].values():
+        assert "options" not in option
+
+
+def test_nothing_about_this_setting_leaks_into_the_project_config():
+    """config.yml is read by the CLI and by CI, which have no turns to sync
+    at. The plugin layer owns this setting."""
+    schema = (REPO / "src" / "szsdlc" / "schemas" / "config.schema.json").read_text("utf-8")
+    defaults = (REPO / "src" / "szsdlc" / "defaults" / "config.yml").read_text("utf-8")
+    for text in (schema, defaults):
+        assert "sync_on_turn_end" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +629,8 @@ def test_both_launchers_refresh_a_venv_left_from_an_earlier_release():
     a data directory nobody knows exists. The stamp records which release the
     venv holds; a mismatch reinstalls over it.
     """
-    for name, stamp in (("szsdlc", '"$stamp"'), ("szsdlc.cmd", '"%STAMP%"')):
+    for name, stamp in (("szsdlc", '"$stamp_file_path"'),
+                        ("szsdlc.cmd", '"%STAMP_FILE_PATH%"')):
         text = (REPO / "bin" / name).read_text("utf-8")
         assert "installed-from" in text, name
         assert "--upgrade" in text, name

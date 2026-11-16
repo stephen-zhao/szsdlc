@@ -208,16 +208,43 @@ def test_a_parent_that_does_not_declare_can_parent_is_reported(project, write_en
     assert "allowed: epic" in finding.message
 
 
-def test_a_work_item_with_no_parent_is_reported(project, write_entity):
+def test_a_work_item_with_no_parent_is_allowed(project, write_entity):
+    """An epic is worth having, not worth blocking on.
+
+    The shipped config requires `parent` on nothing. Requiring it meant every
+    work item had to be handed a bundle before it could pass validate, and
+    epics then got invented to satisfy the check rather than because anything
+    had actually been grouped.
+    """
     write_entity("work_item", 1, "title: T\nstatus: idea\nopened: 2026-08-16\n")
-    finding = next(f for f in G.build(project).structural_findings()
+    assert not [f for f in G.build(project).structural_findings()
+                if f.kind == "missing-relation"]
+
+
+@pytest.fixture
+def demands_a_parent(make_project, write_entity_in):
+    """A project that opts back in, which is now the only way to this finding.
+
+    The default moved; the mechanism did not, and an unexercised mechanism is
+    one that stops working without anybody hearing about it.
+    """
+    config = make_project({"relations": {"parent": {"required_on": ["work_item"]}}})
+    return config, write_entity_in(config)
+
+
+def test_a_relation_a_project_does_require_is_still_reported(demands_a_parent):
+    config, write = demands_a_parent
+    write("work_item", 1, "title: T\nstatus: idea\nopened: 2026-08-16\n")
+    finding = next(f for f in G.build(config).structural_findings()
                    if f.kind == "missing-relation")
     assert finding.fix == "szsdlc link WI-0001 parent <ref>"
 
 
-def test_a_terminal_work_item_is_not_nagged_about_a_missing_parent(project, write_entity):
-    write_entity("work_item", 1, "title: T\nstatus: dropped\nopened: 2026-08-16\n")
-    assert not [f for f in G.build(project).structural_findings()
+def test_a_terminal_work_item_is_not_nagged_about_a_missing_parent(demands_a_parent):
+    """Nothing is asked of work that is already over, even where it is required."""
+    config, write = demands_a_parent
+    write("work_item", 1, "title: T\nstatus: dropped\nopened: 2026-08-16\n")
+    assert not [f for f in G.build(config).structural_findings()
                 if f.kind == "missing-relation"]
 
 

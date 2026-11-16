@@ -27,7 +27,9 @@ szsdlc init
 ```
 
 Python 3.12 or later. The plugin's launchers resolve an interpreter on their
-own, so no virtualenv setup is needed for the hooks to work.
+own — an active virtualenv, a project `.venv`, any `python3.N` on `PATH`, or
+one `uv` manages — so no virtualenv setup is needed for the hooks to work. See
+[resolving an interpreter](docs/reference.md#resolving-an-interpreter).
 
 ## Documentation
 
