@@ -6,7 +6,18 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/szsdlc hook session-start",
-            "timeout": 20
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/szsdlc hook user-prompt-submit",
+            "timeout": 60
           }
         ]
       }
@@ -41,7 +52,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/szsdlc hook stop",
-            "timeout": 60
+            "timeout": 120
           }
         ]
       }

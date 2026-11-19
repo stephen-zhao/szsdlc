@@ -91,6 +91,13 @@ Ten skills wrap judgment around these commands: `/szsdlc:capture`, `refine`,
 `execute` and `close` are invoked explicitly rather than on your own
 initiative, because both write to the project and to the codebase.
 
+## When the project lives elsewhere
+
+If the session began with `szsdlc project files: <path>`, a backend keeps the
+project in that directory or a clone of a remote, not in the working directory.
+Edit entity files at that path, and never copy them into the repo. Changes are committed as you
+make them and pushed when the turn ends. `szsdlc backend` shows where it is and why.
+
 ## When something looks wrong
 
 `szsdlc validate` reports every inconsistency, silently when there are none. It

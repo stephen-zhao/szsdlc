@@ -5,6 +5,12 @@ non-optional. The division of labour matters: `sync` runs constantly and
 tolerantly — on every write, and again as the turn ends — while `validate` runs
 once, at the end, and strictly.
 
+When the project lives in a remote (see :mod:`szsdlc.backend`), the hooks are
+also what keep it in step: a full sync as the session starts, before every
+prompt is answered and as the turn ends, and a local commit — no network —
+after every edit, so a turn reaches the remote once rather than per edit. A failed sync
+never blocks anything; it is said, and retried at the next hook.
+
 Every handler is a **silent no-op outside a szsdlc project**, so the plugin is
 harmless installed globally. That is not politeness — a hook that errors in a
 repo which has never heard of szsdlc is a hook people uninstall.
@@ -88,15 +94,116 @@ def _session(start: Path | str | None):
     a session, and whatever went wrong will be said properly the next time the
     user runs a command themselves.
     """
+    return _load(start)[0]
+
+
+def _load(start: Path | str | None):
+    """(session, None), or (None, what went wrong as a short message)."""
     from .cli import Session
     from .errors import SzsdlcError
 
     try:
-        return Session(str(start) if start else None)
-    except SzsdlcError:
+        return Session(str(start) if start else None), None
+    except SzsdlcError as exc:
+        return None, exc.render()
+    except Exception as exc:  # pragma: no cover - defensive
+        return None, f"{type(exc).__name__}: {exc}"
+
+
+def _backend_failure(start: Path | str | None, error: str | None,
+                     reason: str) -> str | None:
+    """Why a project kept by a backend could not be loaded, if that is the case.
+
+    No project at all is the ordinary state of most directories a hook runs in,
+    and stays silent. But a selected backend means the user expects one, and a
+    clone that failed or settings that are wrong are worth saying. The store is
+    still synced when it exists: a broken config edit is committed and pushed
+    like any other, and a repair someone else pushed is pulled in.
+    """
+    from . import backend
+
+    if error is None:
         return None
+    try:
+        selected = backend.select(start).type != backend.WORKDIR
+    except Exception:  # settings unreadable: that is the error itself
+        selected = True
+    if not selected:
+        return None
+    lines = [f"szsdlc backend: {error}"]
+    try:
+        problem = backend.describe_problem(backend.sync_at(start, reason))
+    except Exception as exc:
+        problem = _unexpected("sync", exc)
+    if problem:
+        lines.append(problem)
+    return "\n".join(lines)
+
+
+def _backend_sync(session, reason: str, *,
+                  only_if_changed: bool = False) -> tuple[str | None, bool]:
+    """Sync the project's backend, if it has one.
+
+    Returns a problem to report, and whether anything was pulled — in which
+    case the caller's session describes the state from before the pull. Never
+    raises, for the same reason `_session` does, but an unexpected failure is
+    still reported rather than passed off as success.
+    """
+    from . import backend
+
+    try:
+        report = backend.sync_at(session.config.root, reason,
+                                 only_if_changed=only_if_changed)
+    except Exception as exc:
+        return _unexpected("sync", exc), False
+    return backend.describe_problem(report), bool(report and report.pulled)
+
+
+def _backend_commit(session, reason: str) -> str | None:
+    """Commit the project's changes locally, if it has a backend. No network.
+
+    Returns a problem to report, as `_backend_sync` does.
+    """
+    from . import backend
+
+    try:
+        return backend.describe_problem(backend.commit_at(session.config.root, reason),
+                                        action="commit")
+    except Exception as exc:
+        return _unexpected("commit", exc)
+
+
+def _commit_path(path: Path) -> str | None:
+    """Commit the managed store holding `path`, without loading the project."""
+    from . import backend
+
+    try:
+        if backend.managed(path) is None:
+            return None
+        return backend.describe_problem(backend.commit_at(path, f"edit {path.name}"),
+                                        action="commit")
+    except Exception as exc:
+        return _unexpected("commit", exc)
+
+
+def _unexpected(action: str, exc: Exception) -> str:
+    detail = str(exc).strip().splitlines()
+    return (f"szsdlc backend {action}: {type(exc).__name__}"
+            + (f": {detail[0]}" if detail else "")
+            + "; changes are kept locally.\nFix: szsdlc backend sync")
+
+
+def _backend_line(session) -> str | None:
+    """Where the project's files are, when that is not where Claude is working."""
+    from . import backend
+
+    try:
+        managed = backend.managed(session.config.root)
     except Exception:  # pragma: no cover - defensive
         return None
+    if managed is None:
+        return None
+    return f"szsdlc project files: {session.config.root} ({managed.summary()})"
 
 
 def _emit(event: str, context: str) -> None:
@@ -119,15 +226,56 @@ def session_start(payload: dict[str, Any], cwd: str | None = None) -> int:
     from . import context as context_module
     from .graph import Graph
 
-    session = _session(cwd or payload.get("cwd"))
+    where = cwd or payload.get("cwd")
+    session, error = _load(where)
     if session is None:
+        failure = _backend_failure(where, error, "session start")
+        if failure:
+            print(failure)
         return EXIT_OK
+
+    # Pull before the store is read, so the counters describe the remote's state;
+    # a pull can change the config itself, so the session is loaded again.
+    problem, pulled = _backend_sync(session, "session start")
+    if pulled:
+        session, error = _load(where)
+        if session is None:
+            print("\n".join(line for line in (problem, f"szsdlc: after pulling, {error}")
+                            if line))
+            return EXIT_OK
 
     graph = Graph(session.config, session.store, session.ids)
     built = context_module.build(session.config, session.store, graph)
     rendered = context_module.render(built)
+    lines = [line for line in (_backend_line(session), problem) if line]
     if rendered.strip():
-        print(rendered)
+        lines.append(rendered)
+    if lines:
+        print("\n".join(lines))
+    return EXIT_OK
+
+
+# ---------------------------------------------------------------------------
+# UserPromptSubmit
+# ---------------------------------------------------------------------------
+
+
+def user_prompt_submit(payload: dict[str, Any], cwd: str | None = None) -> int:
+    """Pull and push before Claude answers, so it works from the remote's state.
+
+    Silent unless the sync failed; stdout here enters the model's context, and
+    a problem is worth the tokens where a success is not.
+    """
+    where = cwd or payload.get("cwd")
+    session, error = _load(where)
+    if session is None:
+        failure = _backend_failure(where, error, "before prompt")
+        if failure:
+            print(failure)
+        return EXIT_OK
+    problem, _ = _backend_sync(session, "before prompt")
+    if problem:
+        print(problem)
     return EXIT_OK
 
 
@@ -203,17 +351,34 @@ def post_edit(payload: dict[str, Any], cwd: str | None = None) -> int:
 
     session = _session(cwd or payload.get("cwd") or path.parent)
     if session is None:
+        # The edit may itself be what broke the project (its config, say).
+        # It is still committed, so it is not the one change that is lost.
+        problem = _commit_path(path)
+        if problem:
+            _emit("PostToolUse", problem)
         return EXIT_OK
 
-    if not _is_source(session, path):
-        return EXIT_OK
-
-    try:
-        graph = Graph(session.config, session.store, session.ids)
-        render_module.sync(session.config, session.store, graph)
-    except Exception:  # pragma: no cover - never break a turn over a redraw
-        pass
+    if _is_source(session, path):
+        try:
+            graph = Graph(session.config, session.store, session.ids)
+            render_module.sync(session.config, session.store, graph)
+        except Exception:  # pragma: no cover - never break a turn over a redraw
+            pass
+    # Any file in the project is committed — the config too, not only sources.
+    if _inside(session.config.root, path):
+        problem = _backend_commit(session, f"edit {path.name}")
+        if problem:
+            _emit("PostToolUse", problem)
     return EXIT_OK
+
+
+def _inside(root: Path, path: Path) -> bool:
+    candidate = path if path.is_absolute() else (root / path)
+    try:
+        candidate.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def _is_source(session, path: Path) -> bool:
@@ -243,11 +408,13 @@ def _is_source(session, path: Path) -> bool:
 
 
 def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
-    """Sync, then validate, at the end of a turn.
+    """Render, sync with the backend, then validate, at the end of a turn.
 
     One handler rather than two `Stop` entries, which would each load the
-    project. Sync runs first so validate judges the state the turn leaves
-    behind rather than naming a fix that was about to happen anyway.
+    project. Rendering runs first so validate judges the state the turn leaves
+    behind rather than naming a fix that was about to happen anyway, and the
+    backend sync before validate so that what is judged includes whatever the
+    sync pulled in.
 
     Args:
         payload: The hook's JSON input; `cwd` is read from it when not passed.
@@ -260,13 +427,18 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
     from . import validate as validate_module
     from .graph import Graph
 
-    session = _session(cwd or payload.get("cwd"))
+    where = cwd or payload.get("cwd")
+    session, error = _load(where)
     if session is None:
+        failure = _backend_failure(where, error, "turn end")
+        if failure:
+            print(failure, file=sys.stderr)
         return EXIT_OK
 
     graph = Graph(session.config, session.store, session.ids)
+    rendering = option("sync_on_turn_end", default=True)
 
-    if option("sync_on_turn_end", default=True):
+    if rendering:
         try:
             # A hand-edited generated file is a blocking error below, and the
             # evidence for it is the file itself.
@@ -275,8 +447,37 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
         except Exception:  # pragma: no cover - never break a turn over a redraw
             pass
 
+    # Pushed whether or not validate passes: an unfinished turn is still work,
+    # and keeping it only on this machine is how it gets lost.
+    problem, pulled = _backend_sync(session, "turn end")
+    if problem:
+        print(problem, file=sys.stderr)
+    if pulled:
+        # Judge what was pulled, not what was here before: reload, and redraw
+        # the views from the pulled entities so they are not reported stale.
+        session, error = _load(where)
+        if session is None:
+            print(f"szsdlc: after pulling, {error}", file=sys.stderr)
+            return EXIT_BLOCK
+        graph = Graph(session.config, session.store, session.ids)
+        if rendering:
+            try:
+                render_module.sync(session.config, session.store, graph,
+                                   should_keep_hand_edited=True)
+            except Exception as exc:
+                # Not fatal, but say it: validate is about to call the views
+                # stale, and this is why.
+                print(f"szsdlc: redrawing after the pull failed: "
+                      f"{type(exc).__name__}: {exc}", file=sys.stderr)
+            # Sent now, not at the next sync, so the remote's views match.
+            redraw_problem, _ = _backend_sync(session, "render after pull",
+                                              only_if_changed=True)
+            if redraw_problem:
+                print(redraw_problem, file=sys.stderr)
+
     findings = validate_module.run(session.config, session.store, graph)
     errors = [f for f in findings if f.is_error]
+
     if not errors:
         return EXIT_OK
 
@@ -292,6 +493,7 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
 
 HANDLERS = {
     "session-start": session_start,
+    "user-prompt-submit": user_prompt_submit,
     "pre-edit": pre_edit,
     "post-edit": post_edit,
     "stop": stop,

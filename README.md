@@ -26,6 +26,10 @@ Then, in any project:
 szsdlc init
 ```
 
+To keep a project's files out of the repository, in another directory or in a
+git remote that is synced automatically, see
+[backends](docs/reference.md#backends-where-a-project-is-kept).
+
 Python 3.12 or later. The plugin's launchers resolve an interpreter on their
 own — an active virtualenv, a project `.venv`, any `python3.N` on `PATH`, or
 one `uv` manages — so no virtualenv setup is needed for the hooks to work. See

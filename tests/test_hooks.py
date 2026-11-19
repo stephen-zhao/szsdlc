@@ -90,17 +90,25 @@ def test_the_events_sit_under_a_hooks_key():
     """
     document = wiring()
     assert set(document) == {"hooks"}, "events must be nested under `hooks`"
-    assert set(document["hooks"]) == {"SessionStart", "PreToolUse",
+    assert set(document["hooks"]) == {"SessionStart", "UserPromptSubmit", "PreToolUse",
                                       "PostToolUse", "Stop"}
 
 
-def test_all_four_events_are_wired_through_one_launcher():
+def test_every_event_is_wired_through_one_launcher():
     events = wiring()["hooks"]
     commands = [hook["command"]
                 for entries in events.values()
                 for entry in entries
                 for hook in entry["hooks"]]
-    assert len(commands) == 4
+    assert len(commands) == 5
+    handlers = {event: [hook["command"].rsplit(" ", 1)[-1]
+                        for entry in entries for hook in entry["hooks"]]
+                for event, entries in events.items()}
+    assert handlers == {"SessionStart": ["session-start"],
+                        "UserPromptSubmit": ["user-prompt-submit"],
+                        "PreToolUse": ["pre-edit"],
+                        "PostToolUse": ["post-edit"],
+                        "Stop": ["stop"]}
     for command in commands:
         # One resolution path, so there is one thing to get wrong on Windows.
         # The placeholder is quoted: these are shell-form commands, and an
