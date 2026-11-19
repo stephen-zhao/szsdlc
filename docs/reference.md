@@ -214,7 +214,9 @@ unknown key in the selected backend's namespace is an error.
 | `SZSDLC_BACKEND_GIT_CLONE_PATH` | `<CLONE_ROOT>/<name>-<hash>` | the exact clone, overriding `CLONE_ROOT` |
 
 `{project}` in a path-like value is replaced with the project directory's
-name, so one directory or repository can hold many projects. Relative paths
+name — the directory holding `.claude/settings*.json`, else the enclosing git
+checkout, so a command run from a subdirectory names the same project — and
+one directory or repository can hold many projects. Relative paths
 resolve against the project for project files, and against the home directory
 for the user file.
 
@@ -229,7 +231,13 @@ for the user file.
 ```
 
 `szsdlc backend` shows the backend in effect and which file each value came
-from. `szsdlc init` creates the project wherever the backend keeps it.
+from; credentials embedded in a URL are redacted there and everywhere else it
+is printed. `szsdlc init` creates the project wherever the backend keeps it.
+
+An existing clone is used only if it is a clone of `SZSDLC_BACKEND_GIT_URL`
+with `SZSDLC_BACKEND_GIT_BRANCH` (when set) checked out; otherwise it is
+refused rather than repurposed. A clone that would contain the working tree,
+and a `SUBDIR` that resolves outside the clone, are refused too.
 
 ### Syncing
 
@@ -250,7 +258,10 @@ For `git`, a commit records everything in the clone; a sync commits, rebases
 onto the remote branch, and pushes. It never turns a successful command into a failure. If the
 remote cannot be reached, or a rebase conflicts, the changes stay committed in
 the clone. The problem is reported on stderr (or in Claude's context, from the
-prompt hook), and the next sync tries again. git runs with prompts disabled and
+prompt and edit hooks), and the next sync tries again; a rebase that fails or
+times out is aborted, never left half done. Files in the project that the
+repository's `.gitignore` excludes are not forced in, but a sync names them
+rather than reporting success. git runs with prompts disabled and
 a timeout, so credentials must work without being typed in, through an SSH
 agent or a credential helper.
 

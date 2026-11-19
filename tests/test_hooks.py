@@ -101,6 +101,14 @@ def test_every_event_is_wired_through_one_launcher():
                 for entry in entries
                 for hook in entry["hooks"]]
     assert len(commands) == 5
+    handlers = {event: [hook["command"].rsplit(" ", 1)[-1]
+                        for entry in entries for hook in entry["hooks"]]
+                for event, entries in events.items()}
+    assert handlers == {"SessionStart": ["session-start"],
+                        "UserPromptSubmit": ["user-prompt-submit"],
+                        "PreToolUse": ["pre-edit"],
+                        "PostToolUse": ["post-edit"],
+                        "Stop": ["stop"]}
     for command in commands:
         # One resolution path, so there is one thing to get wrong on Windows.
         # The placeholder is quoted: these are shell-form commands, and an

@@ -280,10 +280,67 @@ def test_subdir_can_name_the_project(user, workdir):
     assert chosen.root == chosen.store / "projects" / "myproj"
 
 
-def test_a_subdir_outside_the_store_is_refused(user, workdir):
-    write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": "u", f"{GIT}SUBDIR": "../x"})
+@pytest.mark.parametrize("subdir", ["../x", "C:/elsewhere", "D:x"])
+def test_a_subdir_outside_the_store_is_refused(user, workdir, subdir):
+    write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": "u", f"{GIT}SUBDIR": subdir})
     with pytest.raises(ConfigError):
         backend.resolve(workdir)
+
+
+def test_project_names_the_enclosing_checkout_from_a_subdirectory(user, workdir, tmp_path):
+    git("init", "--quiet", str(workdir))
+    write_settings(user, {"SZSDLC_BACKEND": "dir", f"{DIR}PATH": str(tmp_path / "t" / "{project}")})
+    (workdir / "src" / "deep").mkdir(parents=True)
+    assert backend.resolve(workdir / "src" / "deep").root == tmp_path / "t" / "myproj"
+
+
+@pytest.mark.parametrize("url, shown", [
+    ("https://ghp_secret@github.com/me/t.git", "https://***@github.com/me/t.git"),
+    ("https://me:hunter2@host/t.git", "https://***@host/t.git"),
+    ("ssh://git:pw@host/t.git", "ssh://git:***@host/t.git"),
+    ("ssh://git@host/t.git", "ssh://git@host/t.git"),
+    ("git@host:me/t.git", "git@host:me/t.git"),
+    ("/srv/t.git", "/srv/t.git"),
+])
+def test_credentials_in_the_url_are_never_shown(url, shown):
+    from szsdlc.backend.git import redact
+
+    assert redact(url) == shown
+
+
+def test_backend_show_and_errors_redact_the_url(user, workdir, tmp_path, capsys):
+    url = "https://ghp_secret@127.0.0.1:9/t.git"
+    write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": url})
+    chosen = backend.resolve(workdir)
+    assert "ghp_secret" not in chosen.summary()
+    assert run("backend") == 0
+    assert "ghp_secret" not in capsys.readouterr().out
+    with pytest.raises(ConfigError) as caught:
+        backend.project_root(workdir)
+    assert "ghp_secret" not in caught.value.render()
+
+
+def test_a_restored_store_keeps_its_subdir(user, bare, workdir, capsys):
+    write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": str(bare),
+                          f"{GIT}SUBDIR": "projects/{project}"})
+    assert run("init") == 0
+    chosen = backend.resolve(workdir)
+    assert backend.managed(chosen.store).root == chosen.store / "projects" / "myproj"
+
+
+def test_concurrent_registrations_keep_every_store(user, tmp_path):
+    import threading
+
+    from szsdlc.backend.dir import DirBackend
+
+    stores = [DirBackend(tmp_path / f"s{i}") for i in range(12)]
+    threads = [threading.Thread(target=backend._register, args=(s,)) for s in stores]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert set(backend._read_registry()) == {str(s.store) for s in stores}
+    assert not list(backend._registry_path().parent.glob("*.tmp"))
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +423,40 @@ def test_a_conflict_keeps_local_work_and_says_so(configured, bare, workdir, tmp_
     (configured.store / ".szsdlc" / "config.yml").write_text("project:\n  name: ours\n")
     report = backend.sync(configured, "test")
     assert not report.ok and "conflict" in report.problem
-    assert "ours" in (configured.store / ".szsdlc" / "config.yml").read_text()
+    assert (configured.store / ".szsdlc" / "config.yml").read_text() == "project:\n  name: ours\n"
+    assert not (configured.store / ".git" / "rebase-merge").exists()
+    assert not (configured.store / ".git" / "rebase-apply").exists()
+    assert git("status", "--porcelain", cwd=configured.store) == ""
+
+
+def test_a_rebase_that_times_out_is_aborted(configured, bare, workdir, tmp_path,
+                                           monkeypatch, capsys):
+    from szsdlc.backend import git as git_backend
+
+    run("init")
+    other = tmp_path / "other"
+    git("clone", "--quiet", str(bare), str(other))
+    (other / "theirs.md").write_text("x")
+    git("add", ".", cwd=other)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "theirs", cwd=other)
+    git("push", "-q", "origin", "HEAD:main", cwd=other)
+    (configured.store / "ours.md").write_text("y")
+
+    real = git_backend.GitBackend._git
+
+    def slow_rebase(self, *args, **kwargs):
+        if args[:1] == ("rebase",) and "--abort" not in args:
+            # Leave a rebase in progress, as one killed by the timeout would.
+            real(self, "rebase", "--quiet", "--exec", "false", args[-1], check=False,
+                 identity=True)
+            raise git_backend.GitError(list(args), None, "timed out after 45s")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(git_backend.GitBackend, "_git", slow_rebase)
+    report = backend.sync(configured, "test")
+    assert not report.ok and "timed out" in report.problem
+    assert not (configured.store / ".git" / "rebase-merge").exists()
+    assert (configured.store / "ours.md").read_text() == "y"
 
 
 def test_an_unreachable_remote_never_fails_the_command(configured, bare, workdir, capsys):
@@ -416,6 +506,71 @@ def test_a_clone_of_something_else_is_refused(user, bare, workdir, tmp_path):
                           f"{GIT}CLONE_PATH": str(clone)})
     with pytest.raises(ConfigError, match="is a clone of"):
         backend.project_root(workdir)
+
+
+def test_a_repository_without_origin_is_refused(user, bare, workdir, tmp_path):
+    clone = tmp_path / "lonely"
+    git("init", "--quiet", str(clone))
+    write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": str(bare),
+                          f"{GIT}CLONE_PATH": str(clone)})
+    with pytest.raises(ConfigError, match="no origin"):
+        backend.project_root(workdir)
+
+
+def test_a_clone_on_another_branch_is_refused(user, bare, workdir, tmp_path, capsys):
+    clone = tmp_path / "clone"
+    write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": str(bare),
+                          f"{GIT}CLONE_PATH": str(clone)})
+    assert run("init") == 0
+    write_settings(workdir / ".claude" / "settings.local.json", {f"{GIT}BRANCH": "tracker"})
+    with pytest.raises(ConfigError, match="not tracker"):
+        backend.project_root(workdir)
+    assert "tracker" not in git("--git-dir", str(bare), "branch", "--list")
+
+
+def test_a_clone_containing_the_working_tree_is_refused(user, workdir, tmp_path):
+    origin = tmp_path / "origin.git"
+    git("init", "--bare", "--quiet", str(origin))
+    git("init", "--quiet", str(workdir))
+    git("remote", "add", "origin", str(origin), cwd=workdir)
+    (workdir / "private.txt").write_text("not for the backend")
+    write_settings(workdir / ".claude" / "settings.json",
+                   {"SZSDLC_BACKEND": "git", f"{GIT}URL": str(origin), f"{GIT}CLONE_PATH": "."})
+    with pytest.raises(ConfigError, match="contains the working tree"):
+        backend.project_root(workdir / "sub")
+    assert git("--git-dir", str(origin), "rev-list", "--all") == ""
+
+
+def test_an_option_shaped_url_is_refused(user, workdir):
+    write_settings(user, {"SZSDLC_BACKEND": "git",
+                          f"{GIT}URL": "--upload-pack=touch /tmp/pwned"})
+    with pytest.raises(ConfigError, match="not a repository URL"):
+        backend.resolve(workdir)
+
+
+def test_a_subdir_symlinked_out_of_the_clone_is_refused(user, bare, workdir, tmp_path, capsys):
+    seed = tmp_path / "seed"
+    git("clone", "--quiet", str(bare), str(seed))
+    (seed / "escape").symlink_to(tmp_path / "outside")
+    git("add", ".", cwd=seed)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "seed", cwd=seed)
+    git("push", "-q", "origin", "HEAD:main", cwd=seed)
+    write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": str(bare),
+                          f"{GIT}SUBDIR": "escape"})
+    with pytest.raises(ConfigError, match="outside the clone"):
+        backend.project_root(workdir)
+
+
+def test_ignored_project_files_are_reported_not_dropped_silently(configured, bare, workdir,
+                                                                 capsys):
+    run("init")
+    (configured.store / ".gitignore").write_text("secret-notes/\n")
+    (configured.store / "secret-notes").mkdir()
+    (configured.store / "secret-notes" / "a.md").write_text("x")
+    report = backend.sync(configured, "test")
+    assert not report.ok and "secret-notes/" in report.problem and "ignored" in report.problem
+    assert report.pushed  # everything else still went out
+    assert "secret-notes/a.md" not in remote_files(bare)
 
 
 def test_an_unclonable_url_is_a_config_error(user, workdir, tmp_path):
@@ -497,6 +652,84 @@ def test_a_commit_outside_a_clone_says_so(configured, workdir):
     assert not report.ok and "not a git clone" in report.problem
 
 
+def test_an_edit_to_the_config_is_committed_too(configured, bare, workdir, capsys):
+    run("init")
+    config = configured.store / ".szsdlc" / "config.yml"
+    config.write_text(config.read_text() + "\n# tuned\n")
+    assert hooks.post_edit({"cwd": str(workdir), "tool_input": {"file_path": str(config)}}) == 0
+    assert git("status", "--porcelain", cwd=configured.store) == ""
+    assert git("log", "-1", "--format=%s", cwd=configured.store).strip() == "szsdlc: edit config.yml"
+
+
+def test_an_edit_outside_the_project_commits_nothing(configured, bare, workdir, capsys):
+    run("init")
+    (configured.store / "loose.md").write_text("x")
+    elsewhere = workdir / "code.py"
+    elsewhere.write_text("x")
+    assert hooks.post_edit({"cwd": str(workdir),
+                            "tool_input": {"file_path": str(elsewhere)}}) == 0
+    assert "loose.md" in git("status", "--porcelain", cwd=configured.store)
+
+
+def test_a_failed_edit_commit_is_reported_into_context(configured, workdir, monkeypatch, capsys):
+    run("init")
+    idea = configured.store / ".szsdlc" / "config.yml"
+    monkeypatch.setattr(backend, "commit_at",
+                        lambda *a, **k: backend.SyncReport(problem="index.lock exists"))
+    capsys.readouterr()
+    hooks.post_edit({"cwd": str(workdir), "tool_input": {"file_path": str(idea)}})
+    emitted = json.loads(capsys.readouterr().out)
+    assert "szsdlc backend commit: index.lock exists" in \
+        emitted["hookSpecificOutput"]["additionalContext"]
+
+
+def test_an_unexpected_sync_failure_is_still_reported(configured, workdir, monkeypatch, capsys):
+    run("init")
+
+    def explode(*args, **kwargs):
+        raise PermissionError("locks directory is read-only")
+
+    monkeypatch.setattr(backend, "sync_at", explode)
+    capsys.readouterr()
+    assert hooks.user_prompt_submit({"cwd": str(workdir)}) == 0
+    out = capsys.readouterr().out
+    assert "szsdlc backend sync: PermissionError: locks directory is read-only" in out
+
+
+def test_session_start_describes_the_state_after_the_pull(configured, bare, workdir,
+                                                          tmp_path, monkeypatch, capsys):
+    run("init")
+    other = tmp_path / "other"
+    git("clone", "--quiet", str(bare), str(other))
+    config = other / ".szsdlc" / "config.yml"
+    config.write_text(config.read_text() + "\n# from the other machine\n")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "theirs", cwd=other)
+    git("push", "-q", "origin", "HEAD:main", cwd=other)
+
+    seen = []
+    real = hooks._session
+    monkeypatch.setattr(hooks, "_session", lambda where: seen.append(real(where)) or seen[-1])
+    assert hooks.session_start({"cwd": str(workdir)}) == 0
+    assert len(seen) == 2  # loaded again once the pull changed things
+    assert "from the other machine" in (seen[-1].config.root / ".szsdlc" / "config.yml").read_text()
+
+
+def test_the_turn_end_validates_what_it_pulled(configured, bare, workdir, tmp_path, capsys):
+    run("init")
+    assert hooks.stop({"cwd": str(workdir)}) == hooks.EXIT_OK
+    other = tmp_path / "other"
+    git("clone", "--quiet", str(bare), str(other))
+    (other / "ideas").mkdir(exist_ok=True)
+    (other / "ideas" / "IDEA-0099.md").write_text(
+        "---\nid: IDEA-0099\nstatus: nonsense\ncaptured: 2026-01-01\n---\nbad\n")
+    git("add", ".", cwd=other)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "theirs", cwd=other)
+    git("push", "-q", "origin", "HEAD:main", cwd=other)
+    capsys.readouterr()
+    assert hooks.stop({"cwd": str(workdir)}) == hooks.EXIT_BLOCK
+    assert "IDEA-0099" in capsys.readouterr().err
+
+
 def test_prompt_hook_reports_a_failed_sync_into_context(configured, bare, workdir, capsys):
     run("init")
     bare.rename(bare.parent / "gone.git")
@@ -505,10 +738,14 @@ def test_prompt_hook_reports_a_failed_sync_into_context(configured, bare, workdi
     assert "szsdlc backend sync" in capsys.readouterr().out
 
 
-def test_backend_show_names_every_source(configured, workdir, capsys):
+def test_backend_show_names_every_source(configured, bare, user, workdir, capsys):
+    write_settings(workdir / ".claude" / "settings.local.json", {f"{GIT}BRANCH": "main"})
     assert run("backend") == 0
-    out = capsys.readouterr().out
-    assert "backend  git" in out and "settings.json" in out and "(default)" in out
+    rows = {line.split()[0]: line for line in capsys.readouterr().out.splitlines()}
+    assert rows["backend"].endswith(f"({user})")
+    assert rows["url"].endswith(f"{bare}  ({user})")
+    assert rows["branch"].endswith(f"main  ({workdir / '.claude' / 'settings.local.json'})")
+    assert rows["subdir"].endswith(".  (default)")
 
 
 def test_backend_show_defaults_to_workdir(workdir, capsys):

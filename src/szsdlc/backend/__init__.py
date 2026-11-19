@@ -45,9 +45,10 @@ import json
 import os
 import re
 import sys
+import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, ClassVar, Protocol
 
 from .. import settings as settings_module
@@ -91,6 +92,8 @@ class Context:
     project: str
     #: szsdlc's own hidden directory, for anything a backend keeps on the side.
     home: Path
+    #: The working tree the project belongs to, which a store must stay out of.
+    directory: Path | None = None
 
 
 class Backend(Protocol):
@@ -206,6 +209,9 @@ def subpath(setting: Setting | None, context: Context) -> str:
     if setting is None:
         return ""
     raw = setting.value.replace(PROJECT_PLACEHOLDER, context.project)
+    if PureWindowsPath(raw.strip()).drive:
+        raise ConfigError(f"{setting.key}={setting.value!r} names a drive, not a path in the store.",
+                          fix=f"make {setting.key} a relative path inside it")
     parts = [p for p in raw.replace("\\", "/").split("/") if p not in ("", ".")]
     if ".." in parts:
         raise ConfigError(f"{setting.key}={setting.value!r} leaves the store.",
@@ -263,8 +269,26 @@ def resolve(start: Path | str | None = None) -> Backend | None:
         known = ", ".join(f"{prefix}{k}" for k in sorted(cls.keys))
         raise ConfigError(f"{prefix}{unknown[0]} is not a setting of the {selection.type} backend.",
                           fix=f"remove it; {selection.type} reads {known}")
-    project = (settings_module.project_dir(start) or Path(start or Path.cwd()).resolve()).name
-    return cls.from_settings(selection.found, Context(project=project, home=home()))
+    directory = project_directory(start)
+    return cls.from_settings(selection.found,
+                             Context(project=directory.name, home=home(), directory=directory))
+
+
+def project_directory(start: Path | str | None = None) -> Path:
+    """The working tree `start` belongs to, whose name fills `{project}`.
+
+    The directory holding project settings when there is one, else the nearest
+    enclosing git checkout, else `start` itself — so a command run from a
+    subdirectory names the same project as one run from the top.
+    """
+    found = settings_module.project_dir(start)
+    if found is not None:
+        return found
+    here = Path(start or Path.cwd()).resolve()
+    for candidate in (here, *here.parents):
+        if (candidate / ".git").exists():
+            return candidate
+    return here
 
 
 # ---------------------------------------------------------------------------
@@ -289,17 +313,26 @@ def _read_registry() -> dict[str, dict]:
 
 
 def _register(backend: Backend) -> None:
-    entries = _read_registry()
     entry = {"type": backend.type, "state": backend.state()}
     key = str(backend.store)
-    if entries.get(key) == entry:
+    if _read_registry().get(key) == entry:
         return
-    entries[key] = entry
     path = _registry_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(entries, indent=2, sort_keys=True), encoding="utf-8")
-    os.replace(temporary, path)
+    # Read again under the lock: another process may have registered since.
+    with _locked(path):
+        entries = _read_registry()
+        entries[key] = entry
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=".stores-",
+                                             suffix=".tmp")
+        try:
+            with os.fdopen(handle, "w", encoding="utf-8") as out:
+                out.write(json.dumps(entries, indent=2, sort_keys=True))
+            os.replace(temporary, path)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(temporary)
+            raise
 
 
 def managed(path: Path | str | None) -> Backend | None:
@@ -324,7 +357,7 @@ def managed(path: Path | str | None) -> Backend | None:
 
 @contextlib.contextmanager
 def _locked(store: Path) -> Iterator[None]:
-    """One sync at a time per store: a hook and a command can overlap."""
+    """One writer at a time per path: a hook and a command can overlap."""
     try:
         import fcntl
     except ImportError:  # pragma: no cover - Windows: run unlocked
@@ -423,10 +456,10 @@ def sync_at(start: Path | str | None, reason: str, *,
     return sync(backend, reason, only_if_changed=only_if_changed)
 
 
-def describe_problem(report: SyncReport | None) -> str | None:
+def describe_problem(report: SyncReport | None, *, action: str = "sync") -> str | None:
     if report is None or report.ok:
         return None
-    text = f"szsdlc backend sync: {report.problem}"
+    text = f"szsdlc backend {action}: {report.problem}"
     if report.fix:
         text += f"\nFix: {report.fix}"
     return text
