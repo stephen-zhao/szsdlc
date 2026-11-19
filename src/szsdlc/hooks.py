@@ -6,8 +6,9 @@ tolerantly — on every write, and again as the turn ends — while `validate` r
 once, at the end, and strictly.
 
 When the project lives in a remote (see :mod:`szsdlc.backend`), the hooks are
-also what keep it in step: a pull as the session starts and before every
-prompt is answered, a push after every edit and as the turn ends. A failed sync
+also what keep it in step: a full sync as the session starts, before every
+prompt is answered and as the turn ends, and a local commit — no network —
+after every edit, so a turn reaches the remote once rather than per edit. A failed sync
 never blocks anything; it is said, and retried at the next hook.
 
 Every handler is a **silent no-op outside a szsdlc project**, so the plugin is
@@ -115,6 +116,16 @@ def _backend_sync(session, reason: str) -> str | None:
         return backend.describe_problem(backend.sync_at(session.config.root, reason))
     except Exception:  # pragma: no cover - defensive
         return None
+
+
+def _backend_commit(session, reason: str) -> None:
+    """Commit the project's changes locally, if it has a backend. No network."""
+    from . import backend
+
+    try:
+        backend.commit_at(session.config.root, reason)
+    except Exception:  # pragma: no cover - defensive
+        pass
 
 
 def _backend_line(session) -> str | None:
@@ -270,7 +281,7 @@ def post_edit(payload: dict[str, Any], cwd: str | None = None) -> int:
         render_module.sync(session.config, session.store, graph)
     except Exception:  # pragma: no cover - never break a turn over a redraw
         pass
-    _backend_sync(session, f"edit {path.name}")
+    _backend_commit(session, f"edit {path.name}")
     return EXIT_OK
 
 

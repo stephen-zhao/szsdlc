@@ -23,10 +23,13 @@ ordinary behaviour with `SZSDLC_BACKEND=workdir`. An unknown key in the
 selected backend's namespace is refused, because an ignored setting is one
 that does not do what it says.
 
-Syncs run before a prompt is answered and when a session starts, after a
-project file is edited and when a turn ends (the hooks), after any CLI command
-that changed a file, and before and after `szsdlc sync`. Every sync is
-best-effort: a command that succeeded is never reported as failed because the
+Inside a Claude Code turn, changes are only **committed** locally as they
+happen — after each edit, and after each CLI command Claude runs — and the
+remote is reached once, as the turn ends. A full sync (pull, then push) runs
+when a session starts, before a prompt is answered, when a turn ends, and on
+an explicit `szsdlc sync` or `szsdlc backend sync`. A CLI command typed in a
+terminal has no turn end to wait for, so it syncs as soon as it changes
+something. Every sync is best-effort: a command that succeeded is never reported as failed because the
 network was down. The change stays local, the problem is said once, and the
 next sync tries again.
 
@@ -138,6 +141,12 @@ class Backend(Protocol):
 
     def has_local_changes(self) -> bool:
         """Whether the store holds anything the remote has not seen."""
+
+    def commit(self, reason: str) -> SyncReport:
+        """Record local changes without reaching the remote. Never raises.
+
+        A backend with nothing to record locally does nothing.
+        """
 
     def sync(self, reason: str) -> SyncReport:
         """Bring remote changes in and send local ones out. Never raises."""
@@ -380,6 +389,29 @@ def sync(backend: Backend, reason: str, *, only_if_changed: bool = False) -> Syn
         if only_if_changed and not backend.has_local_changes():
             return None
         return backend.sync(reason)
+
+
+def commit(backend: Backend, reason: str) -> SyncReport:
+    """Record a store's local changes, without reaching the remote."""
+    with _locked(backend.store):
+        return backend.commit(reason)
+
+
+def commit_at(start: Path | str | None, reason: str) -> SyncReport | None:
+    """Commit whatever managed store serves `start`; None when there is none."""
+    backend = locate(start)
+    if backend is None:
+        return None
+    return commit(backend, reason)
+
+
+def in_claude_turn() -> bool:
+    """Whether this process runs inside a Claude Code session.
+
+    Claude Code sets `CLAUDECODE=1` in the shells it runs commands in. There,
+    the Stop hook pushes at the end of the turn, so commands need only commit.
+    """
+    return os.environ.get("CLAUDECODE") == "1"
 
 
 def sync_at(start: Path | str | None, reason: str, *,

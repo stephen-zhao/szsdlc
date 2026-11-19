@@ -194,6 +194,9 @@ def test_backends_are_pluggable(user, workdir, monkeypatch):
         def has_local_changes(self):
             return True
 
+        def commit(self, reason):
+            return backend.SyncReport()
+
         def sync(self, reason):
             calls.append(reason)
             return backend.SyncReport(pushed=True)
@@ -220,7 +223,8 @@ def test_dir_writes_straight_into_another_directory(user, workdir, tmp_path, cap
     assert run("capture", "kept elsewhere") == 0
     assert list(workdir.iterdir()) == []
     assert (store / "myproj" / ".szsdlc" / "config.yml").is_file()
-    # Nothing to sync, ever.
+    # Nothing to commit or sync, ever.
+    assert backend.commit_at(workdir, "x").ok
     assert backend.sync_at(workdir, "x", only_if_changed=True) is None
     report = backend.sync_at(workdir, "x")
     assert report.ok and not report.pulled and not report.pushed
@@ -448,18 +452,49 @@ def test_session_start_says_where_the_files_are(configured, workdir, capsys):
     assert f"szsdlc project files: {configured.store}" in capsys.readouterr().out
 
 
-def test_edit_and_stop_hooks_push(configured, bare, workdir, capsys):
+def test_an_edit_commits_locally_and_the_turn_end_pushes(configured, bare, workdir, capsys):
     run("init")
     run("capture", "one")
+    pushed = git("--git-dir", str(bare), "rev-parse", "main")
     idea = next((configured.store / "ideas").rglob("*.md"))
+
     idea.write_text(idea.read_text() + "\nmore\n")
     payload = {"cwd": str(workdir), "tool_input": {"file_path": str(idea)}}
     assert hooks.post_edit(payload) == 0
-    assert last_commit(bare).startswith("szsdlc: edit")
+    assert git("log", "-1", "--format=%s", cwd=configured.store).startswith("szsdlc: edit")
+    assert git("status", "--porcelain", cwd=configured.store) == ""
+    assert git("--git-dir", str(bare), "rev-parse", "main") == pushed  # nothing sent yet
 
-    idea.write_text(idea.read_text() + "\neven more\n")
     hooks.stop({"cwd": str(workdir)})
-    assert last_commit(bare) == "szsdlc: turn end"
+    assert git("--git-dir", str(bare), "rev-parse", "main") != pushed
+    assert "szsdlc: edit" in git("--git-dir", str(bare), "log", "--format=%s", "main")
+
+
+def test_inside_a_claude_turn_commands_only_commit(configured, bare, workdir,
+                                                   monkeypatch, capsys):
+    run("init")
+    pushed = git("--git-dir", str(bare), "rev-parse", "main")
+    monkeypatch.setenv("CLAUDECODE", "1")
+    assert run("capture", "mid-turn") == 0
+    assert git("log", "-1", "--format=%s", cwd=configured.store).strip() == "szsdlc: capture"
+    assert git("--git-dir", str(bare), "rev-parse", "main") == pushed
+
+    hooks.stop({"cwd": str(workdir)})
+    assert "szsdlc: capture" in git("--git-dir", str(bare), "log", "--format=%s", "main")
+
+
+def test_an_explicit_sync_inside_a_turn_still_pushes(configured, bare, workdir,
+                                                     monkeypatch, capsys):
+    run("init")
+    monkeypatch.setenv("CLAUDECODE", "1")
+    (configured.store / "note.md").write_text("x")
+    assert run("sync") == 0
+    assert "note.md" in remote_files(bare)
+
+
+def test_a_commit_outside_a_clone_says_so(configured, workdir):
+    report = backend.commit(configured, "x")  # never materialized
+    assert not report.ok and "not a git clone" in report.problem
 
 
 def test_prompt_hook_reports_a_failed_sync_into_context(configured, bare, workdir, capsys):

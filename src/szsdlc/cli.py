@@ -1491,8 +1491,12 @@ def run(argv: Sequence[str] | None = None) -> int:
 
     status = runner(args)
     try:
-        report = backend_module.sync_at(args.project, f"{args.command}",
-                                       only_if_changed=args.command != "sync")
+        if args.command != "sync" and backend_module.in_claude_turn():
+            # The Stop hook pushes once, as the turn ends.
+            report = backend_module.commit_at(args.project, args.command)
+        else:
+            report = backend_module.sync_at(args.project, args.command,
+                                           only_if_changed=args.command != "sync")
     except SzsdlcError as exc:  # pragma: no cover - settings went bad mid-command
         print(exc.render(), file=sys.stderr)
     else:

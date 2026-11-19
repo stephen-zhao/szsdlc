@@ -95,8 +95,8 @@ initiative, because both write to the project and to the codebase.
 
 If the session began with `szsdlc project files: <path>`, a backend keeps the
 project in that directory or a clone of a remote, not in the working directory.
-Edit entity files at that path, and never copy them into the repo. Syncing
-with a remote is automatic. `szsdlc backend` shows where it is and why.
+Edit entity files at that path, and never copy them into the repo. Changes are committed as you
+make them and pushed when the turn ends. `szsdlc backend` shows where it is and why.
 
 ## When something looks wrong
 

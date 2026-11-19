@@ -131,7 +131,7 @@ The plugin wires five:
 | `SessionStart` | Pulls from the [backend](#backends-where-a-project-is-kept)'s remote, if any, then prepends `szsdlc context` — a session begins knowing the state without searching for it |
 | `UserPromptSubmit` | Pulls from and pushes to the backend's remote, if any, before Claude answers. Silent unless that failed |
 | `PreToolUse` | Blocks edits to generated files, and injects the standards governing the file being edited |
-| `PostToolUse` | Runs `sync` when an entity or roadmap file changes, then pushes to the backend's remote |
+| `PostToolUse` | Runs `sync` when an entity or roadmap file changes, then commits locally to the backend — no network |
 | `Stop` | Runs `sync`, then `validate` — blocking on errors only — and pushes to the backend's remote either way |
 
 `Stop` fires when Claude finishes responding — the end of a turn, and the
@@ -233,13 +233,21 @@ from. `szsdlc init` creates the project wherever the backend keeps it.
 
 ### Syncing
 
-With a backend that has a remote, a sync runs when a session starts, before
-each prompt is answered, after each edit to a project file, when a turn ends,
-after any CLI command that changed a file, and before and after `szsdlc sync`.
-`szsdlc backend sync` runs one on demand.
+With a backend that has a remote, the remote is reached at turn boundaries,
+not per change:
 
-For `git`, a sync commits everything in the clone, rebases onto the remote
-branch, and pushes. It never turns a successful command into a failure. If the
+| When | What |
+|---|---|
+| session start, before each prompt, turn end | full sync: pull, then push |
+| after each edit, and each CLI command Claude runs | local commit only — no network |
+| `szsdlc sync`, `szsdlc backend sync` | full sync, on demand |
+| a CLI command typed in a terminal | full sync if it changed anything, since no turn end follows |
+
+Commands tell the two cases apart by `CLAUDECODE=1`, which Claude Code sets in
+the shells it runs commands in.
+
+For `git`, a commit records everything in the clone; a sync commits, rebases
+onto the remote branch, and pushes. It never turns a successful command into a failure. If the
 remote cannot be reached, or a rebase conflicts, the changes stay committed in
 the clone. The problem is reported on stderr (or in Claude's context, from the
 prompt hook), and the next sync tries again. git runs with prompts disabled and
@@ -250,7 +258,7 @@ agent or a credential helper.
 
 A backend (sftp, http, ...) is a class implementing the `Backend` protocol in
 [`backend/__init__.py`](../src/szsdlc/backend/__init__.py): its `type` and
-`keys`, `from_settings`, `materialize`, `has_local_changes` and `sync`, plus
+`keys`, `from_settings`, `materialize`, `has_local_changes`, `commit` and `sync`, plus
 `state`/`restore` so a store found on disk can be recognised again. Register it
 in `BACKENDS`. Nothing outside that package knows which backend is in use.
 [`dir.py`](../src/szsdlc/backend/dir.py) is the smallest example.

@@ -12,8 +12,8 @@
     SZSDLC_BACKEND_GIT_CLONE_PATH  the exact clone, overriding CLONE_ROOT.
                                    `{project}` allowed
 
-A sync commits everything in the clone, rebases onto the remote branch and
-pushes. History stays linear, and two machines writing different entities —
+A commit records everything in the clone locally. A sync commits, rebases
+onto the remote branch and pushes. History stays linear, and two machines writing different entities —
 the ordinary case, since every entity is its own file or section — rebase
 cleanly. When a rebase does conflict it is abandoned rather than left half
 done: the local commits stay, nothing is pushed, and the problem names the
@@ -198,6 +198,19 @@ class GitBackend:
             return True
         count = self._git("rev-list", "--count", f"{upstream}..HEAD", check=False)
         return (count.stdout.strip() or "0") != "0"
+
+    def commit(self, reason: str) -> SyncReport:
+        report = SyncReport()
+        if not (self.store / ".git").exists():
+            report.problem = f"{self.store} is not a git clone."
+            report.fix = "remove it; the next szsdlc command clones it again"
+            return report
+        try:
+            self._commit(reason)
+        except GitError as exc:
+            report.problem = str(exc)
+            report.fix = f"git -C {self.store} status"
+        return report
 
     def sync(self, reason: str) -> SyncReport:
         report = SyncReport()

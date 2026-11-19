@@ -23,6 +23,8 @@ def isolated_settings(tmp_path_factory, monkeypatch):
     claude_dir = tmp_path_factory.mktemp("claude-config")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
     monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    # The suite may itself run inside Claude Code; tests opt into a turn.
+    monkeypatch.delenv("CLAUDECODE", raising=False)
     for key in list(os.environ):
         if key.startswith("SZSDLC_BACKEND"):
             monkeypatch.delenv(key)
