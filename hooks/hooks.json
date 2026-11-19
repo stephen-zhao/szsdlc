@@ -41,7 +41,7 @@
           {
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/szsdlc hook post-edit",
-            "timeout": 60
+            "timeout": 30
           }
         ]
       }
