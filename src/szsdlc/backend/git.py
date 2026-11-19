@@ -164,8 +164,11 @@ class GitBackend:
                    SSH_ASKPASS="", GCM_INTERACTIVE="never")
         env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
         try:
-            result = subprocess.run(command, capture_output=True, text=True, env=env,
-                                    timeout=timeout, stdin=subprocess.DEVNULL)
+            # An argv list with no shell; the URL is vetted in from_settings and
+            # passed after `--`, and transports are allowlisted above.
+            result = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+                command, capture_output=True, text=True, env=env,
+                timeout=timeout, stdin=subprocess.DEVNULL)
         except FileNotFoundError:
             raise GitError(list(args), None, "git is not installed") from None
         except subprocess.TimeoutExpired:
@@ -180,8 +183,10 @@ class GitBackend:
         cwd = self.store if (self.store / ".git").exists() else None
         command = ["git"] + (["-C", str(cwd)] if cwd else []) + ["config", "--get", key]
         try:
-            result = subprocess.run(command, capture_output=True, text=True,
-                                    timeout=LOCAL_TIMEOUT, stdin=subprocess.DEVNULL)
+            # An argv list with no shell, reading one fixed key.
+            result = subprocess.run(  # nosemgrep: python.lang.security.audit.dangerous-subprocess-use-audit
+                command, capture_output=True, text=True,
+                timeout=LOCAL_TIMEOUT, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.TimeoutExpired):
             return ""
         return result.stdout.strip()
