@@ -1484,10 +1484,11 @@ def run(argv: Sequence[str] | None = None) -> int:
         # An explicit sync is also a pull, so it renders what others pushed.
         try:
             backend_module.project_root(args.project)
+            backend_module.warn(backend_module.sync_at(args.project, "sync"))
         except SzsdlcError:
             pass  # the command itself will say it properly
-        else:
-            backend_module.warn(backend_module.sync_at(args.project, "sync"))
+        except OSError as exc:
+            _warn_backend(exc)
 
     status = runner(args)
     try:
@@ -1495,13 +1496,21 @@ def run(argv: Sequence[str] | None = None) -> int:
             # The Stop hook pushes once, as the turn ends.
             report = backend_module.commit_at(args.project, args.command)
         else:
-            report = backend_module.sync_at(args.project, args.command,
-                                           only_if_changed=args.command != "sync")
+            # After an explicit sync, only what it rendered is left to send.
+            report = backend_module.sync_at(args.project, args.command, only_if_changed=True)
     except SzsdlcError as exc:  # pragma: no cover - settings went bad mid-command
         print(exc.render(), file=sys.stderr)
+    except OSError as exc:
+        _warn_backend(exc)
     else:
         backend_module.warn(report)
     return status
+
+
+def _warn_backend(exc: OSError) -> None:
+    """A backend that failed on the filesystem never fails a command that worked."""
+    print(f"szsdlc backend sync: {exc}; changes are kept locally.\n"
+          "Fix: szsdlc backend sync", file=sys.stderr)
 
 
 #: Commands that do their own syncing, or none: `hook` because each handler

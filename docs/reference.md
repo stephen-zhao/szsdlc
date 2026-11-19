@@ -235,8 +235,9 @@ from; credentials embedded in a URL are redacted there and everywhere else it
 is printed. `szsdlc init` creates the project wherever the backend keeps it.
 
 An existing clone is used only if it is a clone of `SZSDLC_BACKEND_GIT_URL`
-with `SZSDLC_BACKEND_GIT_BRANCH` (when set) checked out; otherwise it is
-refused rather than repurposed. A clone that would contain the working tree,
+with `SZSDLC_BACKEND_GIT_BRANCH` (or, when unset, the remote's default branch)
+checked out; otherwise it is refused rather than repurposed. This is checked
+again before every commit and sync. A clone that would contain the working tree,
 and a `SUBDIR` that resolves outside the clone, are refused too.
 
 ### Syncing
@@ -263,7 +264,9 @@ times out is aborted, never left half done. Files in the project that the
 repository's `.gitignore` excludes are not forced in, but a sync names them
 rather than reporting success. git runs with prompts disabled and
 a timeout, so credentials must work without being typed in, through an SSH
-agent or a credential helper.
+agent or a credential helper. Only the `file`, `git`, `http`, `https` and `ssh`
+transports are allowed; a `<helper>::<address>` URL, which would run a
+`git-remote-<helper>` program, is refused.
 
 ### Adding a backend
 

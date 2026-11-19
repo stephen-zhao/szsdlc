@@ -304,12 +304,29 @@ def _registry_path() -> Path:
     return home() / "stores.json"
 
 
-def _read_registry() -> dict[str, dict]:
+def _read_registry(*, strict: bool = False) -> dict[str, dict]:
+    """The registry; empty when there is none.
+
+    A registry that exists but cannot be read is empty for lookups, but
+    `strict` raises instead, so a write never replaces other stores' entries
+    with just its own.
+    """
+    path = _registry_path()
     try:
-        loaded = json.loads(_registry_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
         return {}
-    return loaded if isinstance(loaded, dict) else {}
+    except (OSError, ValueError) as exc:
+        if strict:
+            raise ConfigError(f"{path} cannot be read ({exc}).",
+                              fix=f"repair or remove {path}; szsdlc rebuilds it") from None
+        return {}
+    if not isinstance(loaded, dict):
+        if strict:
+            raise ConfigError(f"{path} is not a mapping of stores.",
+                              fix=f"repair or remove {path}; szsdlc rebuilds it")
+        return {}
+    return loaded
 
 
 def _register(backend: Backend) -> None:
@@ -320,7 +337,7 @@ def _register(backend: Backend) -> None:
     path = _registry_path()
     # Read again under the lock: another process may have registered since.
     with _locked(path):
-        entries = _read_registry()
+        entries = _read_registry(strict=True)
         entries[key] = entry
         path.parent.mkdir(parents=True, exist_ok=True)
         handle, temporary = tempfile.mkstemp(dir=path.parent, prefix=".stores-",
@@ -365,7 +382,8 @@ def _locked(store: Path) -> Iterator[None]:
         return
     lock_dir = home() / "locks"
     lock_dir.mkdir(parents=True, exist_ok=True)
-    name = hashlib.sha256(str(store).encode("utf-8")).hexdigest()[:16]
+    # Resolved, so two paths naming one clone through a symlink share a lock.
+    name = hashlib.sha256(str(Path(store).resolve()).encode("utf-8")).hexdigest()[:16]
     with open(lock_dir / f"{name}.lock", "w") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:

@@ -94,15 +94,38 @@ def _session(start: Path | str | None):
     a session, and whatever went wrong will be said properly the next time the
     user runs a command themselves.
     """
+    return _load(start)[0]
+
+
+def _load(start: Path | str | None):
+    """(session, None), or (None, what went wrong as a short message)."""
     from .cli import Session
     from .errors import SzsdlcError
 
     try:
-        return Session(str(start) if start else None)
-    except SzsdlcError:
+        return Session(str(start) if start else None), None
+    except SzsdlcError as exc:
+        return None, exc.render()
+    except Exception as exc:  # pragma: no cover - defensive
+        return None, f"{type(exc).__name__}: {exc}"
+
+
+def _backend_failure(start: Path | str | None, error: str | None) -> str | None:
+    """Why a project kept by a backend could not be loaded, if that is the case.
+
+    No project at all is the ordinary state of most directories a hook runs in,
+    and stays silent. But a selected backend means the user expects one, and a
+    clone that failed or settings that are wrong are worth saying.
+    """
+    from . import backend
+
+    if error is None:
         return None
-    except Exception:  # pragma: no cover - defensive
-        return None
+    try:
+        selected = backend.select(start).type != backend.WORKDIR
+    except Exception:  # settings unreadable: that is the error itself
+        selected = True
+    return f"szsdlc backend: {error}" if selected else None
 
 
 def _backend_sync(session, reason: str) -> tuple[str | None, bool]:
@@ -177,15 +200,22 @@ def session_start(payload: dict[str, Any], cwd: str | None = None) -> int:
     from .graph import Graph
 
     where = cwd or payload.get("cwd")
-    session = _session(where)
+    session, error = _load(where)
     if session is None:
+        failure = _backend_failure(where, error)
+        if failure:
+            print(failure)
         return EXIT_OK
 
     # Pull before the store is read, so the counters describe the remote's state;
     # a pull can change the config itself, so the session is loaded again.
     problem, pulled = _backend_sync(session, "session start")
     if pulled:
-        session = _session(where) or session
+        session, error = _load(where)
+        if session is None:
+            print("\n".join(line for line in (problem, f"szsdlc: after pulling, {error}")
+                            if line))
+            return EXIT_OK
 
     graph = Graph(session.config, session.store, session.ids)
     built = context_module.build(session.config, session.store, graph)
@@ -209,8 +239,12 @@ def user_prompt_submit(payload: dict[str, Any], cwd: str | None = None) -> int:
     Silent unless the sync failed; stdout here enters the model's context, and
     a problem is worth the tokens where a success is not.
     """
-    session = _session(cwd or payload.get("cwd"))
+    where = cwd or payload.get("cwd")
+    session, error = _load(where)
     if session is None:
+        failure = _backend_failure(where, error)
+        if failure:
+            print(failure)
         return EXIT_OK
     problem, _ = _backend_sync(session, "before prompt")
     if problem:
@@ -362,13 +396,17 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
     from .graph import Graph
 
     where = cwd or payload.get("cwd")
-    session = _session(where)
+    session, error = _load(where)
     if session is None:
+        failure = _backend_failure(where, error)
+        if failure:
+            print(failure, file=sys.stderr)
         return EXIT_OK
 
     graph = Graph(session.config, session.store, session.ids)
+    rendering = option("sync_on_turn_end", default=True)
 
-    if option("sync_on_turn_end", default=True):
+    if rendering:
         try:
             # A hand-edited generated file is a blocking error below, and the
             # evidence for it is the file itself.
@@ -383,8 +421,22 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
     if problem:
         print(problem, file=sys.stderr)
     if pulled:
-        session = _session(where) or session
+        # Judge what was pulled, not what was here before: reload, and redraw
+        # the views from the pulled entities so they are not reported stale.
+        session, error = _load(where)
+        if session is None:
+            print(f"szsdlc: after pulling, {error}", file=sys.stderr)
+            return EXIT_BLOCK
         graph = Graph(session.config, session.store, session.ids)
+        if rendering:
+            try:
+                render_module.sync(session.config, session.store, graph,
+                                   should_keep_hand_edited=True)
+            except Exception:  # pragma: no cover - never break a turn over a redraw
+                pass
+            redraw_problem = _backend_commit(session, "render after pull")
+            if redraw_problem:
+                print(redraw_problem, file=sys.stderr)
 
     findings = validate_module.run(session.config, session.store, graph)
     errors = [f for f in findings if f.is_error]

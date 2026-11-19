@@ -84,23 +84,28 @@ def project_dir(start: Path | str | None = None) -> Path | None:
     """The directory whose `.claude/` holds project settings for `start`.
 
     `$CLAUDE_PROJECT_DIR` when Claude Code provides it — the hooks and every
-    command Claude runs see it — and otherwise the nearest ancestor of `start`
-    with a `.claude/settings*.json`, never counting the user directory itself.
+    command Claude runs see it — unless `start` lies outside it in another
+    project with settings of its own (`szsdlc -C <another project>`).
+    Otherwise the nearest ancestor of `start` with a `.claude/settings*.json`,
+    never counting the user directory itself.
     """
-    explicit = os.environ.get("CLAUDE_PROJECT_DIR")
-    if explicit:
-        return Path(explicit).resolve()
-
     here = Path(start or Path.cwd()).resolve()
     if here.is_file():
         here = here.parent
+
+    explicit = os.environ.get("CLAUDE_PROJECT_DIR")
+    claude_project = Path(explicit).resolve() if explicit else None
+    if claude_project is not None and (
+            start is None or here == claude_project or claude_project in here.parents):
+        return claude_project
+
     user_dir = _resolved(claude_config_dir())
     for candidate in (here, *here.parents):
         if _resolved(candidate / ".claude") == user_dir:
             continue
         if any(p.is_file() for p in project_settings_paths(candidate)):
             return candidate
-    return None
+    return claude_project
 
 
 def load(start: Path | str | None = None) -> dict[str, Setting]:

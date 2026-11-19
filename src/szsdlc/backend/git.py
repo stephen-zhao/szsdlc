@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, ClassVar
@@ -44,8 +45,16 @@ from . import (
     subpath,
 )
 
-#: Seconds any one git invocation may take.
+#: Seconds any one git invocation that may reach the network can take.
 TIMEOUT = 45
+
+#: Seconds a purely local invocation can take. A local commit makes three of
+#: them, inside an edit hook that Claude Code kills after 30 seconds.
+LOCAL_TIMEOUT = 8
+
+#: The transports git may use. Everything else — `ext::`, and any `foo::` URL
+#: that would launch a `git-remote-foo` helper found on PATH — is refused.
+PROTOCOLS = ("file", "git", "http", "https", "ssh")
 
 #: Used only when the user has no git identity configured, so a commit in the
 #: hidden clone does not fail on a machine that never needed one before.
@@ -63,13 +72,16 @@ def redact(url: str) -> str:
         parts = urlsplit(url)
     except ValueError:
         return url
-    if "@" not in parts.netloc:
-        return url
-    userinfo, host = parts.netloc.rsplit("@", 1)
-    if parts.scheme in ("http", "https") or ":" in userinfo:
-        user = "" if parts.scheme in ("http", "https") else userinfo.split(":", 1)[0] + ":"
-        return urlunsplit(parts._replace(netloc=f"{user}***@{host}"))
-    return url
+    if parts.query:
+        # `?access_token=...` and the like: a query has no business in a git
+        # remote other than to carry a secret.
+        parts = parts._replace(query="***")
+    if "@" in parts.netloc:
+        userinfo, host = parts.netloc.rsplit("@", 1)
+        if parts.scheme in ("http", "https") or ":" in userinfo:
+            user = "" if parts.scheme in ("http", "https") else userinfo.split(":", 1)[0] + ":"
+            parts = parts._replace(netloc=f"{user}***@{host}")
+    return urlunsplit(parts) if parts != urlsplit(url) else url
 
 
 class GitError(Exception):
@@ -136,10 +148,13 @@ class GitBackend:
     # -- plumbing -----------------------------------------------------------
 
     def _git(self, *args: str, cwd: Path | None = None, check: bool = True,
-             identity: bool = False) -> subprocess.CompletedProcess:
+             identity: bool = False, timeout: int = TIMEOUT) -> subprocess.CompletedProcess:
         cwd = self.store if cwd is None else cwd
-        # `ext::` runs a command; git refuses it by default, and so do we, explicitly.
-        command = ["git", "-c", "protocol.ext.allow=never"]
+        # Only the listed transports: `ext::` runs a command, and a `foo::` URL
+        # runs whatever `git-remote-foo` is on PATH.
+        command = ["git", "-c", "protocol.allow=never"]
+        for protocol in PROTOCOLS:
+            command += ["-c", f"protocol.{protocol}.allow=always"]
         if identity:
             for key, value in zip(("user.name", "user.email"), FALLBACK_IDENTITY):
                 if not self._config(key):
@@ -150,11 +165,13 @@ class GitBackend:
         env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
         try:
             result = subprocess.run(command, capture_output=True, text=True, env=env,
-                                    timeout=TIMEOUT, stdin=subprocess.DEVNULL)
+                                    timeout=timeout, stdin=subprocess.DEVNULL)
         except FileNotFoundError:
             raise GitError(list(args), None, "git is not installed") from None
         except subprocess.TimeoutExpired:
-            raise GitError(list(args), None, f"timed out after {TIMEOUT}s") from None
+            raise GitError(list(args), None, f"timed out after {timeout}s") from None
+        except OSError as exc:  # git present but not runnable, say
+            raise GitError(list(args), None, str(exc)) from None
         if check and result.returncode != 0:
             raise GitError(list(args), result)
         return result
@@ -164,7 +181,7 @@ class GitBackend:
         command = ["git"] + (["-C", str(cwd)] if cwd else []) + ["config", "--get", key]
         try:
             result = subprocess.run(command, capture_output=True, text=True,
-                                    timeout=TIMEOUT, stdin=subprocess.DEVNULL)
+                                    timeout=LOCAL_TIMEOUT, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.TimeoutExpired):
             return ""
         return result.stdout.strip()
@@ -173,7 +190,14 @@ class GitBackend:
         return self._git(*args, check=False).returncode == 0
 
     def _head_branch(self) -> str:
-        return self._git("symbolic-ref", "--short", "HEAD", check=False).stdout.strip()
+        return self._git("symbolic-ref", "--short", "HEAD", check=False,
+                         timeout=LOCAL_TIMEOUT).stdout.strip()
+
+    def _remote_default(self) -> str:
+        """The remote's default branch as the clone recorded it; "" if unknown."""
+        ref = self._git("symbolic-ref", "--short", "refs/remotes/origin/HEAD", check=False,
+                        timeout=LOCAL_TIMEOUT).stdout.strip()
+        return ref.split("/", 1)[1] if ref.startswith("origin/") else ""
 
     def _branch(self) -> str:
         return self.branch or self._head_branch() or "main"
@@ -184,22 +208,11 @@ class GitBackend:
         local = self.store
         self._refuse_overlap()
         if (local / ".git").exists():
-            origin = self._config("remote.origin.url")
-            if origin != self.url:
-                held = f"a clone of {redact(origin)}" if origin else "a repository with no origin"
-                raise ConfigError(
-                    f"{local} is {held}, not a clone of {redact(self.url)}.",
-                    fix="point SZSDLC_BACKEND_GIT_CLONE_PATH elsewhere, or remove that clone")
-            head = self._head_branch()
-            if self.branch and head != self.branch:
-                raise ConfigError(
-                    f"{local} has {head or 'a detached HEAD'} checked out, "
-                    f"not {self.branch}.",
-                    fix=f"git -C {local} checkout {self.branch}, or point "
-                        "SZSDLC_BACKEND_GIT_CLONE_PATH elsewhere")
+            self._verify_clone()
             self._refuse_escape()
             return
-        if local.exists() and any(local.iterdir()):
+        existed = local.exists()
+        if existed and any(local.iterdir()):
             raise ConfigError(f"{local} exists and is not a clone of {redact(self.url)}.",
                               fix="point SZSDLC_BACKEND_GIT_CLONE_PATH at an empty or new "
                                   "directory")
@@ -220,11 +233,42 @@ class GitBackend:
                               check=False)
                     self._git("clean", "-fdq", check=False)
         except GitError as exc:
+            # A clone killed part way leaves a directory the next attempt would
+            # refuse as foreign; it was empty or absent before, so clear it.
+            if existed:
+                for child in local.iterdir():
+                    if child.is_dir() and not child.is_symlink():
+                        shutil.rmtree(child, ignore_errors=True)
+                    else:
+                        child.unlink(missing_ok=True)
+            else:
+                shutil.rmtree(local, ignore_errors=True)
             raise ConfigError(f"could not clone {redact(self.url)} into {local}: "
                               f"{self._redacted(exc)}",
                               fix="check SZSDLC_BACKEND_GIT_URL and your git credentials, "
                                   "then rerun") from None
         self._refuse_escape()
+
+    def _verify_clone(self) -> None:
+        """The clone is of our URL, on our branch — or it is not used at all.
+
+        Checked on reuse and again before every commit and sync, because a
+        store found by path is restored from the registry without settings.
+        """
+        local = self.store
+        origin = self._config("remote.origin.url")
+        if origin != self.url:
+            held = f"a clone of {redact(origin)}" if origin else "a repository with no origin"
+            raise ConfigError(
+                f"{local} is {held}, not a clone of {redact(self.url)}.",
+                fix="point SZSDLC_BACKEND_GIT_CLONE_PATH elsewhere, or remove that clone")
+        head = self._head_branch()
+        wanted = self.branch or self._remote_default()
+        if wanted and head != wanted:
+            raise ConfigError(
+                f"{local} has {head or 'a detached HEAD'} checked out, not {wanted}.",
+                fix=f"git -C {local} checkout {wanted}, or point "
+                    "SZSDLC_BACKEND_GIT_CLONE_PATH elsewhere")
 
     def _refuse_overlap(self) -> None:
         """A clone holding the working tree would commit and push all of it."""
@@ -273,7 +317,10 @@ class GitBackend:
             report.fix = "remove it; the next szsdlc command clones it again"
             return report
         try:
+            self._verify_clone()
             self._commit(reason)
+        except ConfigError as exc:
+            report.problem, report.fix = exc.problem, exc.fix
         except GitError as exc:
             report.problem = self._redacted(exc)
             report.fix = f"git -C {self.store} status"
@@ -285,13 +332,19 @@ class GitBackend:
             report.problem = f"{self.store} is not a git clone."
             report.fix = "remove it; the next szsdlc command clones it again"
             return report
-        branch = self._branch()
         try:
+            self._verify_clone()
+            branch = self._branch()
             self._commit(reason)
             if self._fetch(report) and self._integrate(branch, report):
+                if report.pulled:
+                    # What was pulled may have turned SUBDIR into a symlink out.
+                    self._refuse_escape()
                 self._push(branch, report)
             if report.ok:
                 self._check_ignored(report)
+        except ConfigError as exc:
+            report.problem, report.fix = exc.problem, exc.fix
         except GitError as exc:
             # A rebase that timed out is still in progress; never leave it so.
             self._abort_rebase()
@@ -326,11 +379,12 @@ class GitBackend:
             report.fix = f"git -C {self.store} check-ignore -v {ignored[0]}"
 
     def _commit(self, reason: str) -> None:
-        self._git("add", "--all")
-        if self._git("diff", "--cached", "--quiet", check=False).returncode == 0:
+        self._git("add", "--all", timeout=LOCAL_TIMEOUT)
+        if self._git("diff", "--cached", "--quiet", check=False,
+                     timeout=LOCAL_TIMEOUT).returncode == 0:
             return
         self._git("commit", "--quiet", "--no-verify", "-m", f"szsdlc: {reason}",
-                  identity=True)
+                  identity=True, timeout=LOCAL_TIMEOUT)
 
     def _fetch(self, report: SyncReport) -> bool:
         try:
