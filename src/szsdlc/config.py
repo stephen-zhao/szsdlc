@@ -983,8 +983,24 @@ def load_data(root: Path) -> dict[str, Any]:
 
 
 def load(start: Path | str | None = None) -> Config:
-    """Locate, merge, validate and resolve the config for the project at `start`."""
-    root = find_project_root(start)
+    """Locate, merge, validate and resolve the config for the project at `start`.
+
+    A configured backend (see :mod:`szsdlc.backend`) takes precedence over
+    discovery: the project root is then wherever the backend keeps it, created
+    on first use, rather than anything above `start`.
+    """
+    from . import backend
+
+    root = backend.project_root(start)
+    if root is not None:
+        if not config_path_for(root).is_file():
+            raise ConfigError(
+                f"no szsdlc project in {root}, where the configured backend keeps it.",
+                fix="szsdlc init",
+                see="szsdlc backend",
+            )
+    else:
+        root = find_project_root(start)
     if root is None:
         here = Path(start or Path.cwd()).resolve()
         raise ConfigError(

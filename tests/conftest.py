@@ -14,6 +14,21 @@ from szsdlc import sections
 from szsdlc.ids import IdSpace
 
 
+@pytest.fixture(autouse=True)
+def isolated_settings(tmp_path_factory, monkeypatch):
+    """Keep the developer's own Claude settings — and any backend they select —
+    out of every test. A test that wants a backend configures one itself."""
+    import os
+
+    claude_dir = tmp_path_factory.mktemp("claude-config")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    for key in list(os.environ):
+        if key.startswith("SZSDLC_BACKEND"):
+            monkeypatch.delenv(key)
+    return claude_dir
+
+
 @pytest.fixture
 def make_project(tmp_path):
     """Build a project rooted at tmp_path and return its Config."""

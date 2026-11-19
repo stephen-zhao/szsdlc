@@ -101,6 +101,7 @@ trace <ref> [--depth]   relations both ways, back to the idea
 standards match <path>  conventions governing these paths
 sync                    regenerate every view and record; silent, never validates
 validate                every consistency rule; silent when clean
+backend [show|sync]     where the project is kept; sync it with its remote now
 ```
 
 Every command is designed to be called by an agent. Mutations report the
@@ -123,14 +124,15 @@ written as documentation as much as data.
 
 ## Hooks
 
-The plugin wires four:
+The plugin wires five:
 
 | Event | What it does |
 |---|---|
-| `SessionStart` | Prepends `szsdlc context` — a session begins knowing the state without searching for it |
+| `SessionStart` | Pulls from the [backend](#backends-where-a-project-is-kept)'s remote, if any, then prepends `szsdlc context` — a session begins knowing the state without searching for it |
+| `UserPromptSubmit` | Pulls from and pushes to the backend's remote, if any, before Claude answers. Silent unless that failed |
 | `PreToolUse` | Blocks edits to generated files, and injects the standards governing the file being edited |
-| `PostToolUse` | Runs `sync` when an entity or roadmap file changes |
-| `Stop` | Runs `sync`, then `validate` — blocking on errors only |
+| `PostToolUse` | Runs `sync` when an entity or roadmap file changes, then pushes to the backend's remote |
+| `Stop` | Runs `sync`, then `validate` — blocking on errors only — and pushes to the backend's remote either way |
 
 `Stop` fires when Claude finishes responding — the end of a turn, and the
 closest Claude Code has to a post-turn event. Both halves run in the one
@@ -158,6 +160,100 @@ Declared in [`.claude-plugin/plugin.json`](../.claude-plugin/plugin.json) under
 
 Not `.szsdlc/config.yml` keys: that file is the project's model, read by the
 CLI and by CI, which have no turns to sync at.
+
+## Backends: where a project is kept
+
+By default a project lives where `.szsdlc/config.yml` is found above the
+working directory. A **backend** can keep it somewhere else instead: another
+local directory, or a remote that szsdlc keeps in step automatically. szsdlc
+then writes nothing into the directory you are working in.
+
+### Configuring one
+
+Settings are keys in the `env` block of Claude Code's own settings files,
+the same files that hold your other Claude Code settings:
+
+| File | Scope |
+|---|---|
+| `~/.claude/settings.json` | user-wide |
+| `<project>/.claude/settings.json` | one project, committed |
+| `<project>/.claude/settings.local.json` | one project, personal |
+
+Later rows override earlier ones **key by key**, so a user-wide
+`SZSDLC_BACKEND_GIT_CLONE_ROOT` still applies to a project that only overrides
+the URL. Inside Claude Code the merged values are already in the environment;
+the CLI reads the same files directly, so it behaves the same from a terminal.
+A variable exported in the shell overrides every file. `CLAUDE_CONFIG_DIR`
+moves the user file, as it does for Claude Code.
+
+`SZSDLC_BACKEND` selects the backend, and each backend reads only its own
+`SZSDLC_BACKEND_<TYPE>_*` keys. Keys for backends that are not selected are
+ignored, so a git setup can stay configured while one project uses `dir`. An
+unknown key in the selected backend's namespace is an error.
+
+| `SZSDLC_BACKEND` | The project lives |
+|---|---|
+| `workdir` (default) | in the working tree, as without any backend. Set this in a project to opt out of a user-wide backend |
+| `dir` | in another local directory, with nothing to sync |
+| `git` | in a remote git repository, through a hidden clone that is synced automatically |
+
+**`dir`**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `SZSDLC_BACKEND_DIR_PATH` | required | the directory the project's files are written to |
+
+**`git`**
+
+| Key | Default | Meaning |
+|---|---|---|
+| `SZSDLC_BACKEND_GIT_URL` | required | the remote repository |
+| `SZSDLC_BACKEND_GIT_BRANCH` | the remote's default | the branch to track; the first push creates it if the remote lacks it |
+| `SZSDLC_BACKEND_GIT_SUBDIR` | the top | where in the repository the project lives |
+| `SZSDLC_BACKEND_GIT_CLONE_ROOT` | `~/.claude/szsdlc/git` | the directory clones are made under |
+| `SZSDLC_BACKEND_GIT_CLONE_PATH` | `<CLONE_ROOT>/<name>-<hash>` | the exact clone, overriding `CLONE_ROOT` |
+
+`{project}` in a path-like value is replaced with the project directory's
+name, so one directory or repository can hold many projects. Relative paths
+resolve against the project for project files, and against the home directory
+for the user file.
+
+```json
+{
+  "env": {
+    "SZSDLC_BACKEND": "git",
+    "SZSDLC_BACKEND_GIT_URL": "git@github.com:me/tracking.git",
+    "SZSDLC_BACKEND_GIT_SUBDIR": "{project}"
+  }
+}
+```
+
+`szsdlc backend` shows the backend in effect and which file each value came
+from. `szsdlc init` creates the project wherever the backend keeps it.
+
+### Syncing
+
+With a backend that has a remote, a sync runs when a session starts, before
+each prompt is answered, after each edit to a project file, when a turn ends,
+after any CLI command that changed a file, and before and after `szsdlc sync`.
+`szsdlc backend sync` runs one on demand.
+
+For `git`, a sync commits everything in the clone, rebases onto the remote
+branch, and pushes. It never turns a successful command into a failure. If the
+remote cannot be reached, or a rebase conflicts, the changes stay committed in
+the clone. The problem is reported on stderr (or in Claude's context, from the
+prompt hook), and the next sync tries again. git runs with prompts disabled and
+a timeout, so credentials must work without being typed in, through an SSH
+agent or a credential helper.
+
+### Adding a backend
+
+A backend (sftp, http, ...) is a class implementing the `Backend` protocol in
+[`backend/__init__.py`](../src/szsdlc/backend/__init__.py): its `type` and
+`keys`, `from_settings`, `materialize`, `has_local_changes` and `sync`, plus
+`state`/`restore` so a store found on disk can be recognised again. Register it
+in `BACKENDS`. Nothing outside that package knows which backend is in use.
+[`dir.py`](../src/szsdlc/backend/dir.py) is the smallest example.
 
 ### Resolving an interpreter
 

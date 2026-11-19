@@ -30,7 +30,7 @@ from typing import Any, Callable
 
 from . import __version__, config as config_module, hooks as hooks_module
 from .config import LAYOUTS
-from .errors import EXIT_ERROR, EXIT_INVALID, BadInput, InternalError, SzsdlcError
+from .errors import EXIT_ERROR, EXIT_INVALID, BadInput, InternalError, Refused, SzsdlcError
 from .frontmatter import jsonify
 from .ids import IdSpace
 from .model import Entity, EntityStore, create_entity, load_all, relayout
@@ -92,6 +92,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("standards match <path>", "conventions governing these paths"),
     ("sync", "regenerate every view and record; silent, never validates"),
     ("validate", "every consistency rule; silent when clean"),
+    ("backend [show|sync]", "where the project is kept; sync it with its remote now"),
 ]
 
 #: Registered but not listed: invoked by hooks.json, never typed by anyone.
@@ -252,6 +253,10 @@ def build_parser() -> Parser:
     validate.add_argument("--verbose", action="store_true")
     validate.add_argument("--json", action="store_true", dest="as_json")
     validate.set_defaults(run=cmd_validate)
+
+    backend = subparsers.add_parser("backend", prog="szsdlc backend")
+    backend.add_argument("subcommand", nargs="?", choices=["show", "sync"], default="show")
+    backend.set_defaults(run=cmd_backend)
 
     # Hidden: invoked by hooks.json, never typed. It lives on this parser so
     # there is exactly one interpreter-resolution path to get wrong on Windows.
@@ -574,7 +579,11 @@ project:
 
 
 def cmd_init(args: argparse.Namespace) -> int:
-    root = Path(args.project or Path.cwd()).resolve()
+    from . import backend as backend_module
+
+    # With a backend in effect the project goes wherever it keeps it, never
+    # into the directory the command was run from.
+    root = backend_module.project_root(args.project) or Path(args.project or Path.cwd()).resolve()
     config_path = config_module.config_path_for(root)
     if config_path.exists():
         raise BadInput(
@@ -1389,6 +1398,54 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# backend
+# ---------------------------------------------------------------------------
+
+
+def cmd_backend(args: argparse.Namespace) -> int:
+    """Show where the project is kept and why, or sync it now.
+
+    Settings are not edited here: they live in Claude Code's settings files,
+    beside everything else a user configures there (see szsdlc.settings).
+    """
+    from . import backend as backend_module
+
+    if args.subcommand == "sync":
+        backend_module.project_root(args.project)  # create the store if needed
+        found = backend_module.locate(args.project)
+        if found is None:
+            raise BadInput("no backend is configured here; the project is in the working tree.",
+                           fix="set SZSDLC_BACKEND in the env block of .claude/settings.json")
+        report = backend_module.sync(found, "backend sync")
+        if report is not None and not report.ok:
+            raise Refused(f"{report.problem}", fix=report.fix)
+        return 0
+
+    selection = backend_module.select(args.project)
+    current = backend_module.resolve(args.project)
+    if current is not None:
+        out(f"backend  {current.type}  ({selection.source or 'default'})")
+        found = selection.found
+        rows = [(label, f"{value}  ({next((found[k].source for k in keys if k in found),
+                                          'default')})")
+                for label, value, keys in current.describe()]
+    else:
+        current = backend_module.managed(args.project or Path.cwd())
+        if current is None:
+            out(f"backend  {selection.type}  ({selection.source or 'default'})")
+            return 0
+        out(f"backend  {current.type}  (this directory is inside its store)")
+        rows = [(label, value) for label, value, _ in current.describe()]
+
+    rows.append(("root", str(current.root)
+                 + ("" if current.store.exists() else "  (not created yet)")))
+    width = max(len(label) for label, _ in rows)
+    for label, value in rows:
+        out(f"  {label:<{width}}  {value}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # hook (hidden)
 # ---------------------------------------------------------------------------
 
@@ -1418,7 +1475,34 @@ def run(argv: Sequence[str] | None = None) -> int:
         return 2
 
     runner: Callable[[argparse.Namespace], int] = args.run
-    return runner(args)
+    if args.command in BACKEND_EXEMPT:
+        return runner(args)
+
+    from . import backend as backend_module
+
+    if args.command == "sync":
+        # An explicit sync is also a pull, so it renders what others pushed.
+        try:
+            backend_module.project_root(args.project)
+        except SzsdlcError:
+            pass  # the command itself will say it properly
+        else:
+            backend_module.warn(backend_module.sync_at(args.project, "sync"))
+
+    status = runner(args)
+    try:
+        report = backend_module.sync_at(args.project, f"{args.command}",
+                                       only_if_changed=args.command != "sync")
+    except SzsdlcError as exc:  # pragma: no cover - settings went bad mid-command
+        print(exc.render(), file=sys.stderr)
+    else:
+        backend_module.warn(report)
+    return status
+
+
+#: Commands that do their own syncing, or none: `hook` because each handler
+#: decides when to sync, `backend` because syncing is its subject.
+BACKEND_EXEMPT = {"hook", "backend"}
 
 
 def _force_utf8_streams() -> None:

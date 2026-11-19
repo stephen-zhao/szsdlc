@@ -5,6 +5,11 @@ non-optional. The division of labour matters: `sync` runs constantly and
 tolerantly — on every write, and again as the turn ends — while `validate` runs
 once, at the end, and strictly.
 
+When the project lives in a remote (see :mod:`szsdlc.backend`), the hooks are
+also what keep it in step: a pull as the session starts and before every
+prompt is answered, a push after every edit and as the turn ends. A failed sync
+never blocks anything; it is said, and retried at the next hook.
+
 Every handler is a **silent no-op outside a szsdlc project**, so the plugin is
 harmless installed globally. That is not politeness — a hook that errors in a
 repo which has never heard of szsdlc is a hook people uninstall.
@@ -99,6 +104,32 @@ def _session(start: Path | str | None):
         return None
 
 
+def _backend_sync(session, reason: str) -> str | None:
+    """Sync the project's backend, if it has one. Returns a problem to report.
+
+    Swallows everything for the same reason `_session` does.
+    """
+    from . import backend
+
+    try:
+        return backend.describe_problem(backend.sync_at(session.config.root, reason))
+    except Exception:  # pragma: no cover - defensive
+        return None
+
+
+def _backend_line(session) -> str | None:
+    """Where the project's files are, when that is not where Claude is working."""
+    from . import backend
+
+    try:
+        managed = backend.managed(session.config.root)
+    except Exception:  # pragma: no cover - defensive
+        return None
+    if managed is None:
+        return None
+    return f"szsdlc project files: {session.config.root} ({managed.summary()})"
+
+
 def _emit(event: str, context: str) -> None:
     json.dump({"hookSpecificOutput": {"hookEventName": event,
                                       "additionalContext": context}}, sys.stdout)
@@ -123,11 +154,37 @@ def session_start(payload: dict[str, Any], cwd: str | None = None) -> int:
     if session is None:
         return EXIT_OK
 
+    # Pull before the store is read, so the counters describe the remote's state.
+    problem = _backend_sync(session, "session start")
+
     graph = Graph(session.config, session.store, session.ids)
     built = context_module.build(session.config, session.store, graph)
     rendered = context_module.render(built)
+    lines = [line for line in (_backend_line(session), problem) if line]
     if rendered.strip():
-        print(rendered)
+        lines.append(rendered)
+    if lines:
+        print("\n".join(lines))
+    return EXIT_OK
+
+
+# ---------------------------------------------------------------------------
+# UserPromptSubmit
+# ---------------------------------------------------------------------------
+
+
+def user_prompt_submit(payload: dict[str, Any], cwd: str | None = None) -> int:
+    """Pull and push before Claude answers, so it works from the remote's state.
+
+    Silent unless the sync failed; stdout here enters the model's context, and
+    a problem is worth the tokens where a success is not.
+    """
+    session = _session(cwd or payload.get("cwd"))
+    if session is None:
+        return EXIT_OK
+    problem = _backend_sync(session, "before prompt")
+    if problem:
+        print(problem)
     return EXIT_OK
 
 
@@ -213,6 +270,7 @@ def post_edit(payload: dict[str, Any], cwd: str | None = None) -> int:
         render_module.sync(session.config, session.store, graph)
     except Exception:  # pragma: no cover - never break a turn over a redraw
         pass
+    _backend_sync(session, f"edit {path.name}")
     return EXIT_OK
 
 
@@ -277,6 +335,13 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
 
     findings = validate_module.run(session.config, session.store, graph)
     errors = [f for f in findings if f.is_error]
+
+    # Pushed whether or not validate passes: an unfinished turn is still work,
+    # and keeping it only on this machine is how it gets lost.
+    problem = _backend_sync(session, "turn end")
+    if problem:
+        print(problem, file=sys.stderr)
+
     if not errors:
         return EXIT_OK
 
@@ -292,6 +357,7 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
 
 HANDLERS = {
     "session-start": session_start,
+    "user-prompt-submit": user_prompt_submit,
     "pre-edit": pre_edit,
     "post-edit": post_edit,
     "stop": stop,
