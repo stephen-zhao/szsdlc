@@ -26,10 +26,12 @@ embedded in the URL are never shown: everything that prints it redacts them.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, ClassVar
 from urllib.parse import urlsplit, urlunsplit
@@ -56,6 +58,21 @@ LOCAL_TIMEOUT = 8
 #: that would launch a `git-remote-foo` helper found on PATH — is refused.
 PROTOCOLS = ("file", "git", "http", "https", "ssh")
 
+#: Seconds a whole commit, and a whole sync, may take — the PostToolUse hook
+#: allows 30, SessionStart and UserPromptSubmit 60. Each git call gets what is
+#: left, so the calls cannot add up past the hook that runs them.
+COMMIT_BUDGET = 25
+SYNC_BUDGET = 50
+
+#: A `helper::address` URL names a remote helper program to run.
+HELPER_URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*::")
+
+#: Userinfo in any URL inside free text, such as git's own error messages.
+URL_USERINFO = re.compile(r"(\b[A-Za-z][A-Za-z0-9+.-]*://)[^/\s@]+@")
+
+#: Terminal control characters, never printed from a value someone else wrote.
+CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
 #: Used only when the user has no git identity configured, so a commit in the
 #: hidden clone does not fail on a machine that never needed one before.
 FALLBACK_IDENTITY = ("szsdlc", "szsdlc@localhost")
@@ -68,10 +85,12 @@ def redact(url: str) -> str:
     secret; `ssh://git@host/...` and `git@host:path` carry only a user name,
     which is kept because it is often the useful part.
     """
+    url = CONTROL.sub("?", url)
     try:
         parts = urlsplit(url)
     except ValueError:
-        return url
+        # Unparseable, but may still carry a secret: scrub it the blunt way.
+        return URL_USERINFO.sub(r"\1***@", url).split("?", 1)[0]
     if parts.query:
         # `?access_token=...` and the like: a query has no business in a git
         # remote other than to carry a secret.
@@ -82,6 +101,11 @@ def redact(url: str) -> str:
             user = "" if parts.scheme in ("http", "https") else userinfo.split(":", 1)[0] + ":"
             parts = parts._replace(netloc=f"{user}***@{host}")
     return urlunsplit(parts) if parts != urlsplit(url) else url
+
+
+def scrub(text: str) -> str:
+    """Free text — git's stderr, say — with credentials in any URL removed."""
+    return CONTROL.sub("?", URL_USERINFO.sub(r"\1***@", text))
 
 
 class GitError(Exception):
@@ -108,10 +132,18 @@ class GitBackend:
         self.root = clone / subdir if subdir else clone
         #: The tree the project belongs to; the clone must not contain it.
         self.working_tree = working_tree
+        #: When the current commit or sync must be done by (time.monotonic()).
+        self._deadline: float | None = None
 
     @classmethod
     def from_settings(cls, found: dict[str, Setting], context: Context) -> GitBackend:
         url = required(found, cls.type, "URL").value.strip()
+        if HELPER_URL.match(url):
+            # Refused here as well as by git's protocol policy, which a user's
+            # own `protocol.<name>.allow` setting could otherwise reopen.
+            raise ConfigError(f"SZSDLC_BACKEND_GIT_URL={redact(url)!r} names a git remote "
+                              "helper, which szsdlc does not run.",
+                              fix="use a file, git, http(s) or ssh URL")
         if url.startswith("-"):
             # git would read it as an option, and `--upload-pack=...` runs a command.
             raise ConfigError(f"SZSDLC_BACKEND_GIT_URL={redact(url)!r} is not a repository URL.",
@@ -160,8 +192,15 @@ class GitBackend:
                 if not self._config(key):
                     command += ["-c", f"{key}={value}"]
         command += ["-C", str(cwd), *args]
+        # GIT_ALLOW_PROTOCOL overrides every protocol.* setting in git config.
         env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="",
-                   SSH_ASKPASS="", GCM_INTERACTIVE="never")
+                   SSH_ASKPASS="", GCM_INTERACTIVE="never",
+                   GIT_ALLOW_PROTOCOL=":".join(PROTOCOLS))
+        if self._deadline is not None:
+            left = self._deadline - time.monotonic()
+            if left <= 0:
+                raise GitError(list(args), None, "out of time for this hook")
+            timeout = max(1, min(timeout, int(left)))
         env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
         try:
             # An argv list with no shell; the URL is vetted in from_settings and
@@ -252,6 +291,10 @@ class GitBackend:
                               f"{self._redacted(exc)}",
                               fix="check SZSDLC_BACKEND_GIT_URL and your git credentials, "
                                   "then rerun") from None
+        # The clone's config holds the URL, credentials and all if it has any:
+        # readable by its owner only.
+        with contextlib.suppress(OSError):
+            (local / ".git" / "config").chmod(0o600)
         self._refuse_escape()
 
     def _verify_clone(self) -> None:
@@ -262,6 +305,11 @@ class GitBackend:
         """
         local = self.store
         origin = self._config("remote.origin.url")
+        pushurl = self._config("remote.origin.pushurl")
+        if pushurl and pushurl != self.url:
+            raise ConfigError(
+                f"{local} pushes to {redact(pushurl)}, not to {redact(self.url)}.",
+                fix=f"git -C {local} config --unset remote.origin.pushurl")
         if origin != self.url:
             held = f"a clone of {redact(origin)}" if origin else "a repository with no origin"
             raise ConfigError(
@@ -286,18 +334,19 @@ class GitBackend:
                               fix="point SZSDLC_BACKEND_GIT_CLONE_PATH outside the working tree")
 
     def _refuse_escape(self) -> None:
-        """SUBDIR may be a symlink in the repository; it must stay in the clone."""
-        if not self.subdir:
-            return
-        clone, root = self.store.resolve(), self.root.resolve()
-        if root != clone and clone not in root.parents:
-            raise ConfigError(f"SZSDLC_BACKEND_GIT_SUBDIR={self.subdir!r} resolves to {root}, "
-                              f"outside the clone, where nothing is synced.",
-                              fix="make SZSDLC_BACKEND_GIT_SUBDIR a real directory in the "
-                                  "repository")
+        """The project root and its `.szsdlc/` may be symlinks in the repository;
+        both must stay in the clone, or what is written there is never synced."""
+        clone = self.store.resolve()
+        for path, what in ((self.root, f"SZSDLC_BACKEND_GIT_SUBDIR={self.subdir!r}"),
+                           (self.root / ".szsdlc", "the project's .szsdlc directory")):
+            resolved = path.resolve()
+            if resolved != clone and clone not in resolved.parents:
+                raise ConfigError(f"{what} resolves to {resolved}, outside the clone, where "
+                                  "nothing is synced.",
+                                  fix="make it a real directory in the repository")
 
     def _redacted(self, exc: Exception) -> str:
-        return str(exc).replace(self.url, redact(self.url))
+        return scrub(str(exc).replace(self.url, redact(self.url)))
 
     def has_local_changes(self) -> bool:
         if not (self.store / ".git").exists():
@@ -321,6 +370,7 @@ class GitBackend:
             report.problem = f"{self.store} is not a git clone."
             report.fix = "remove it; the next szsdlc command clones it again"
             return report
+        self._deadline = time.monotonic() + COMMIT_BUDGET
         try:
             self._verify_clone()
             self._commit(reason)
@@ -329,6 +379,8 @@ class GitBackend:
         except GitError as exc:
             report.problem = self._redacted(exc)
             report.fix = f"git -C {self.store} status"
+        finally:
+            self._deadline = None
         return report
 
     def sync(self, reason: str) -> SyncReport:
@@ -337,7 +389,12 @@ class GitBackend:
             report.problem = f"{self.store} is not a git clone."
             report.fix = "remove it; the next szsdlc command clones it again"
             return report
+        self._deadline = time.monotonic() + SYNC_BUDGET
         try:
+            if not self.branch and not self._remote_default():
+                # Learn the remote's default branch, so the check below can
+                # hold a clone to it rather than to whatever it has checked out.
+                self._git("remote", "set-head", "origin", "--auto", check=False)
             self._verify_clone()
             branch = self._branch()
             self._commit(reason)
@@ -352,16 +409,20 @@ class GitBackend:
             report.problem, report.fix = exc.problem, exc.fix
         except GitError as exc:
             # A rebase that timed out is still in progress; never leave it so.
+            # The cleanup is not held to the budget the rebase ran out of.
+            self._deadline = None
             self._abort_rebase()
             report.problem = self._redacted(exc)
             report.fix = f"git -C {self.store} status"
+        finally:
+            self._deadline = None
         return report
 
     def _abort_rebase(self) -> None:
         git_dir = self.store / ".git"
         if (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists():
             try:
-                self._git("rebase", "--abort", check=False)
+                self._git("rebase", "--abort", check=False, timeout=LOCAL_TIMEOUT)
             except GitError:  # pragma: no cover - git itself is failing
                 pass
 

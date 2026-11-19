@@ -21,6 +21,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -1421,10 +1422,15 @@ def cmd_backend(args: argparse.Namespace) -> int:
             raise Refused(f"{report.problem}", fix=report.fix)
         return 0
 
+    def show(line: str) -> None:
+        # Every value here came from a settings file someone else may have
+        # written; none of it reaches the terminal as a control sequence.
+        out(re.sub(r"[\x00-\x1f\x7f-\x9f]", "?", line))
+
     selection = backend_module.select(args.project)
     current = backend_module.resolve(args.project)
     if current is not None:
-        out(f"backend  {current.type}  ({selection.source or 'default'})")
+        show(f"backend  {current.type}  ({selection.source or 'default'})")
         found = selection.found
         rows = [(label, f"{value}  ({next((found[k].source for k in keys if k in found),
                                           'default')})")
@@ -1432,16 +1438,16 @@ def cmd_backend(args: argparse.Namespace) -> int:
     else:
         current = backend_module.managed(args.project or Path.cwd())
         if current is None:
-            out(f"backend  {selection.type}  ({selection.source or 'default'})")
+            show(f"backend  {selection.type}  ({selection.source or 'default'})")
             return 0
-        out(f"backend  {current.type}  (this directory is inside its store)")
+        show(f"backend  {current.type}  (this directory is inside its store)")
         rows = [(label, value) for label, value, _ in current.describe()]
 
     rows.append(("root", str(current.root)
                  + ("" if current.store.exists() else "  (not created yet)")))
     width = max(len(label) for label, _ in rows)
     for label, value in rows:
-        out(f"  {label:<{width}}  {value}")
+        show(f"  {label:<{width}}  {value}")
     return 0
 
 

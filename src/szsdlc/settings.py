@@ -84,10 +84,10 @@ def project_dir(start: Path | str | None = None) -> Path | None:
     """The directory whose `.claude/` holds project settings for `start`.
 
     `$CLAUDE_PROJECT_DIR` when Claude Code provides it — the hooks and every
-    command Claude runs see it — unless `start` lies outside it in another
-    project with settings of its own (`szsdlc -C <another project>`).
-    Otherwise the nearest ancestor of `start` with a `.claude/settings*.json`,
-    never counting the user directory itself.
+    command Claude runs see it — for any `start` inside it. A `start` outside
+    it (`szsdlc -C <another project>`) is a different project and gets only its
+    own settings: the nearest ancestor of `start` with a
+    `.claude/settings*.json`, never counting the user directory itself, or none.
     """
     here = Path(start or Path.cwd()).resolve()
     if here.is_file():
@@ -105,7 +105,7 @@ def project_dir(start: Path | str | None = None) -> Path | None:
             continue
         if any(p.is_file() for p in project_settings_paths(candidate)):
             return candidate
-    return claude_project
+    return None
 
 
 def load(start: Path | str | None = None) -> dict[str, Setting]:

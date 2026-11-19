@@ -110,12 +110,15 @@ def _load(start: Path | str | None):
         return None, f"{type(exc).__name__}: {exc}"
 
 
-def _backend_failure(start: Path | str | None, error: str | None) -> str | None:
+def _backend_failure(start: Path | str | None, error: str | None,
+                     reason: str) -> str | None:
     """Why a project kept by a backend could not be loaded, if that is the case.
 
     No project at all is the ordinary state of most directories a hook runs in,
     and stays silent. But a selected backend means the user expects one, and a
-    clone that failed or settings that are wrong are worth saying.
+    clone that failed or settings that are wrong are worth saying. The store is
+    still synced when it exists: a broken config edit is committed and pushed
+    like any other, and a repair someone else pushed is pulled in.
     """
     from . import backend
 
@@ -125,10 +128,20 @@ def _backend_failure(start: Path | str | None, error: str | None) -> str | None:
         selected = backend.select(start).type != backend.WORKDIR
     except Exception:  # settings unreadable: that is the error itself
         selected = True
-    return f"szsdlc backend: {error}" if selected else None
+    if not selected:
+        return None
+    lines = [f"szsdlc backend: {error}"]
+    try:
+        problem = backend.describe_problem(backend.sync_at(start, reason))
+    except Exception as exc:
+        problem = _unexpected("sync", exc)
+    if problem:
+        lines.append(problem)
+    return "\n".join(lines)
 
 
-def _backend_sync(session, reason: str) -> tuple[str | None, bool]:
+def _backend_sync(session, reason: str, *,
+                  only_if_changed: bool = False) -> tuple[str | None, bool]:
     """Sync the project's backend, if it has one.
 
     Returns a problem to report, and whether anything was pulled — in which
@@ -139,7 +152,8 @@ def _backend_sync(session, reason: str) -> tuple[str | None, bool]:
     from . import backend
 
     try:
-        report = backend.sync_at(session.config.root, reason)
+        report = backend.sync_at(session.config.root, reason,
+                                 only_if_changed=only_if_changed)
     except Exception as exc:
         return _unexpected("sync", exc), False
     return backend.describe_problem(report), bool(report and report.pulled)
@@ -154,6 +168,19 @@ def _backend_commit(session, reason: str) -> str | None:
 
     try:
         return backend.describe_problem(backend.commit_at(session.config.root, reason),
+                                        action="commit")
+    except Exception as exc:
+        return _unexpected("commit", exc)
+
+
+def _commit_path(path: Path) -> str | None:
+    """Commit the managed store holding `path`, without loading the project."""
+    from . import backend
+
+    try:
+        if backend.managed(path) is None:
+            return None
+        return backend.describe_problem(backend.commit_at(path, f"edit {path.name}"),
                                         action="commit")
     except Exception as exc:
         return _unexpected("commit", exc)
@@ -202,7 +229,7 @@ def session_start(payload: dict[str, Any], cwd: str | None = None) -> int:
     where = cwd or payload.get("cwd")
     session, error = _load(where)
     if session is None:
-        failure = _backend_failure(where, error)
+        failure = _backend_failure(where, error, "session start")
         if failure:
             print(failure)
         return EXIT_OK
@@ -242,7 +269,7 @@ def user_prompt_submit(payload: dict[str, Any], cwd: str | None = None) -> int:
     where = cwd or payload.get("cwd")
     session, error = _load(where)
     if session is None:
-        failure = _backend_failure(where, error)
+        failure = _backend_failure(where, error, "before prompt")
         if failure:
             print(failure)
         return EXIT_OK
@@ -324,6 +351,11 @@ def post_edit(payload: dict[str, Any], cwd: str | None = None) -> int:
 
     session = _session(cwd or payload.get("cwd") or path.parent)
     if session is None:
+        # The edit may itself be what broke the project (its config, say).
+        # It is still committed, so it is not the one change that is lost.
+        problem = _commit_path(path)
+        if problem:
+            _emit("PostToolUse", problem)
         return EXIT_OK
 
     if _is_source(session, path):
@@ -398,7 +430,7 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
     where = cwd or payload.get("cwd")
     session, error = _load(where)
     if session is None:
-        failure = _backend_failure(where, error)
+        failure = _backend_failure(where, error, "turn end")
         if failure:
             print(failure, file=sys.stderr)
         return EXIT_OK
@@ -432,9 +464,14 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
             try:
                 render_module.sync(session.config, session.store, graph,
                                    should_keep_hand_edited=True)
-            except Exception:  # pragma: no cover - never break a turn over a redraw
-                pass
-            redraw_problem = _backend_commit(session, "render after pull")
+            except Exception as exc:
+                # Not fatal, but say it: validate is about to call the views
+                # stale, and this is why.
+                print(f"szsdlc: redrawing after the pull failed: "
+                      f"{type(exc).__name__}: {exc}", file=sys.stderr)
+            # Sent now, not at the next sync, so the remote's views match.
+            redraw_problem, _ = _backend_sync(session, "render after pull",
+                                              only_if_changed=True)
             if redraw_problem:
                 print(redraw_problem, file=sys.stderr)
 

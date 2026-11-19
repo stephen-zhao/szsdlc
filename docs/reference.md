@@ -265,8 +265,12 @@ repository's `.gitignore` excludes are not forced in, but a sync names them
 rather than reporting success. git runs with prompts disabled and
 a timeout, so credentials must work without being typed in, through an SSH
 agent or a credential helper. Only the `file`, `git`, `http`, `https` and `ssh`
-transports are allowed; a `<helper>::<address>` URL, which would run a
-`git-remote-<helper>` program, is refused.
+transports are allowed (`GIT_ALLOW_PROTOCOL`, which a git config setting cannot
+widen); a `<helper>::<address>` URL, which would run a `git-remote-<helper>`
+program, is refused. A whole commit is held to 25 seconds and a whole sync to
+50, so neither outlasts the hook running it. A clone whose `pushurl` points
+anywhere but `SZSDLC_BACKEND_GIT_URL` is refused, and its `.git/config`, which
+holds the URL, is readable by its owner only.
 
 ### Adding a backend
 

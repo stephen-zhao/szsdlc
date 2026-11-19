@@ -155,18 +155,22 @@ class Backend(Protocol):
         """Bring remote changes in and send local ones out. Never raises."""
 
 
-#: Populated on first use, so importing this module costs nothing.
+#: Populated on first use, so importing this module costs nothing. Another
+#: package may add its own backends here; the built-ins are added regardless.
 BACKENDS: dict[str, type[Backend]] = {}
+_builtins_loaded = False
 
 
 def _load_registry() -> None:
-    if BACKENDS:
+    global _builtins_loaded
+    if _builtins_loaded:
         return
     from .dir import DirBackend
     from .git import GitBackend
 
     for cls in (DirBackend, GitBackend):
-        BACKENDS[cls.type] = cls
+        BACKENDS.setdefault(cls.type, cls)
+    _builtins_loaded = True
 
 
 def backend_class(type_name: str) -> type[Backend]:
