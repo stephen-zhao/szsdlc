@@ -94,14 +94,25 @@ COMMANDS: list[tuple[str, str]] = [
     ("render", "regenerate every view and record; silent, never validates"),
     ("validate", "every consistency rule; silent when clean"),
     ("commit", "render, then record the project locally; no network"),
-    ("sync", "render, then reconcile with the backend: commit, pull, push"),
-    ("backend [show|sync]", "where the project is kept; sync it with its remote now"),
+    ("reconcile", "render, commit, then pull and push the backend's remote"),
+    ("backend [show|reconcile]", "where the project is kept; reconcile it now"),
 ]
 
 #: Registered but not listed: invoked by hooks.json, never typed by anyone.
 #: Spending a line of the help budget on it would cost tokens in every
 #: session to document something no reader can use.
-HIDDEN_COMMANDS = {"hook"}
+HIDDEN_COMMANDS = {"hook", "sync"}
+
+#: Commands kept working under an old name, mapped to the one to use instead.
+#: Each warns on stderr and then does exactly what its replacement does, so a
+#: project pinned to an older szsdlc keeps working across the upgrade.
+#:
+#: `sync` named rendering for every release up to 0.2.4, and the banner at the
+#: top of every generated file in every project says "rerun `szsdlc sync`".
+#: Those banners outnumber any script by orders of magnitude, so the alias
+#: follows them: it renders, and it does not reach the network. The operation
+#: that does is `reconcile`, which never shared the name.
+DEPRECATED_COMMANDS = {"sync": "render"}
 
 
 def compact_help() -> str:
@@ -255,6 +266,11 @@ def build_parser() -> Parser:
     commit.add_argument("--verbose", action="store_true")
     commit.set_defaults(run=cmd_commit)
 
+    reconcile = subparsers.add_parser("reconcile", prog="szsdlc reconcile")
+    reconcile.add_argument("--verbose", action="store_true")
+    reconcile.set_defaults(run=cmd_render)
+
+    # Deprecated: `render` under the name it had up to 0.2.4. Hidden from help.
     sync = subparsers.add_parser("sync", prog="szsdlc sync")
     sync.add_argument("--verbose", action="store_true")
     sync.set_defaults(run=cmd_render)
@@ -266,7 +282,7 @@ def build_parser() -> Parser:
     validate.set_defaults(run=cmd_validate)
 
     backend = subparsers.add_parser("backend", prog="szsdlc backend")
-    backend.add_argument("subcommand", nargs="?", choices=["show", "sync"], default="show")
+    backend.add_argument("subcommand", nargs="?", choices=["show", "reconcile"], default="show")
     backend.set_defaults(run=cmd_backend)
 
     # Hidden: invoked by hooks.json, never typed. It lives on this parser so
@@ -1352,7 +1368,7 @@ def cmd_render(args: argparse.Namespace) -> int:
     """Regenerate every view and record. Never validates, never reaches a remote.
 
     Rendering is a one-way derivation: entities in, generated markdown out. It
-    is the whole of `szsdlc render`, and the first step of `commit` and `sync`,
+    is the whole of `szsdlc render`, and the first step of `commit` and `reconcile`,
     because neither should record or send a view that is out of date.
 
     C4 — silent on the happy path. This runs after every file write and at
@@ -1377,21 +1393,29 @@ def cmd_render(args: argparse.Namespace) -> int:
 def cmd_commit(args: argparse.Namespace) -> int:
     """Render, then record the project in its backend. Never reaches the network.
 
-    The local half of `sync`, reachable on its own so that work can be recorded
+    The local half of `reconcile`, reachable on its own so that work can be recorded
     with no remote configured, or with one that cannot be reached. A project in
     the working tree has no backend to record into, and this is then `render`
     plus a one-line refusal rather than a silent success.
+
+    Inside a Claude turn this still records immediately, where an ordinary
+    command records nothing and leaves the turn-end hook to it. That is the
+    point of asking for it by name — but it does mean a turn that calls this
+    and then goes on working produces more than one commit.
     """
     from . import backend as backend_module
 
+    # Loading the project materializes the backend, which is also what makes
+    # `locate` below able to find the store — so no `project_root` call here.
+    # With a clone already on disk that is offline work: `materialize` verifies
+    # it and returns without reaching the network.
     status = cmd_render(args)
 
-    backend_module.project_root(args.project)  # create the store if needed
     found = backend_module.locate(args.project)
     if found is None:
         raise BadInput("no backend is configured here; the project is in the working tree, "
                        "where git records it directly.",
-                       fix="set SZSDLC_BACKEND in the env block of .claude/settings.json")
+                       fix="szsdlc backend show")
     report = backend_module.commit(found, "commit")
     if report is not None and not report.ok:
         raise Refused(f"{report.problem}", fix=report.fix)
@@ -1447,20 +1471,23 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_backend(args: argparse.Namespace) -> int:
-    """Show where the project is kept and why, or sync it now.
+    """Show where the project is kept and why, or reconcile it now.
 
     Settings are not edited here: they live in Claude Code's settings files,
     beside everything else a user configures there (see szsdlc.settings).
     """
     from . import backend as backend_module
 
-    if args.subcommand == "sync":
+    if args.subcommand == "reconcile":
         backend_module.project_root(args.project)  # create the store if needed
         found = backend_module.locate(args.project)
         if found is None:
             raise BadInput("no backend is configured here; the project is in the working tree.",
                            fix="set SZSDLC_BACKEND in the env block of .claude/settings.json")
-        report = backend_module.sync(found, "backend sync")
+        # `backend` is exempt from the wrapper in `run`, so this is the one
+        # reconcile that would otherwise send whatever views were last written.
+        _render_quietly(args)
+        report = backend_module.reconcile(found, "backend reconcile")
         if report is not None and not report.ok:
             raise Refused(f"{report.problem}", fix=report.fix)
         return 0
@@ -1524,16 +1551,30 @@ def run(argv: Sequence[str] | None = None) -> int:
         return 2
 
     runner: Callable[[argparse.Namespace], int] = args.run
-    if args.command in BACKEND_EXEMPT:
+    replacement = DEPRECATED_COMMANDS.get(args.command)
+    if replacement is not None:
+        # stderr, so a script that pipes stdout is unaffected by the notice.
+        print(f"szsdlc {args.command} is deprecated and will be removed; "
+              f"it now does exactly what szsdlc {replacement} does.\n"
+              f"Fix: szsdlc {replacement}", file=sys.stderr)
+
+    # A deprecated alias behaves as its replacement, including here.
+    command = replacement or args.command
+
+    if command in BACKEND_EXEMPT or args.command in BACKEND_EXEMPT:
         return runner(args)
 
     from . import backend as backend_module
 
-    if args.command == "sync":
-        # An explicit sync is also a pull, so it renders what others pushed.
+    if command == "reconcile":
+        # Render before the pull, so the commit the pull needs carries current
+        # views rather than whatever was last written; `runner` renders again
+        # afterwards, which is what picks up anything the pull brought in.
         try:
             backend_module.project_root(args.project)
-            backend_module.warn(backend_module.sync_at(args.project, "sync"))
+            if backend_module.locate(args.project) is not None:
+                _render_quietly(args)
+            backend_module.warn(backend_module.reconcile_at(args.project, "reconcile"))
         except SzsdlcError:
             pass  # the command itself will say it properly
         except OSError as exc:
@@ -1541,16 +1582,34 @@ def run(argv: Sequence[str] | None = None) -> int:
 
     status = runner(args)
     try:
-        if args.command != "sync" and backend_module.in_claude_turn():
+        if command == "render":
+            # `render` is local by definition. Reconciling what it wrote would
+            # make the one command documented not to reach a remote reach one;
+            # the next commit or reconcile sweeps the rendered files in.
+            report = None
+        elif command != "reconcile" and backend_module.in_claude_turn():
             # Nothing is recorded here. The turn-end hook renders, commits once
-            # and syncs; a commit per command made a turn's history a list of
-            # the tool calls that produced it rather than of what it changed.
-            # Uncommitted work is not at risk: `has_local_changes` reads the
-            # working tree, so the next sync picks up whatever is sitting there.
+            # and reconciles; a commit per command made a turn's history a list
+            # of the tool calls that produced it rather than of what it
+            # changed. Uncommitted work is not at risk: `has_local_changes`
+            # reads the working tree, so the next reconcile picks up whatever
+            # is sitting there.
             report = None
         else:
-            # After an explicit sync, only what it rendered is left to send.
-            report = backend_module.sync_at(args.project, args.command, only_if_changed=True)
+            # A terminal command has no turn end to wait for, so this is its
+            # commit — and it renders first for the same reason the turn-end
+            # hook does: nothing should record or send a stale view. After an
+            # explicit reconcile, only what `runner` rendered is left to send.
+            #
+            # Only when there is a backend to send to. Without one this is the
+            # ordinary working-tree project, where a command renders nothing
+            # and the edit hook is what redraws: rendering here would make
+            # every mutation rewrite every view, which is the cost the hooks
+            # exist to keep off the command path.
+            if command != "reconcile" and backend_module.locate(args.project) is not None:
+                _render_quietly(args)
+            report = backend_module.reconcile_at(args.project, args.command,
+                                                 only_if_changed=True)
     except SzsdlcError as exc:  # pragma: no cover - settings went bad mid-command
         print(exc.render(), file=sys.stderr)
     except OSError as exc:
@@ -1560,14 +1619,32 @@ def run(argv: Sequence[str] | None = None) -> int:
     return status
 
 
+def _render_quietly(args: argparse.Namespace) -> None:
+    """Render for a caller that is about to record or send the project.
+
+    Tolerant and silent, like the edit hook: a project that will not load, or a
+    template that will not draw, is `validate`'s to report. Failing the command
+    that just worked, or refusing to commit over it, would be worse than
+    committing a stale view — the whole point of a permissive renderer.
+    """
+    from . import render as render_module
+
+    try:
+        session = Session(args.project)
+        render_module.render(session.config, session.store, _graph(session),
+                             _roadmaps(session))
+    except Exception:  # noqa: BLE001 - never fail a command over a redraw
+        pass
+
+
 def _warn_backend(exc: OSError) -> None:
     """A backend that failed on the filesystem never fails a command that worked."""
-    print(f"szsdlc backend sync: {exc}; changes are kept locally.\n"
-          "Fix: szsdlc backend sync", file=sys.stderr)
+    print(f"szsdlc backend reconcile: {exc}; changes are kept locally.\n"
+          "Fix: szsdlc backend reconcile", file=sys.stderr)
 
 
 #: Commands that do their own recording, or none: `hook` because each handler
-#: decides when to render, commit and sync; `backend` and `commit` because the
+#: decides when to render, commit and reconcile; `backend` and `commit` because the
 #: backend is their subject and they would otherwise be wrapped in a second,
 #: contradictory one — `commit` in particular must not reach the network.
 BACKEND_EXEMPT = {"hook", "backend", "commit"}

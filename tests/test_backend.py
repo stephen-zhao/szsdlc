@@ -1,4 +1,4 @@
-"""Backends: settings layering, where a project is kept, and git sync.
+"""Backends: settings layering, where a project is kept, and git reconcile.
 
 The git remote here is a bare repository on disk, which exercises the real
 backend end to end without a network.
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -198,11 +199,11 @@ def test_backends_are_pluggable(user, workdir, monkeypatch):
             return True
 
         def commit(self, reason):
-            return backend.SyncReport()
+            return backend.ReconcileReport()
 
-        def sync(self, reason):
+        def reconcile(self, reason):
             calls.append(reason)
-            return backend.SyncReport(pushed=True)
+            return backend.ReconcileReport(pushed=True)
 
     backend.backend_class("git")  # populate the registry first
     monkeypatch.setitem(backend.BACKENDS, "fake", Fake)
@@ -226,10 +227,10 @@ def test_dir_writes_straight_into_another_directory(user, workdir, tmp_path, cap
     assert run("capture", "kept elsewhere") == 0
     assert list(workdir.iterdir()) == []
     assert (store / "myproj" / ".szsdlc" / "config.yml").is_file()
-    # Nothing to commit or sync, ever.
+    # Nothing to commit or reconcile, ever.
     assert backend.commit_at(workdir, "x").ok
-    assert backend.sync_at(workdir, "x", only_if_changed=True) is None
-    report = backend.sync_at(workdir, "x")
+    assert backend.reconcile_at(workdir, "x", only_if_changed=True) is None
+    report = backend.reconcile_at(workdir, "x")
     assert report.ok and not report.pulled and not report.pushed
 
 
@@ -372,6 +373,87 @@ def test_a_command_that_changes_files_pushes_them(configured, bare, workdir, cap
     assert last_commit(bare) == "szsdlc: capture"
 
 
+def test_sync_is_a_deprecated_alias_for_render(configured, bare, workdir, capsys):
+    """`sync` named rendering up to 0.2.4, so it keeps doing that.
+
+    The banner at the top of every generated file in every existing project
+    says "rerun `szsdlc sync`". Pointing the word at the backend instead would
+    have left those banners naming a command that now reaches the network —
+    a silent change in what an upgrade does, which is the one thing a rename
+    must not cause. So the alias follows the banners, and the network
+    operation took a name it never shared: `reconcile`.
+    """
+    run("init")
+    assert run("capture", "a thought the alias should render") == 0
+    head = git("--git-dir", str(bare), "rev-parse", "main")
+    inbox = next(configured.root.rglob("inbox.md"))
+    inbox.write_text("stale\n")
+    capsys.readouterr()
+
+    assert run("sync") == 0
+    captured = capsys.readouterr()
+    # It renders, exactly as `render` does...
+    assert "a thought the alias should render" in inbox.read_text()
+    # ...does not reach the remote, exactly as `render` does not...
+    assert git("--git-dir", str(bare), "rev-parse", "main") == head
+    # ...and says so, on stderr, so a caller reading stdout is unaffected.
+    assert "deprecated" in captured.err and "szsdlc render" in captured.err
+    assert "deprecated" not in captured.out
+
+
+def test_render_never_reaches_the_remote(configured, bare, workdir, capsys):
+    """`render` is the one command documented not to touch the network.
+
+    It writes generated files, so the post-command reconcile would happily commit
+    and push them — which would make "no network" false for the only command
+    that claims it. The rendered files wait for the next commit or reconcile.
+    """
+    run("init")
+    assert run("capture", "something to render a view for") == 0
+    # The capture has already been sent; this is the state `render` starts from.
+    head = git("--git-dir", str(bare), "rev-parse", "main")
+    # A source written straight into the store, so a redraw is genuinely owed
+    # and `render` has something of its own to write.
+    idea = next((configured.store / "ideas").rglob("*.md"))
+    idea.write_text(idea.read_text().replace("something to render a view for",
+                                             "a title only render can propagate"))
+
+    assert run("render") == 0
+    assert git("status", "--porcelain", cwd=configured.store) != ""  # written, not sent
+    assert git("--git-dir", str(bare), "rev-parse", "main") == head
+
+    # Not stranded: the next reconcile sends what render wrote.
+    assert run("reconcile") == 0
+    assert git("--git-dir", str(bare), "rev-parse", "main") != head
+
+
+def test_a_terminal_command_renders_before_it_sends(configured, bare, workdir, capsys):
+    """A terminal command is its own commit boundary, so it renders first.
+
+    Without this the remote received entities whose generated views still
+    described the project as it was before them — and if the next reconcile never
+    came, it kept them.
+    """
+    run("init")
+    assert run("capture", "a thought the inbox should show") == 0
+
+    inbox = next(p for p in remote_files(bare) if p.endswith("inbox.md"))
+    assert "a thought the inbox should show" in git(
+        "--git-dir", str(bare), "show", f"main:{inbox}")
+
+
+def test_backend_reconcile_renders_before_it_sends(configured, bare, workdir, capsys):
+    """`backend reconcile` is exempt from the wrapper, so it renders for itself."""
+    run("init")
+    assert run("capture", "explicit backend reconcile") == 0
+    for view in configured.root.rglob("inbox.md"):
+        view.write_text("stale\n")
+
+    assert run("backend", "reconcile") == 0
+    inbox = next(p for p in remote_files(bare) if p.endswith("inbox.md"))
+    assert "explicit backend reconcile" in git("--git-dir", str(bare), "show", f"main:{inbox}")
+
+
 def test_a_read_only_command_makes_no_commit(configured, bare, workdir, capsys):
     run("init")
     head = git("--git-dir", str(bare), "rev-parse", "main")
@@ -387,7 +469,7 @@ def test_an_explicit_sync_pulls_first(configured, bare, workdir, tmp_path, capsy
     git("add", ".", cwd=other)
     git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "theirs", cwd=other)
     git("push", "-q", "origin", "HEAD:main", cwd=other)
-    assert run("sync") == 0
+    assert run("reconcile") == 0
     assert (configured.store / "theirs.md").is_file()
 
 
@@ -424,7 +506,7 @@ def test_a_conflict_keeps_local_work_and_says_so(configured, bare, workdir, tmp_
     git("push", "-q", "origin", "HEAD:main", cwd=other)
 
     (configured.store / ".szsdlc" / "config.yml").write_text("project:\n  name: ours\n")
-    report = backend.sync(configured, "test")
+    report = backend.reconcile(configured, "test")
     assert not report.ok and "conflict" in report.problem
     assert (configured.store / ".szsdlc" / "config.yml").read_text() == "project:\n  name: ours\n"
     assert not (configured.store / ".git" / "rebase-merge").exists()
@@ -456,7 +538,7 @@ def test_a_rebase_that_times_out_is_aborted(configured, bare, workdir, tmp_path,
         return real(self, *args, **kwargs)
 
     monkeypatch.setattr(git_backend.GitBackend, "_git", slow_rebase)
-    report = backend.sync(configured, "test")
+    report = backend.reconcile(configured, "test")
     assert not report.ok and "timed out" in report.problem
     assert not (configured.store / ".git" / "rebase-merge").exists()
     assert (configured.store / "ours.md").read_text() == "y"
@@ -466,7 +548,7 @@ def test_an_unreachable_remote_never_fails_the_command(configured, bare, workdir
     run("init")
     bare.rename(bare.parent / "gone.git")
     assert run("capture", "offline idea") == 0
-    assert "szsdlc backend sync" in capsys.readouterr().err
+    assert "szsdlc backend reconcile" in capsys.readouterr().err
     assert git("status", "--porcelain", cwd=configured.store) == ""
 
 
@@ -570,7 +652,7 @@ def test_ignored_project_files_are_reported_not_dropped_silently(configured, bar
     (configured.store / ".gitignore").write_text("secret-notes/\n")
     (configured.store / "secret-notes").mkdir()
     (configured.store / "secret-notes" / "a.md").write_text("x")
-    report = backend.sync(configured, "test")
+    report = backend.reconcile(configured, "test")
     assert not report.ok and "secret-notes/" in report.problem and "ignored" in report.problem
     assert report.pushed  # everything else still went out
     assert "secret-notes/a.md" not in remote_files(bare)
@@ -588,7 +670,7 @@ def test_an_ordinary_project_in_a_git_repo_is_never_committed(project, tmp_path,
     monkeypatch.chdir(tmp_path)
     assert run("capture", "local only") == 0
     assert "No commits yet" in git("status", cwd=tmp_path)
-    assert backend.sync_at(tmp_path, "x") is None
+    assert backend.reconcile_at(tmp_path, "x") is None
 
 
 def test_working_inside_the_clone_still_syncs(configured, bare, workdir, monkeypatch, capsys):
@@ -638,23 +720,33 @@ def test_a_whole_turn_is_one_commit(configured, bare, workdir, monkeypatch, caps
     the tool calls that produced a turn rather than a record of what it changed.
     """
     run("init")
+    before_head = git("--git-dir", str(bare), "rev-parse", "main")
     before = len(git("--git-dir", str(bare), "log", "--format=%s", "main").splitlines())
     monkeypatch.setenv("CLAUDECODE", "1")
 
     for n in range(3):
         assert run("capture", f"thought {n}") == 0
-    for idea in (configured.store / "ideas").rglob("*.md"):
-        idea.write_text(idea.read_text() + "\nmore\n")
+    edited = sorted((configured.store / "ideas").rglob("*.md"))
+    assert edited, "nothing was captured to edit"
+    for idea in edited:
+        idea.write_text(idea.read_text() + "\nmarker-9f3c\n")
         hooks.post_edit({"cwd": str(workdir), "tool_input": {"file_path": str(idea)}})
-    # Still nothing recorded, and nothing sent.
-    assert git("--git-dir", str(bare), "rev-parse", "main")
+    # Still nothing recorded, and the remote is exactly where it was: the ref
+    # is compared, not merely asked for, so a commit made here would show.
+    assert git("--git-dir", str(bare), "rev-parse", "main") == before_head
     assert git("status", "--porcelain", cwd=configured.store) != ""
 
     hooks.stop({"cwd": str(workdir)})
     after = git("--git-dir", str(bare), "log", "--format=%s", "main").splitlines()
     assert len(after) - before == 1, after
-    assert "thought 2" in git("--git-dir", str(bare), "ls-tree", "-r", "--name-only", "main") \
-        or "ideas" in git("--git-dir", str(bare), "ls-tree", "-r", "--name-only", "main")
+    # And that one commit is the turn's work, not an earlier commit that
+    # happened to land while the edits were skipped.
+    assert git("status", "--porcelain", cwd=configured.store) == ""
+    head = git("--git-dir", str(bare), "rev-parse", "main")
+    assert head != before_head
+    for idea in edited:
+        relative = idea.relative_to(configured.store).as_posix()
+        assert "marker-9f3c" in git("--git-dir", str(bare), "show", f"main:{relative}")
 
 
 def test_an_explicit_sync_inside_a_turn_still_pushes(configured, bare, workdir,
@@ -662,7 +754,7 @@ def test_an_explicit_sync_inside_a_turn_still_pushes(configured, bare, workdir,
     run("init")
     monkeypatch.setenv("CLAUDECODE", "1")
     (configured.store / "note.md").write_text("x")
-    assert run("sync") == 0
+    assert run("reconcile") == 0
     assert "note.md" in remote_files(bare)
 
 
@@ -673,7 +765,7 @@ def test_a_commit_outside_a_clone_says_so(configured, workdir):
 
 def test_commit_records_locally_and_never_reaches_the_remote(configured, bare, workdir,
                                                              capsys):
-    """The local half of a sync, reachable on its own — offline, or with a
+    """The local half of a reconcile, reachable on its own — offline, or with a
     remote that cannot be answered for."""
     run("init")
     head = git("--git-dir", str(bare), "rev-parse", "main")
@@ -684,8 +776,30 @@ def test_commit_records_locally_and_never_reaches_the_remote(configured, bare, w
     assert git("log", "-1", "--format=%s", cwd=configured.store).strip() == "szsdlc: commit"
     assert git("--git-dir", str(bare), "rev-parse", "main") == head  # nothing sent
 
-    assert run("sync") == 0
+    assert run("reconcile") == 0
     assert "note.md" in remote_files(bare)
+
+
+def test_commit_works_with_the_remote_gone(configured, bare, workdir, capsys):
+    """"Never reaches the network" has to hold when there is no network.
+
+    A reachable remote cannot show this: a commit that quietly fetched would
+    leave the branch unchanged and pass. So the remote is taken away.
+    """
+    run("init")
+    shutil.rmtree(bare)
+    (configured.store / "offline.md").write_text("written with no remote")
+
+    assert run("commit") == 0
+    assert git("status", "--porcelain", cwd=configured.store) == ""
+    assert "offline.md" in git("show", "--name-only", "--format=", "HEAD",
+                               cwd=configured.store)
+
+    # And the work is not stranded: the next reconcile, once the remote is back,
+    # sends what was recorded while it was away.
+    git("init", "--bare", "--quiet", "--initial-branch=main", str(bare))
+    assert run("reconcile") == 0
+    assert "offline.md" in remote_files(bare)
 
 
 def test_commit_renders_before_it_records(configured, bare, workdir, capsys):
@@ -693,15 +807,16 @@ def test_commit_renders_before_it_records(configured, bare, workdir, capsys):
     it is not."""
     run("init")
     assert run("capture", "a thought worth rendering") == 0
-    assert list(configured.root.rglob("inbox.md")) == []  # capture does not render
+    inbox = next(configured.root.rglob("inbox.md"))
+    inbox.write_text("stale\n")  # as a hand-edit or an interrupted turn leaves it
 
     assert run("commit") == 0
-    inbox = next(configured.root.rglob("inbox.md"))
     assert "a thought worth rendering" in inbox.read_text()
     assert git("status", "--porcelain", cwd=configured.store) == ""
-    # The view is in the commit, not merely on disk beside it.
-    assert "inbox.md" in git("show", "--name-only", "--format=", "HEAD",
-                             cwd=configured.store)
+    # The redrawn view is in the commit, not merely on disk beside it.
+    relative = inbox.relative_to(configured.store).as_posix()
+    assert relative in git("show", "--name-only", "--format=", "HEAD",
+                           cwd=configured.store)
 
 
 def test_commit_without_a_backend_refuses_rather_than_succeeding_silently(user, workdir,
@@ -745,18 +860,27 @@ def test_the_edit_hook_never_reaches_the_backend(configured, workdir, monkeypatc
     path of every write — and an `index.lock` collision in Claude's context for
     something nobody asked for.
     """
+    from szsdlc.backend import git as git_backend
+
     run("init")
-    idea = configured.store / ".szsdlc" / "config.yml"
+    config = configured.store / ".szsdlc" / "config.yml"
+    config.write_text(config.read_text() + "\n# edited\n")
 
     def explode(*args, **kwargs):
         raise AssertionError("the edit hook reached the backend")
 
     monkeypatch.setattr(backend, "commit_at", explode)
-    monkeypatch.setattr(backend, "sync_at", explode)
+    monkeypatch.setattr(backend, "reconcile_at", explode)
+    monkeypatch.setattr(backend, "commit", explode)
+    monkeypatch.setattr(backend, "reconcile", explode)
+    monkeypatch.setattr(git_backend.GitBackend, "commit", explode)
     capsys.readouterr()
     assert hooks.post_edit({"cwd": str(workdir),
-                            "tool_input": {"file_path": str(idea)}}) == 0
+                            "tool_input": {"file_path": str(config)}}) == 0
     assert capsys.readouterr().out == ""
+    # The wrappers are not the only route to a commit, so assert the outcome
+    # too: an edit leaves the store dirty, whichever way it got there.
+    assert git("status", "--porcelain", cwd=configured.store) != ""
 
 
 def test_an_unexpected_sync_failure_is_still_reported(configured, workdir, monkeypatch, capsys):
@@ -765,11 +889,11 @@ def test_an_unexpected_sync_failure_is_still_reported(configured, workdir, monke
     def explode(*args, **kwargs):
         raise PermissionError("locks directory is read-only")
 
-    monkeypatch.setattr(backend, "sync_at", explode)
+    monkeypatch.setattr(backend, "reconcile_at", explode)
     capsys.readouterr()
     assert hooks.user_prompt_submit({"cwd": str(workdir)}) == 0
     out = capsys.readouterr().out
-    assert "szsdlc backend sync: PermissionError: locks directory is read-only" in out
+    assert "szsdlc backend reconcile: PermissionError: locks directory is read-only" in out
 
 
 def test_session_start_describes_the_state_after_the_pull(configured, bare, workdir,
@@ -812,7 +936,7 @@ def test_prompt_hook_reports_a_failed_sync_into_context(configured, bare, workdi
     bare.rename(bare.parent / "gone.git")
     capsys.readouterr()
     hooks.dispatch("user-prompt-submit", io.StringIO(json.dumps({"cwd": str(workdir)})))
-    assert "szsdlc backend sync" in capsys.readouterr().out
+    assert "szsdlc backend reconcile" in capsys.readouterr().out
 
 
 def test_backend_show_names_every_source(configured, bare, user, workdir, capsys):
@@ -840,23 +964,23 @@ def test_backend_show_inside_a_store_with_nothing_selected(configured, workdir,
     assert "inside its store" in capsys.readouterr().out
 
 
-def test_backend_sync_runs_on_demand(configured, bare, workdir, capsys):
+def test_backend_reconcile_runs_on_demand(configured, bare, workdir, capsys):
     run("init")
     (configured.store / "note.md").write_text("x")
-    assert run("backend", "sync") == 0
+    assert run("backend", "reconcile") == 0
     assert "note.md" in remote_files(bare)
 
 
-def test_backend_sync_reports_a_failure(configured, bare, workdir, capsys):
+def test_backend_reconcile_reports_a_failure(configured, bare, workdir, capsys):
     run("init")
     (configured.store / "note.md").write_text("x")
     bare.rename(bare.parent / "gone.git")
-    assert run("backend", "sync") == 3
+    assert run("backend", "reconcile") == 3
     assert "could not reach" in capsys.readouterr().err
 
 
-def test_backend_sync_without_a_backend_is_refused(workdir, capsys):
-    assert run("backend", "sync") != 0
+def test_backend_reconcile_without_a_backend_is_refused(workdir, capsys):
+    assert run("backend", "reconcile") != 0
     assert "SZSDLC_BACKEND" in capsys.readouterr().err
 
 
@@ -959,7 +1083,7 @@ def test_a_restored_clone_whose_origin_moved_is_not_synced(configured, bare, wor
     git("init", "--bare", "--quiet", str(elsewhere))
     git("remote", "set-url", "origin", str(elsewhere), cwd=configured.store)
     (configured.store / "note.md").write_text("x")
-    report = backend.sync_at(configured.store, "test")
+    report = backend.reconcile_at(configured.store, "test")
     assert not report.ok and "not a clone of" in report.problem
     assert git("--git-dir", str(elsewhere), "rev-list", "--all") == ""
 
@@ -994,7 +1118,7 @@ def test_a_filesystem_failure_in_the_backend_never_fails_the_command(configured,
     def explode(*args, **kwargs):
         raise PermissionError("locks directory is read-only")
 
-    monkeypatch.setattr(backend, "sync_at", explode)
+    monkeypatch.setattr(backend, "reconcile_at", explode)
     assert run("capture", "still works") == 0
     assert "read-only" in capsys.readouterr().err
 
@@ -1008,18 +1132,18 @@ def test_local_git_work_fits_inside_the_edit_hook():
     assert git_backend.LOCAL_TIMEOUT * 3 < post
 
 
-def test_an_explicit_sync_reaches_the_remote_once(configured, bare, workdir, monkeypatch,
-                                                  capsys):
+def test_an_explicit_reconcile_reaches_the_remote_once(configured, bare, workdir,
+                                                       monkeypatch, capsys):
     from szsdlc.backend import git as git_backend
 
     run("init")
-    run("sync")
+    run("reconcile")
     calls = []
-    real = git_backend.GitBackend.sync
-    monkeypatch.setattr(git_backend.GitBackend, "sync",
+    real = git_backend.GitBackend.reconcile
+    monkeypatch.setattr(git_backend.GitBackend, "reconcile",
                         lambda self, reason: calls.append(reason) or real(self, reason))
-    assert run("sync") == 0
-    assert calls == ["sync"]
+    assert run("reconcile") == 0
+    assert calls == ["reconcile"]
 
 
 def test_dash_c_to_another_project_reads_its_own_settings(isolated_settings, tmp_path,
@@ -1074,7 +1198,7 @@ def test_a_pulled_symlink_out_of_the_clone_stops_the_sync(user, bare, workdir, t
 
     push_from_other(bare, tmp_path, swap)
     (chosen.store / "mine.md").write_text("x")
-    report = backend.sync(chosen, "test")
+    report = backend.reconcile(chosen, "test")
     assert not report.ok and "outside the clone" in report.problem
     assert "mine.md" not in remote_files(bare)
 
@@ -1090,7 +1214,7 @@ def test_a_clone_that_pushes_elsewhere_is_refused(configured, bare, workdir, tmp
     git("init", "--bare", "--quiet", str(elsewhere))
     git("config", "remote.origin.pushurl", str(elsewhere), cwd=configured.store)
     (configured.store / "note.md").write_text("x")
-    report = backend.sync(configured, "test")
+    report = backend.reconcile(configured, "test")
     assert not report.ok and "pushes to" in report.problem
     assert git("--git-dir", str(elsewhere), "rev-list", "--all") == ""
 
@@ -1141,7 +1265,7 @@ def test_without_a_branch_sync_learns_the_remote_default(user, bare, workdir, tm
     assert "origin/HEAD" not in git("branch", "-r", cwd=clone)
     git("checkout", "-q", "-b", "side", cwd=clone)
     (clone / "stray.md").write_text("x")
-    report = backend.sync_at(clone, "test")
+    report = backend.reconcile_at(clone, "test")
     assert not report.ok and "not main" in report.problem
     assert "side" not in git("--git-dir", str(bare), "branch", "--list")
 
@@ -1157,8 +1281,8 @@ def test_a_sync_never_outlasts_its_budget(configured, workdir, monkeypatch, caps
     from szsdlc.backend import git as git_backend
 
     run("init")
-    monkeypatch.setattr(git_backend, "SYNC_BUDGET", 0)
-    report = backend.sync(configured, "test")
+    monkeypatch.setattr(git_backend, "RECONCILE_BUDGET", 0)
+    report = backend.reconcile(configured, "test")
     assert not report.ok and "out of time" in report.problem
 
 

@@ -27,7 +27,7 @@ szsdlc init
 ```
 
 To keep a project's files out of the repository, in another directory or in a
-git remote that is synced automatically, see
+git remote that is reconciled automatically, see
 [backends](docs/reference.md#backends-where-a-project-is-kept).
 
 Python 3.12 or later. The plugin's launchers resolve an interpreter on their

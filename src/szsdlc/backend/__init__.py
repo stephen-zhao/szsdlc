@@ -5,9 +5,9 @@ working directory — the `workdir` backend, which is no backend at all. Any
 other backend moves the project out of the working directory, so szsdlc writes
 nothing there:
 
-- `dir` keeps the project in another local directory, with nothing to sync;
+- `dir` keeps the project in another local directory, with nothing to reconcile;
 - `git` keeps it in a remote repository, through a hidden local clone that is
-  synced automatically.
+  reconciled automatically.
 
 Settings are read through :mod:`szsdlc.settings` — user-wide in
 `~/.claude/settings.json`, overridden per project in
@@ -23,8 +23,8 @@ ordinary behaviour with `SZSDLC_BACKEND=workdir`. An unknown key in the
 selected backend's namespace is refused, because an ignored setting is one
 that does not do what it says.
 
-Three operations, deliberately distinct, because the first of them used to be
-called a sync too and the word then named nothing in particular:
+Three operations, deliberately distinct, because two of them were once both
+called a sync and the word then named nothing in particular:
 
 - **render** (:mod:`szsdlc.render`) derives the generated views from the
   entities. Local, one-way, and no business of a backend's — it is listed here
@@ -32,23 +32,27 @@ called a sync too and the word then named nothing in particular:
   record or send a view that is out of date.
 - **commit** records a store's changes where the backend keeps them, without
   touching the network.
-- **sync** reconciles the store with its remote: commit, pull, then push.
+- **reconcile** brings the store and its remote into agreement: commit, pull,
+  then push. It is **not** called a sync. `sync` named rendering for every
+  release up to 0.2.4 — it is still accepted as a deprecated alias for
+  `szsdlc render` — so reusing it here would have changed what an existing
+  project's command did rather than merely what it was called.
 
 Inside a Claude Code turn, nothing is committed as the turn runs. An edit is
 not a unit of history — a turn that touches twelve files is one change to the
 project — so the turn is the boundary, and the turn-end hook renders, commits
-once and syncs. Work is not at risk in between, because the edits are on disk
-in the store and :meth:`Backend.has_local_changes` reads the working tree: the
-next commit or sync, from whichever entry point reaches it first, sweeps in
-whatever is sitting there uncommitted.
+once and reconciles. Work is not at risk in between, because the edits are on
+disk in the store and :meth:`Backend.has_local_changes` reads the working tree:
+the next commit or reconcile, from whichever entry point reaches it first,
+sweeps in whatever is sitting there uncommitted.
 
-A full sync runs when a session starts, before a prompt is answered, when a
-turn ends, and on an explicit `szsdlc sync` or `szsdlc backend sync`;
-`szsdlc commit` does the local half alone. A CLI command typed in a terminal
-has no turn end to wait for, so it syncs as soon as it changes something. Every
-sync is best-effort: a command that succeeded is never reported as failed
-because the network was down. The change stays local, the problem is said once,
-and the next sync tries again.
+A full reconcile runs when a session starts, before a prompt is answered, when
+a turn ends, and on an explicit `szsdlc reconcile` or `szsdlc backend
+reconcile`; `szsdlc commit` does the local half alone. A CLI command typed in a
+terminal has no turn end to wait for, so it reconciles as soon as it changes
+something. Every reconcile is best-effort: a command that succeeded is never
+reported as failed because the network was down. The change stays local, the
+problem is said once, and the next reconcile tries again.
 
 A backend is a class implementing :class:`Backend`, registered in
 :data:`BACKENDS`. Nothing outside this package knows which one is in use.
@@ -88,8 +92,8 @@ PROJECT_PLACEHOLDER = "{project}"
 
 
 @dataclass
-class SyncReport:
-    """What one sync did. `problem` set means it did not finish."""
+class ReconcileReport:
+    """What one reconcile did. `problem` set means it did not finish."""
 
     pulled: bool = False
     pushed: bool = False
@@ -114,7 +118,7 @@ class Context:
 
 
 class Backend(Protocol):
-    """One way of storing a project, and of syncing it if it has a remote.
+    """One way of storing a project, and of reconciling it if it has a remote.
 
     Constructing one must not touch the disk or the network.
     """
@@ -162,13 +166,13 @@ class Backend(Protocol):
     def has_local_changes(self) -> bool:
         """Whether the store holds anything the remote has not seen."""
 
-    def commit(self, reason: str) -> SyncReport:
+    def commit(self, reason: str) -> ReconcileReport:
         """Record local changes without reaching the remote. Never raises.
 
         A backend with nothing to record locally does nothing.
         """
 
-    def sync(self, reason: str) -> SyncReport:
+    def reconcile(self, reason: str) -> ReconcileReport:
         """Bring remote changes in and send local ones out. Never raises."""
 
 
@@ -455,21 +459,21 @@ def locate(start: Path | str | None = None) -> Backend | None:
     return managed(backend.store)
 
 
-def sync(backend: Backend, reason: str, *, only_if_changed: bool = False) -> SyncReport | None:
+def reconcile(backend: Backend, reason: str, *, only_if_changed: bool = False) -> ReconcileReport | None:
     """Sync one store. None when there was nothing to do."""
     with _locked(backend.store):
         if only_if_changed and not backend.has_local_changes():
             return None
-        return backend.sync(reason)
+        return backend.reconcile(reason)
 
 
-def commit(backend: Backend, reason: str) -> SyncReport:
+def commit(backend: Backend, reason: str) -> ReconcileReport:
     """Record a store's local changes, without reaching the remote."""
     with _locked(backend.store):
         return backend.commit(reason)
 
 
-def commit_at(start: Path | str | None, reason: str) -> SyncReport | None:
+def commit_at(start: Path | str | None, reason: str) -> ReconcileReport | None:
     """Commit whatever managed store serves `start`; None when there is none."""
     backend = locate(start)
     if backend is None:
@@ -486,16 +490,16 @@ def in_claude_turn() -> bool:
     return os.environ.get("CLAUDECODE") == "1"
 
 
-def sync_at(start: Path | str | None, reason: str, *,
-            only_if_changed: bool = False) -> SyncReport | None:
-    """Sync whatever managed store serves `start`; None when there is none."""
+def reconcile_at(start: Path | str | None, reason: str, *,
+                 only_if_changed: bool = False) -> ReconcileReport | None:
+    """Reconcile whatever managed store serves `start`; None when there is none."""
     backend = locate(start)
     if backend is None:
         return None
-    return sync(backend, reason, only_if_changed=only_if_changed)
+    return reconcile(backend, reason, only_if_changed=only_if_changed)
 
 
-def describe_problem(report: SyncReport | None, *, action: str = "sync") -> str | None:
+def describe_problem(report: ReconcileReport | None, *, action: str = "reconcile") -> str | None:
     if report is None or report.ok:
         return None
     text = f"szsdlc backend {action}: {report.problem}"
@@ -504,8 +508,8 @@ def describe_problem(report: SyncReport | None, *, action: str = "sync") -> str 
     return text
 
 
-def warn(report: SyncReport | None) -> None:
-    """Say a sync problem on stderr, in the usual two-line shape."""
+def warn(report: ReconcileReport | None) -> None:
+    """Say a reconcile problem on stderr, in the usual two-line shape."""
     text = describe_problem(report)
     if text:
         print(text, file=sys.stderr)

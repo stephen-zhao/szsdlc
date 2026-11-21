@@ -8,16 +8,20 @@ once, at the end, and strictly.
 Three words, three operations, and no two of them are the same thing:
 **render** derives the generated views from the entities, locally and one-way;
 **commit** records the project in its backend without touching the network;
-**sync** reconciles the backend with its remote, which means commit, pull and
-push. `render` is the first step of the other two, because neither should
-record or send a view that is out of date.
+**reconcile** brings the backend and its remote into agreement, which means
+commit, pull and push. `render` is the first step of the other two, because
+neither should record or send a view that is out of date. None of the three is
+called a sync: that word named rendering up to 0.2.4 and is kept as a
+deprecated alias for it.
 
 When the project lives in a remote (see :mod:`szsdlc.backend`), the hooks are
-what keep it in step: a full sync as the session starts, before every prompt is
-answered, and as the turn ends. Nothing is recorded in between. An edit is not
-a unit of history — a turn that touches twelve files is one change — so the
-turn is the boundary, and a turn produces one commit. A failed sync never
-blocks anything; it is said, and retried at the next hook.
+what keep it in step: a full reconcile as the session starts, before every
+prompt is answered, and as the turn ends. Nothing is recorded in between. An
+edit is not a unit of history — a turn that touches twelve files is one change
+— so the turn is the boundary, and a turn of its own work produces one commit.
+A turn that *pulls* someone else's produces a second for the redraw, because
+views cannot be rendered from entities that have not arrived yet. A failed
+reconcile never blocks anything; it is said, and retried at the next hook.
 
 Every handler is a **silent no-op outside a szsdlc project**, so the plugin is
 harmless installed globally. That is not politeness — a hook that errors in a
@@ -133,7 +137,7 @@ def _backend_failure(start: Path | str | None, error: str | None,
     No project at all is the ordinary state of most directories a hook runs in,
     and stays silent. But a selected backend means the user expects one, and a
     clone that failed or settings that are wrong are worth saying. The store is
-    still synced when it exists: a broken config edit is committed and pushed
+    still reconciled when it exists: a broken config edit is committed and pushed
     like any other, and a repair someone else pushed is pulled in.
     """
     from . import backend
@@ -148,15 +152,15 @@ def _backend_failure(start: Path | str | None, error: str | None,
         return None
     lines = [f"szsdlc backend: {error}"]
     try:
-        problem = backend.describe_problem(backend.sync_at(start, reason))
+        problem = backend.describe_problem(backend.reconcile_at(start, reason))
     except Exception as exc:
-        problem = _unexpected("sync", exc)
+        problem = _unexpected("reconcile", exc)
     if problem:
         lines.append(problem)
     return "\n".join(lines)
 
 
-def _backend_sync(session, reason: str, *,
+def _backend_reconcile(session, reason: str, *,
                   only_if_changed: bool = False) -> tuple[str | None, bool]:
     """Sync the project's backend, if it has one.
 
@@ -168,10 +172,10 @@ def _backend_sync(session, reason: str, *,
     from . import backend
 
     try:
-        report = backend.sync_at(session.config.root, reason,
+        report = backend.reconcile_at(session.config.root, reason,
                                  only_if_changed=only_if_changed)
     except Exception as exc:
-        return _unexpected("sync", exc), False
+        return _unexpected("reconcile", exc), False
     return backend.describe_problem(report), bool(report and report.pulled)
 
 
@@ -179,7 +183,7 @@ def _unexpected(action: str, exc: Exception) -> str:
     detail = str(exc).strip().splitlines()
     return (f"szsdlc backend {action}: {type(exc).__name__}"
             + (f": {detail[0]}" if detail else "")
-            + "; changes are kept locally.\nFix: szsdlc backend sync")
+            + "; changes are kept locally.\nFix: szsdlc backend reconcile")
 
 
 def _backend_line(session) -> str | None:
@@ -225,7 +229,7 @@ def session_start(payload: dict[str, Any], cwd: str | None = None) -> int:
 
     # Pull before the store is read, so the counters describe the remote's state;
     # a pull can change the config itself, so the session is loaded again.
-    problem, pulled = _backend_sync(session, "session start")
+    problem, pulled = _backend_reconcile(session, "session start")
     if pulled:
         session, error = _load(where)
         if session is None:
@@ -252,7 +256,7 @@ def session_start(payload: dict[str, Any], cwd: str | None = None) -> int:
 def user_prompt_submit(payload: dict[str, Any], cwd: str | None = None) -> int:
     """Pull and push before Claude answers, so it works from the remote's state.
 
-    Silent unless the sync failed; stdout here enters the model's context, and
+    Silent unless the reconcile failed; stdout here enters the model's context, and
     a problem is worth the tokens where a success is not.
     """
     where = cwd or payload.get("cwd")
@@ -262,7 +266,7 @@ def user_prompt_submit(payload: dict[str, Any], cwd: str | None = None) -> int:
         if failure:
             print(failure)
         return EXIT_OK
-    problem, _ = _backend_sync(session, "before prompt")
+    problem, _ = _backend_reconcile(session, "before prompt")
     if problem:
         print(problem)
     return EXIT_OK
@@ -335,9 +339,9 @@ def post_edit(payload: dict[str, Any], cwd: str | None = None) -> int:
     Renders, and records nothing. An edit is not a unit of history: a turn that
     touches twelve files is one change to the project, and committing each
     write made the log a transcript of Claude's tool calls instead. The turn-end
-    hook renders, commits once and syncs, which is where the boundary actually
+    hook renders, commits once and reconciles, which is where the boundary actually
     is. Nothing is at risk in between — the edit is on disk in the store, and
-    `has_local_changes` reads the working tree, so the next commit or sync from
+    `has_local_changes` reads the working tree, so the next commit or reconcile from
     any entry point sweeps in whatever is sitting there uncommitted.
     """
     from . import render as render_module
@@ -350,7 +354,7 @@ def post_edit(payload: dict[str, Any], cwd: str | None = None) -> int:
     session = _session(cwd or payload.get("cwd") or path.parent)
     if session is None:
         # The edit may itself be what broke the project (its config, say).
-        # The turn-end hook still syncs on a project that will not load.
+        # The turn-end hook still reconciles on a project that will not load.
         return EXIT_OK
 
     if _is_source(session, path):
@@ -389,7 +393,7 @@ def _is_source(session, path: Path) -> bool:
 
 
 def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
-    """Render, sync with the backend, then validate, at the end of a turn.
+    """Render, reconcile with the backend, then validate, at the end of a turn.
 
     This is the turn's one boundary, and the only place a commit is made: the
     whole turn becomes a single commit here, rather than one per edit and one
@@ -401,10 +405,10 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
     project. Rendering runs first so validate judges the state the turn leaves
     behind rather than naming a fix that was about to happen anyway, and so the
     commit records current views rather than stale ones. The commit is inside
-    the sync and therefore before the pull, because git cannot rebase a dirty
+    the reconcile and therefore before the pull, because git cannot rebase a dirty
     tree — "commit after validating" is not available, and gating it on
     validate would leave a failing turn's work on one machine. Validate comes
-    after the pull so that what is judged includes whatever the sync brought
+    after the pull so that what is judged includes whatever the reconcile brought
     in.
 
     Args:
@@ -440,7 +444,7 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
 
     # Pushed whether or not validate passes: an unfinished turn is still work,
     # and keeping it only on this machine is how it gets lost.
-    problem, pulled = _backend_sync(session, "turn end")
+    problem, pulled = _backend_reconcile(session, "turn end")
     if problem:
         print(problem, file=sys.stderr)
     if pulled:
@@ -460,8 +464,8 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
                 # stale, and this is why.
                 print(f"szsdlc: redrawing after the pull failed: "
                       f"{type(exc).__name__}: {exc}", file=sys.stderr)
-            # Sent now, not at the next sync, so the remote's views match.
-            redraw_problem, _ = _backend_sync(session, "render after pull",
+            # Sent now, not at the next reconcile, so the remote's views match.
+            redraw_problem, _ = _backend_reconcile(session, "render after pull",
                                               only_if_changed=True)
             if redraw_problem:
                 print(redraw_problem, file=sys.stderr)

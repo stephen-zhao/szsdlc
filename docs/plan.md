@@ -1484,7 +1484,7 @@ the only way to reach it was to walk `docs/sdlc/requirements/` by hand.
 
 ## Phase 7 — One word, one operation (2026-11-21)
 
-### Task 27: `render`, `commit`, `sync` — and one commit per turn — **DONE**
+### Task 27: `render`, `commit`, `reconcile` — and one commit per turn — **DONE**
 
 **Requirement.** Two problems with one cause. The `git` backend of Task 24
 introduced reconciling-with-a-remote and called it `sync`, which was already
@@ -1503,28 +1503,44 @@ The collision was not theoretical. It had already produced:
   view and record". Both were half right, which is the failure mode a single
   name for two operations always has.
 
-**The language.** Three words, and no two of them are the same thing:
+**The language.** Three words, and no two of them are the same thing — and
+none of them is `sync`, which is retired to a deprecated alias:
 
 | Word | What it does | Reaches the network |
 |---|---|---|
 | **render** | derives the generated views and records from the entities | no |
 | **commit** | records the project where its backend keeps it | no |
-| **sync** | reconciles the backend with its remote: commit, pull, push | yes |
+| **reconcile** | brings the backend and its remote into agreement: commit, pull, push | yes |
+| ~~sync~~ | deprecated alias for `render`; warns, and will be removed | no |
 
 - [x] **Step 1:** `render.sync()` → `render.render()`, `szsdlc sync` (the render-only command) → `szsdlc render`, and every docstring, fix string and generated-file banner that meant rendering. The `compare()` primitive and validate's staleness rule are untouched — only the name they are reached by.
 - [x] **Step 2:** `szsdlc commit` promoted to a top-level command: render, then record, no network. Reachable on its own so work can be committed offline, or against a remote that cannot be answered for. In the working tree it refuses rather than succeeding silently, because git is already doing the job there.
-- [x] **Step 3:** `szsdlc sync` keeps the behaviour it had — render, then commit, pull and push — and is now documented as that one operation rather than as two. Rendering first is sync doing its job, not a second meaning: a sync that pushed stale views would be wrong.
+- [x] **Step 3:** The network operation is **`reconcile`** — `szsdlc reconcile`, `szsdlc backend reconcile`, `Backend.reconcile()`, `ReconcileReport` — and `sync` is a deprecated alias for `render`, hidden from `--help`, warning on stderr. Rendering first is reconcile doing its job, not a second meaning: a reconcile that pushed stale views would be wrong.
+- [x] **Step 3a:** Everything that records or sends renders first, which the first attempt did not: the terminal command path and `backend reconcile` both committed and pushed whatever views were last written, and `szsdlc render` was itself swept into the post-command reconcile — making the one command documented not to reach a remote reach one. The terminal render is gated on a backend actually being configured, so an ordinary working-tree project still renders only from the edit hook.
 - [x] **Step 4:** `sync_on_turn_end` → `render_on_turn_end` in `plugin.json`, with the old key still read through `RENAMED_OPTIONS` for one release. An installed plugin carries the choice someone made against the old name; dropping the key would not restore the default, it would ignore a decision already taken.
 - [x] **Step 5:** The per-edit and per-command commits removed — `PostToolUse` renders and nothing else, and a CLI command inside a turn records nothing. The turn-end hook's existing sync already commits exactly once before it rebases, so that commit became the turn's commit; no new commit path was added.
-- [x] **Step 6:** Tests rewritten to the new contract, plus `test_a_whole_turn_is_one_commit` (three commands and every idea edited → one commit), the `szsdlc commit` cases, and the renamed-option fallback. `HELP_BUDGET` 28 → 30, deliberately.
+- [x] **Step 6:** Tests rewritten to the new contract, plus `test_a_whole_turn_is_one_commit` (three commands and every idea edited → one commit, asserting the remote ref before and after and the edited content inside the commit), `test_sync_is_a_deprecated_alias_for_render`, `test_render_never_reaches_the_remote`, `test_commit_works_with_the_remote_gone` (the bare repo is deleted, so "no network" is tested with no network), the terminal and `backend reconcile` render-first cases, and the renamed-option fallback. `HELP_BUDGET` 28 → 30, deliberately.
+- [x] **Step 7:** A review pass found three tests that passed for the wrong reason — one accepting any added commit without checking it held the turn's edits, one patching only the two wrapper functions on a path with a third route to a commit, and one asserting "never reaches the remote" against a remote that was reachable. All three now assert the outcome rather than the route.
 
 > **Decisions taken while implementing:**
 >
-> - **"sync" went to the backend, not to the renderer.** Both are defensible
->   and the deciding argument is what the word means to someone who has not
->   read this file: reconciling two copies of the same data across a boundary.
->   Rendering is a one-way derivation and never was a sync. `render` also
->   already named the module that does it.
+> - **"sync" went to neither, and the backend took a new word.** Giving it to
+>   the backend was the first decision here, on the argument that reconciling
+>   two copies across a boundary is what the word means to everyone. It was
+>   reversed on an upgrade argument that beats it: the banner at the top of
+>   every file generated by every release up to 0.2.4 says "rerun `szsdlc
+>   sync`", and those banners vastly outnumber any script. Keeping the name for
+>   the backend would have left them all naming a command that now reaches the
+>   network — a silent change in what an upgrade *does*, not merely in what
+>   something is called, which is the one outcome a rename must not produce. So
+>   `sync` follows the banners as a deprecated alias for `render`, and the
+>   network operation took `reconcile`, a word it never shared with anything.
+> - **`reconcile` over `exchange`, `mirror`, and a `push`/`pull` split.**
+>   `mirror` implies one-way copying and misdescribes a rebase that brings
+>   other work in; `exchange` reads badly as a noun; and the operation is
+>   atomic — commit, rebase, push — so two directional commands would each do
+>   the whole thing. It is long to type and almost never typed: the hooks run
+>   it.
 > - **The commit cannot come after `validate`.** The turn-end order asked for
 >   was render → validate → commit → push, and git does not allow it: a rebase
 >   needs a clean tree, so the commit must precede the pull. The order is
@@ -1544,7 +1560,16 @@ The collision was not theoretical. It had already produced:
 > - **`--help` grew by two lines, which is the cost of the fix.** Three
 >   operations that differ in whether they touch the network cannot share one
 >   line. Two lines of help are cheaper than an agent guessing which command
->   reaches a remote — the guess this task exists to remove.
+>   reaches a remote — the guess this task exists to remove. The deprecated
+>   `sync` spends none of the budget: it is in `HIDDEN_COMMANDS`, beside the
+>   `hook` entry point, since advertising something being removed is the one
+>   thing help is not for.
+> - **A turn's commit count is stated with its exception, not absolutely.** The
+>   turn-end sequence commits before it pulls, and a pull that brings entities
+>   in needs those views redrawn and sent — a second commit, unavoidable
+>   without rendering from entities that have not arrived. The docs say "a turn
+>   of its own work produces one commit" and name the pull case, rather than
+>   claiming an invariant the code does not hold.
 
 ---
 

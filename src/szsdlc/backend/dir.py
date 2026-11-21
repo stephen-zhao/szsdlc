@@ -4,7 +4,7 @@
     SZSDLC_BACKEND_DIR_PATH=~/trackers/{project}
 
 The szsdlc files are written straight into that directory instead of the
-working tree. There is no copy and nothing to sync: the directory *is* the
+working tree. There is no copy and nothing to reconcile: the directory *is* the
 store. Useful on its own — one tracking directory for many repos, or keeping
 tracking files out of a repo without running a server.
 """
@@ -16,7 +16,7 @@ from typing import Any, ClassVar
 
 from ..errors import ConfigError
 from ..settings import Setting
-from . import Context, SyncReport, path_setting, required
+from . import Context, ReconcileReport, path_setting, required
 
 
 class DirBackend:
@@ -53,8 +53,8 @@ class DirBackend:
     def has_local_changes(self) -> bool:
         return False
 
-    def commit(self, reason: str) -> SyncReport:
-        return SyncReport()
+    def commit(self, reason: str) -> ReconcileReport:
+        return ReconcileReport()
 
-    def sync(self, reason: str) -> SyncReport:
-        return SyncReport()
+    def reconcile(self, reason: str) -> ReconcileReport:
+        return ReconcileReport()

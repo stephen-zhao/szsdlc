@@ -94,17 +94,26 @@ network:
 |---|---|---|
 | **render** | derives the generated views and records from the entities | no |
 | **commit** | records the project where its backend keeps it | no |
-| **sync** | reconciles the backend with its remote: commit, pull, push | yes |
+| **reconcile** | brings the backend and its remote into agreement: commit, pull, push | yes |
 
 `render` is one-way and local: entities in, generated markdown out. It is the
 first step of the other two, because neither should record or send a view that
 is out of date. None of the three is a thing you normally run — the hooks
-render on every write and sync at the turn boundary — but when you read the
-word, it means exactly one of these.
+render on every write and reconcile at the turn boundary — but when you read
+the word, it means exactly one of these.
 
-A turn produces **one** commit. An edit is not a unit of history; a turn that
-touches twelve files is one change to the project, and the turn-end hook is
-where that change is recorded.
+**None of them is called a sync.** That word named rendering up to 0.2.4, and
+the banner in every file generated before then still says `szsdlc sync`, so
+`sync` is kept as a deprecated alias for `render` and warns when used. Pointing
+it at the backend instead would have left those banners naming a command that
+now reaches the network — a change in what an upgrade *does*, not just in what
+it is called.
+
+A turn of its own work produces **one** commit. An edit is not a unit of
+history; a turn that touches twelve files is one change to the project, and the
+turn-end hook is where that change is recorded. A turn that *pulls* someone
+else's work produces a second one for the redraw, because views cannot be
+rendered from entities that have not arrived yet.
 
 ## Skills
 

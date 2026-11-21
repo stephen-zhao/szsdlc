@@ -12,7 +12,7 @@
     SZSDLC_BACKEND_GIT_CLONE_PATH  the exact clone, overriding CLONE_ROOT.
                                    `{project}` allowed
 
-A commit records everything in the clone locally. A sync commits, rebases
+A commit records everything in the clone locally. A reconcile commits, rebases
 onto the remote branch and pushes. History stays linear, and two machines writing different entities —
 the ordinary case, since every entity is its own file or section — rebase
 cleanly. When a rebase does conflict it is abandoned rather than left half
@@ -40,7 +40,7 @@ from ..errors import ConfigError
 from ..settings import Setting
 from . import (
     Context,
-    SyncReport,
+    ReconcileReport,
     path_setting,
     readable_name,
     required,
@@ -59,11 +59,11 @@ LOCAL_TIMEOUT = 8
 #: that would launch a `git-remote-foo` helper found on PATH — is refused.
 PROTOCOLS = ("file", "git", "http", "https", "ssh")
 
-#: Seconds a whole commit, and a whole sync, may take — SessionStart and
+#: Seconds a whole commit, and a whole reconcile, may take — SessionStart and
 #: UserPromptSubmit allow 60, and `Stop` 120. Each git call gets what is left,
 #: so the calls cannot add up past the hook that runs them.
 COMMIT_BUDGET = 25
-SYNC_BUDGET = 50
+RECONCILE_BUDGET = 50
 
 #: A `helper::address` URL names a remote helper program to run.
 HELPER_URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*::")
@@ -133,7 +133,7 @@ class GitBackend:
         self.root = clone / subdir if subdir else clone
         #: The tree the project belongs to; the clone must not contain it.
         self.working_tree = working_tree
-        #: When the current commit or sync must be done by (time.monotonic()).
+        #: When the current commit or reconcile must be done by (time.monotonic()).
         self._deadline: float | None = None
 
     @classmethod
@@ -176,7 +176,7 @@ class GitBackend:
                 ("clone", str(self.store), ("CLONE_PATH", "CLONE_ROOT"))]
 
     def summary(self) -> str:
-        return f"local clone of {redact(self.url)}, synced automatically"
+        return f"local clone of {redact(self.url)}, reconciled automatically"
 
     # -- plumbing -----------------------------------------------------------
 
@@ -301,7 +301,7 @@ class GitBackend:
     def _verify_clone(self) -> None:
         """The clone is of our URL, on our branch — or it is not used at all.
 
-        Checked on reuse and again before every commit and sync, because a
+        Checked on reuse and again before every commit and reconcile, because a
         store found by path is restored from the registry without settings.
         """
         local = self.store
@@ -336,14 +336,14 @@ class GitBackend:
 
     def _refuse_escape(self) -> None:
         """The project root and its `.szsdlc/` may be symlinks in the repository;
-        both must stay in the clone, or what is written there is never synced."""
+        both must stay in the clone, or what is written there is never reconciled."""
         clone = self.store.resolve()
         for path, what in ((self.root, f"SZSDLC_BACKEND_GIT_SUBDIR={self.subdir!r}"),
                            (self.root / ".szsdlc", "the project's .szsdlc directory")):
             resolved = path.resolve()
             if resolved != clone and clone not in resolved.parents:
                 raise ConfigError(f"{what} resolves to {resolved}, outside the clone, where "
-                                  "nothing is synced.",
+                                  "nothing is reconciled.",
                                   fix="make it a real directory in the repository")
 
     def _redacted(self, exc: Exception) -> str:
@@ -365,8 +365,8 @@ class GitBackend:
         count = self._git("rev-list", "--count", f"{upstream}..HEAD", check=False)
         return (count.stdout.strip() or "0") != "0"
 
-    def commit(self, reason: str) -> SyncReport:
-        report = SyncReport()
+    def commit(self, reason: str) -> ReconcileReport:
+        report = ReconcileReport()
         if not (self.store / ".git").exists():
             report.problem = f"{self.store} is not a git clone."
             report.fix = "remove it; the next szsdlc command clones it again"
@@ -384,13 +384,13 @@ class GitBackend:
             self._deadline = None
         return report
 
-    def sync(self, reason: str) -> SyncReport:
-        report = SyncReport()
+    def reconcile(self, reason: str) -> ReconcileReport:
+        report = ReconcileReport()
         if not (self.store / ".git").exists():
             report.problem = f"{self.store} is not a git clone."
             report.fix = "remove it; the next szsdlc command clones it again"
             return report
-        self._deadline = time.monotonic() + SYNC_BUDGET
+        self._deadline = time.monotonic() + RECONCILE_BUDGET
         try:
             if not self.branch and not self._remote_default():
                 # Learn the remote's default branch, so the check below can
@@ -427,11 +427,11 @@ class GitBackend:
             except GitError:  # pragma: no cover - git itself is failing
                 pass
 
-    def _check_ignored(self, report: SyncReport) -> None:
-        """Name project files the repository's ignore rules keep out of every sync.
+    def _check_ignored(self, report: ReconcileReport) -> None:
+        """Name project files the repository's ignore rules keep out of every reconcile.
 
         They are not forced in: the repository's `.gitignore` is its owner's
-        statement of what it holds. But a sync that silently leaves project
+        statement of what it holds. But a reconcile that silently leaves project
         files behind is worse than one that says so.
         """
         listed = self._git("ls-files", "--others", "--ignored", "--exclude-standard",
@@ -441,7 +441,7 @@ class GitBackend:
             count = len(ignored)
             report.problem = (f"{count} path{'s' if count != 1 else ''} in the project "
                               f"{'are' if count != 1 else 'is'} ignored by the repository "
-                              f"and not synced: {ignored[0]}"
+                              f"and not reconciled: {ignored[0]}"
                               + (f" and {count - 1} more" if count > 1 else "") + ".")
             report.fix = f"git -C {self.store} check-ignore -v {ignored[0]}"
 
@@ -453,7 +453,7 @@ class GitBackend:
         self._git("commit", "--quiet", "--no-verify", "-m", f"szsdlc: {reason}",
                   identity=True, timeout=LOCAL_TIMEOUT)
 
-    def _fetch(self, report: SyncReport) -> bool:
+    def _fetch(self, report: ReconcileReport) -> bool:
         try:
             self._git("fetch", "--quiet", "origin")
         except GitError as exc:
@@ -463,7 +463,7 @@ class GitBackend:
             return False
         return True
 
-    def _integrate(self, branch: str, report: SyncReport) -> bool:
+    def _integrate(self, branch: str, report: ReconcileReport) -> bool:
         upstream = f"refs/remotes/origin/{branch}"
         if not self._ok("rev-parse", "--verify", "--quiet", upstream):
             return True  # nothing remote yet; the push creates it
@@ -485,7 +485,7 @@ class GitBackend:
         report.pulled = True
         return True
 
-    def _push(self, branch: str, report: SyncReport) -> None:
+    def _push(self, branch: str, report: ReconcileReport) -> None:
         if not self._ahead(branch):
             return
         for attempt in range(2):

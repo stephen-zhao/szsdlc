@@ -227,7 +227,7 @@ def broken(project, write_entity):
 
 def test_sync_succeeds_against_a_broken_graph(run, broken):
     """Views are most needed exactly when something is wrong."""
-    code, output, err = run("sync")
+    code, output, err = run("reconcile")
     assert code == 0 and output == "" and err == ""
     assert (broken.views_dir / "board.md").is_file()
 
@@ -273,13 +273,13 @@ def test_compare_reports_what_would_differ(world):
 
 
 def test_sync_writes_only_what_changed(run, world):
-    run("sync")
+    run("reconcile")
     before = fingerprint(world.views_dir)
 
     entity = load_all(world, IdSpace(world)).by_text("WI-0001")
     entity.set_tags(["valkey", "tls", "quorum"])
     entity.save()
-    run("sync")
+    run("reconcile")
 
     after = fingerprint(world.views_dir)
     changed = {k for k in before if before[k] != after.get(k)}
@@ -289,16 +289,16 @@ def test_sync_writes_only_what_changed(run, world):
 
 
 def test_syncing_twice_changes_nothing(run, world):
-    run("sync")
+    run("reconcile")
     before = fingerprint(world.root)
-    run("sync")
+    run("reconcile")
     assert fingerprint(world.root) == before
 
 
 def test_sync_never_writes_to_a_source_file(run, world):
     before = fingerprint(world.root, "*.md")
     before = {k: v for k, v in before.items() if not k.startswith("views/")}
-    run("sync")
+    run("reconcile")
     after = {k: v for k, v in fingerprint(world.root, "*.md").items()
              if not k.startswith("views/")}
     assert after == before
@@ -306,7 +306,7 @@ def test_sync_never_writes_to_a_source_file(run, world):
 
 def test_completing_work_flips_coverage_without_touching_the_requirement(run, world):
     """The definitional/delivery boundary, asserted through sync."""
-    run("sync")
+    run("reconcile")
     requirements_before = fingerprint(world.dir_for("requirement"))
     register_before = (world.views_dir / "requirements-register.md").read_text(
         encoding="utf-8")
@@ -315,7 +315,7 @@ def test_completing_work_flips_coverage_without_touching_the_requirement(run, wo
     entity = load_all(world, IdSpace(world)).by_text("WI-0001")
     entity.set_status("dropped")
     entity.save()
-    run("sync")
+    run("reconcile")
 
     register_after = (world.views_dir / "requirements-register.md").read_text(
         encoding="utf-8")
@@ -325,7 +325,7 @@ def test_completing_work_flips_coverage_without_touching_the_requirement(run, wo
 
 def test_sync_is_silent_on_success_and_verbose_opts_in(run, world):
     """C4 — this runs after every write and at every turn end."""
-    code, output, err = run("sync")
+    code, output, err = run("reconcile")
     assert (code, output, err) == (0, "", "")
 
     entity = load_all(world, IdSpace(world)).by_text("WI-0001")
@@ -479,7 +479,7 @@ def test_yaml_dates_reach_a_json_schema_as_strings(with_record, capsys):
 
 
 def test_sync_on_an_empty_project_produces_readable_views(run, project):
-    assert run("sync")[0] == 0
+    assert run("reconcile")[0] == 0
     inbox = (project.views_dir / "inbox.md").read_text(encoding="utf-8")
     assert "Nothing waiting." in inbox
     assert "## Not loaded" not in inbox
