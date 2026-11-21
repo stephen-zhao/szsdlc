@@ -58,6 +58,6 @@ szsdlc -C examples/research-lab context
 Everything under `overview/` is generated — the banner at the top of each file
 says so, and `szsdlc validate` fails if any of it is stale or hand-edited.
 `tests/test_example.py` asserts exactly that, which makes this directory a
-canary: change a shipped template and the suite fails until it is re-synced,
+canary: change a shipped template and the suite fails until it is re-rendered,
 so the committed sample can never drift into showing output the tool no longer
 produces.

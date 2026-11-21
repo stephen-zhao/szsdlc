@@ -610,7 +610,9 @@ def test_session_start_says_where_the_files_are(configured, workdir, capsys):
     assert f"szsdlc project files: {configured.store}" in capsys.readouterr().out
 
 
-def test_an_edit_commits_locally_and_the_turn_end_pushes(configured, bare, workdir, capsys):
+def test_an_edit_records_nothing_and_the_turn_end_commits_it(configured, bare, workdir,
+                                                             capsys):
+    """An edit is not a unit of history. The turn is the boundary."""
     run("init")
     run("capture", "one")
     pushed = git("--git-dir", str(bare), "rev-parse", "main")
@@ -619,26 +621,40 @@ def test_an_edit_commits_locally_and_the_turn_end_pushes(configured, bare, workd
     idea.write_text(idea.read_text() + "\nmore\n")
     payload = {"cwd": str(workdir), "tool_input": {"file_path": str(idea)}}
     assert hooks.post_edit(payload) == 0
-    assert git("log", "-1", "--format=%s", cwd=configured.store).startswith("szsdlc: edit")
-    assert git("status", "--porcelain", cwd=configured.store) == ""
-    assert git("--git-dir", str(bare), "rev-parse", "main") == pushed  # nothing sent yet
-
-    hooks.stop({"cwd": str(workdir)})
-    assert git("--git-dir", str(bare), "rev-parse", "main") != pushed
-    assert "szsdlc: edit" in git("--git-dir", str(bare), "log", "--format=%s", "main")
-
-
-def test_inside_a_claude_turn_commands_only_commit(configured, bare, workdir,
-                                                   monkeypatch, capsys):
-    run("init")
-    pushed = git("--git-dir", str(bare), "rev-parse", "main")
-    monkeypatch.setenv("CLAUDECODE", "1")
-    assert run("capture", "mid-turn") == 0
-    assert git("log", "-1", "--format=%s", cwd=configured.store).strip() == "szsdlc: capture"
+    # Nothing committed, and nothing lost: the edit is sitting in the store.
+    assert git("status", "--porcelain", cwd=configured.store) != ""
     assert git("--git-dir", str(bare), "rev-parse", "main") == pushed
 
     hooks.stop({"cwd": str(workdir)})
-    assert "szsdlc: capture" in git("--git-dir", str(bare), "log", "--format=%s", "main")
+    assert git("status", "--porcelain", cwd=configured.store) == ""
+    assert git("--git-dir", str(bare), "rev-parse", "main") != pushed
+    assert "szsdlc: turn end" in git("--git-dir", str(bare), "log", "--format=%s", "main")
+
+
+def test_a_whole_turn_is_one_commit(configured, bare, workdir, monkeypatch, capsys):
+    """Twelve edits and three commands are one change to the project.
+
+    The frequency is the point: a commit per edit made the log a transcript of
+    the tool calls that produced a turn rather than a record of what it changed.
+    """
+    run("init")
+    before = len(git("--git-dir", str(bare), "log", "--format=%s", "main").splitlines())
+    monkeypatch.setenv("CLAUDECODE", "1")
+
+    for n in range(3):
+        assert run("capture", f"thought {n}") == 0
+    for idea in (configured.store / "ideas").rglob("*.md"):
+        idea.write_text(idea.read_text() + "\nmore\n")
+        hooks.post_edit({"cwd": str(workdir), "tool_input": {"file_path": str(idea)}})
+    # Still nothing recorded, and nothing sent.
+    assert git("--git-dir", str(bare), "rev-parse", "main")
+    assert git("status", "--porcelain", cwd=configured.store) != ""
+
+    hooks.stop({"cwd": str(workdir)})
+    after = git("--git-dir", str(bare), "log", "--format=%s", "main").splitlines()
+    assert len(after) - before == 1, after
+    assert "thought 2" in git("--git-dir", str(bare), "ls-tree", "-r", "--name-only", "main") \
+        or "ideas" in git("--git-dir", str(bare), "ls-tree", "-r", "--name-only", "main")
 
 
 def test_an_explicit_sync_inside_a_turn_still_pushes(configured, bare, workdir,
@@ -655,13 +671,61 @@ def test_a_commit_outside_a_clone_says_so(configured, workdir):
     assert not report.ok and "not a git clone" in report.problem
 
 
-def test_an_edit_to_the_config_is_committed_too(configured, bare, workdir, capsys):
+def test_commit_records_locally_and_never_reaches_the_remote(configured, bare, workdir,
+                                                             capsys):
+    """The local half of a sync, reachable on its own — offline, or with a
+    remote that cannot be answered for."""
+    run("init")
+    head = git("--git-dir", str(bare), "rev-parse", "main")
+    (configured.store / "note.md").write_text("x")
+
+    assert run("commit") == 0
+    assert git("status", "--porcelain", cwd=configured.store) == ""
+    assert git("log", "-1", "--format=%s", cwd=configured.store).strip() == "szsdlc: commit"
+    assert git("--git-dir", str(bare), "rev-parse", "main") == head  # nothing sent
+
+    assert run("sync") == 0
+    assert "note.md" in remote_files(bare)
+
+
+def test_commit_renders_before_it_records(configured, bare, workdir, capsys):
+    """A commit of stale views is a commit that says the project is something
+    it is not."""
+    run("init")
+    assert run("capture", "a thought worth rendering") == 0
+    assert list(configured.root.rglob("inbox.md")) == []  # capture does not render
+
+    assert run("commit") == 0
+    inbox = next(configured.root.rglob("inbox.md"))
+    assert "a thought worth rendering" in inbox.read_text()
+    assert git("status", "--porcelain", cwd=configured.store) == ""
+    # The view is in the commit, not merely on disk beside it.
+    assert "inbox.md" in git("show", "--name-only", "--format=", "HEAD",
+                             cwd=configured.store)
+
+
+def test_commit_without_a_backend_refuses_rather_than_succeeding_silently(user, workdir,
+                                                                          capsys):
+    """In the working tree there is nothing to commit into, and git is already
+    doing it. Saying so beats a zero exit that recorded nothing."""
+    assert run("init") == 0
+    capsys.readouterr()
+    assert run("commit") != 0
+    assert "no backend is configured here" in capsys.readouterr().err
+
+
+def test_an_edit_to_the_config_is_swept_in_at_the_turn_end(configured, bare, workdir,
+                                                           capsys):
+    """The commit is of the project, not of the sources: the config too."""
     run("init")
     config = configured.store / ".szsdlc" / "config.yml"
     config.write_text(config.read_text() + "\n# tuned\n")
     assert hooks.post_edit({"cwd": str(workdir), "tool_input": {"file_path": str(config)}}) == 0
+    assert git("status", "--porcelain", cwd=configured.store) != ""
+
+    hooks.stop({"cwd": str(workdir)})
     assert git("status", "--porcelain", cwd=configured.store) == ""
-    assert git("log", "-1", "--format=%s", cwd=configured.store).strip() == "szsdlc: edit config.yml"
+    assert "# tuned" in git("--git-dir", str(bare), "show", "main:.szsdlc/config.yml")
 
 
 def test_an_edit_outside_the_project_commits_nothing(configured, bare, workdir, capsys):
@@ -674,16 +738,25 @@ def test_an_edit_outside_the_project_commits_nothing(configured, bare, workdir, 
     assert "loose.md" in git("status", "--porcelain", cwd=configured.store)
 
 
-def test_a_failed_edit_commit_is_reported_into_context(configured, workdir, monkeypatch, capsys):
+def test_the_edit_hook_never_reaches_the_backend(configured, workdir, monkeypatch, capsys):
+    """It renders and nothing else, so it has no backend failure to report.
+
+    The hook used to commit here, which put a git invocation on the critical
+    path of every write — and an `index.lock` collision in Claude's context for
+    something nobody asked for.
+    """
     run("init")
     idea = configured.store / ".szsdlc" / "config.yml"
-    monkeypatch.setattr(backend, "commit_at",
-                        lambda *a, **k: backend.SyncReport(problem="index.lock exists"))
+
+    def explode(*args, **kwargs):
+        raise AssertionError("the edit hook reached the backend")
+
+    monkeypatch.setattr(backend, "commit_at", explode)
+    monkeypatch.setattr(backend, "sync_at", explode)
     capsys.readouterr()
-    hooks.post_edit({"cwd": str(workdir), "tool_input": {"file_path": str(idea)}})
-    emitted = json.loads(capsys.readouterr().out)
-    assert "szsdlc backend commit: index.lock exists" in \
-        emitted["hookSpecificOutput"]["additionalContext"]
+    assert hooks.post_edit({"cwd": str(workdir),
+                            "tool_input": {"file_path": str(idea)}}) == 0
+    assert capsys.readouterr().out == ""
 
 
 def test_an_unexpected_sync_failure_is_still_reported(configured, workdir, monkeypatch, capsys):
@@ -1090,11 +1163,15 @@ def test_a_sync_never_outlasts_its_budget(configured, workdir, monkeypatch, caps
 
 
 def test_a_broken_config_is_still_committed_and_synced(configured, bare, workdir, capsys):
+    """A config edit that breaks the project is a change like any other.
+
+    It is the one most worth sending: the repair may have to come from the
+    machine that can still load the project.
+    """
     run("init")
     config = configured.store / ".szsdlc" / "config.yml"
     config.write_text("{nope: [\n")
     assert hooks.post_edit({"cwd": str(workdir), "tool_input": {"file_path": str(config)}}) == 0
-    assert git("status", "--porcelain", cwd=configured.store) == ""
     capsys.readouterr()
     assert hooks.stop({"cwd": str(workdir)}) == hooks.EXIT_OK
     assert "szsdlc backend: " in capsys.readouterr().err
@@ -1125,7 +1202,7 @@ def test_a_redraw_that_fails_after_a_pull_is_said(configured, bare, workdir, tmp
     def broken(*args, **kwargs):
         raise RuntimeError("template missing")
 
-    monkeypatch.setattr(render, "sync", broken)
+    monkeypatch.setattr(render, "render", broken)
     capsys.readouterr()
     hooks.stop({"cwd": str(workdir)})
     assert "redrawing after the pull failed: RuntimeError: template missing" in \

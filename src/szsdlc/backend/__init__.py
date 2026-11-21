@@ -23,15 +23,32 @@ ordinary behaviour with `SZSDLC_BACKEND=workdir`. An unknown key in the
 selected backend's namespace is refused, because an ignored setting is one
 that does not do what it says.
 
-Inside a Claude Code turn, changes are only **committed** locally as they
-happen — after each edit, and after each CLI command Claude runs — and the
-remote is reached once, as the turn ends. A full sync (pull, then push) runs
-when a session starts, before a prompt is answered, when a turn ends, and on
-an explicit `szsdlc sync` or `szsdlc backend sync`. A CLI command typed in a
-terminal has no turn end to wait for, so it syncs as soon as it changes
-something. Every sync is best-effort: a command that succeeded is never reported as failed because the
-network was down. The change stays local, the problem is said once, and the
-next sync tries again.
+Three operations, deliberately distinct, because the first of them used to be
+called a sync too and the word then named nothing in particular:
+
+- **render** (:mod:`szsdlc.render`) derives the generated views from the
+  entities. Local, one-way, and no business of a backend's — it is listed here
+  only because it is the first step of the other two, neither of which should
+  record or send a view that is out of date.
+- **commit** records a store's changes where the backend keeps them, without
+  touching the network.
+- **sync** reconciles the store with its remote: commit, pull, then push.
+
+Inside a Claude Code turn, nothing is committed as the turn runs. An edit is
+not a unit of history — a turn that touches twelve files is one change to the
+project — so the turn is the boundary, and the turn-end hook renders, commits
+once and syncs. Work is not at risk in between, because the edits are on disk
+in the store and :meth:`Backend.has_local_changes` reads the working tree: the
+next commit or sync, from whichever entry point reaches it first, sweeps in
+whatever is sitting there uncommitted.
+
+A full sync runs when a session starts, before a prompt is answered, when a
+turn ends, and on an explicit `szsdlc sync` or `szsdlc backend sync`;
+`szsdlc commit` does the local half alone. A CLI command typed in a terminal
+has no turn end to wait for, so it syncs as soon as it changes something. Every
+sync is best-effort: a command that succeeded is never reported as failed
+because the network was down. The change stays local, the problem is said once,
+and the next sync tries again.
 
 A backend is a class implementing :class:`Backend`, registered in
 :data:`BACKENDS`. Nothing outside this package knows which one is in use.

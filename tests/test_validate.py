@@ -53,7 +53,7 @@ def clean(project, write_entity, run):
     roadmap.place("WI-0001", "now")
     roadmap.place("EPIC-0001", "next")
     roadmap.save()
-    run("sync")
+    run("render")
     return project
 
 
@@ -357,7 +357,7 @@ def test_a_stale_generated_file_is_reported(clean, write_entity, run):
     write_entity("decision", 9, "title: New decision\nstatus: proposed\n"
                                 "opened: 2026-08-01\n", slug="new")
     found = findings(clean, "stale-generated")
-    assert found and found[0].fix == "szsdlc sync"
+    assert found and found[0].fix == "szsdlc render"
 
 
 def test_a_hand_edited_generated_file_is_distinguished_from_staleness(clean):
@@ -377,7 +377,7 @@ def test_a_never_generated_view_is_reported(project, write_entity):
     # Eight rows of the same instruction is how a reader learns to skim.
     assert len(found) == 1
     assert str(len(project.views)) in found[0].message
-    assert found[0].fix == "szsdlc sync"
+    assert found[0].fix == "szsdlc render"
 
 
 def test_a_couple_of_missing_views_are_still_named_individually(project, write_entity,
@@ -410,7 +410,7 @@ def test_there_is_one_definition_of_stale(clean, write_entity):
 
 def test_errors_exit_four_and_warnings_alone_exit_zero(run, clean, write_entity):
     write_entity("idea", 1, "status: inbox\ncaptured: 2020-01-01\n", "old\n")
-    run("sync")
+    run("render")
     code, output, _ = run("validate")
     assert code == 0
     assert "warning" in output

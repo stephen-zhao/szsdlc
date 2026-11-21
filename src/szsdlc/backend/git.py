@@ -51,16 +51,17 @@ from . import (
 TIMEOUT = 45
 
 #: Seconds a purely local invocation can take. A local commit makes three of
-#: them, inside an edit hook that Claude Code kills after 30 seconds.
+#: them, and the tightest hook it runs under is UserPromptSubmit, which Claude
+#: Code kills after 60 seconds — a budget shared with the fetch and the push.
 LOCAL_TIMEOUT = 8
 
 #: The transports git may use. Everything else — `ext::`, and any `foo::` URL
 #: that would launch a `git-remote-foo` helper found on PATH — is refused.
 PROTOCOLS = ("file", "git", "http", "https", "ssh")
 
-#: Seconds a whole commit, and a whole sync, may take — the PostToolUse hook
-#: allows 30, SessionStart and UserPromptSubmit 60. Each git call gets what is
-#: left, so the calls cannot add up past the hook that runs them.
+#: Seconds a whole commit, and a whole sync, may take — SessionStart and
+#: UserPromptSubmit allow 60, and `Stop` 120. Each git call gets what is left,
+#: so the calls cannot add up past the hook that runs them.
 COMMIT_BUDGET = 25
 SYNC_BUDGET = 50
 

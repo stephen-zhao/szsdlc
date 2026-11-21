@@ -94,7 +94,7 @@ def test_every_generated_file_is_current(world):
     """Committed generated output matches what this code renders right now.
 
     Which makes the example a canary: change a shipped template and this fails
-    until the example is re-synced, so the committed sample can never drift
+    until the example is re-rendered, so the committed sample can never drift
     into showing output the tool no longer produces.
     """
     assert compare(Renderer(*world).all()) == []

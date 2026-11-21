@@ -7,10 +7,10 @@
   "license": "MIT",
   "keywords": ["sdlc", "backlog", "traceability", "requirements", "roadmap"],
   "userConfig": {
-    "sync_on_turn_end": {
+    "render_on_turn_end": {
       "type": "boolean",
-      "title": "Sync at the end of every turn",
-      "description": "Regenerate the views when Claude finishes responding, not only when a source file is written. A file somebody typed into is left alone for szsdlc validate to report.",
+      "title": "Render at the end of every turn",
+      "description": "Regenerate the views when Claude finishes responding, not only when a source file is written. A file somebody typed into is left alone for szsdlc validate to report. This governs rendering only: the project is still committed and synced with its backend as the turn ends.",
       "default": true
     }
   }

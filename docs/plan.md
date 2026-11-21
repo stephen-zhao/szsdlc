@@ -51,7 +51,8 @@ automatic and the gates non-optional; skills carry only judgment.
 | Grouping axes | Two, independent, both metadata: **tags** (what this touches) and **epic** (toward what outcome, via `parent`) | Tags are many-per-item and cheap; an epic is a single deliberate bundle with its own lifecycle. Neither belongs in an identifier, and neither substitutes for the other |
 | Relations | Stated on one side only; inverses generated | DRY — the back-link is rendered, never authored |
 | Task tracking | Markdown checkboxes, parsed for progress | One format, readable by human and script |
-| Git automation | Out of scope for v1 | Keeps the framework forge-agnostic |
+| Git automation | **Reversed in Phase 7.** A `git` backend keeps the project in a remote repository and records it there; the forge is still unknown to the framework — only git is, and only through its CLI | "Forge-agnostic" was the right goal and "no git" was the wrong way to reach it: a project that lives in two places needs reconciling, and leaving that to the user meant it did not happen |
+| Commit frequency | **One commit per turn**, made at the turn-end boundary by the `Stop` hook | An edit is not a unit of history. A commit per write made the log a transcript of Claude's tool calls rather than a record of what changed |
 
 ---
 
@@ -63,7 +64,7 @@ automatic and the gates non-optional; skills carry only judgment.
 | **Artifacts** | further files in a `directory`-layout entity | Optional; presence can gate transitions |
 | **Relations** | `relations:` in frontmatter | Typed, cross-entity, validated globally, inverses generated |
 | **Roadmap** | `<roadmaps>/<name>.yml` — horizon buckets of ids | The single home for priority *and* schedule placement |
-| **Views** | generated markdown, written only by `sync` | inbox, board, roadmap, rollups, registers, traceability |
+| **Views** | generated markdown, written only by `render` | inbox, board, roadmap, rollups, registers, traceability |
 | **Records** | project-defined YAML dataset + template → generated markdown | Generic mechanism for any project-specific tracked table |
 | **Standards** | `<standards>/*.md` with `applies_to` globs | Matched and injected on demand, never preloaded |
 
@@ -161,7 +162,7 @@ never stores a percentage that can go stale.
 
 ## Two kinds of validity
 
-`sync` renders an invalid project happily; `validate` is what objects. That is
+`render` draws an invalid project happily; `validate` is what objects. That is
 only coherent because *project* validity and *model* validity are different
 things:
 
@@ -179,7 +180,7 @@ mechanism rather than a contradiction:
   refused to represent.
 - A file whose frontmatter will not parse becomes an explicit *unparseable
   entity* node rather than an exception, so one corrupt file cannot block
-  `sync` for every other entity.
+  `render` for every other entity.
 - A status outside the configured workflow is held as-is. `set` refuses to
   *create* one, but a hand-edited file may contain one and must still load.
 
@@ -187,10 +188,10 @@ Two consequences the implementation must honour:
 
 **Views degrade visibly, never silently.** A dangling reference renders as
 `WI-0420 (missing)`; an unparseable entity appears in the view with its path.
-Dropping broken edges would let `sync` conceal precisely what `validate` exists
+Dropping broken edges would let `render` conceal precisely what `validate` exists
 to surface.
 
-**`sync` requires only model validity.** "Can I load and render this?" — not
+**`render` requires only model validity.** "Can I load and render this?" — not
 "is this project coherent?". That is why it can, and must, run against a
 half-built graph.
 
@@ -364,7 +365,7 @@ to touch `relations` and says `use: szsdlc link WI-0042 implements REQ-0007`. Ne
 `set`, because composing them on a command line is exactly the input that takes
 an agent three attempts.
 
-**C4 — Silent on the happy path when hook-invoked.** `sync` and `validate`
+**C4 — Silent on the happy path when hook-invoked.** `render` and `validate`
 print nothing on success. They run after every file write and at every turn
 end; output on the happy path has no consumer and risks reaching context.
 `--verbose` opts in.
@@ -397,11 +398,11 @@ always print the total when truncated.
 | `context` | none | in-flight entities + counters block | hard cap |
 | `list [filters]` | flags only | one row per entity | ≤20 rows + total |
 | `trace <ref> [--depth N]` | one ref, **default depth 2** | compact edge notation | ≤20 edges + total |
-| `sync` | none | **nothing** | 0 lines |
+| `render` | none | **nothing** | 0 lines |
 | `validate` | none | **nothing** when clean; grouped findings when not, most severe first | 0 / ≤20 |
 | `standards match <path>...` | paths | matching standard names | ≤10 rows |
 | `init` | none | created paths, compact | ≤15 lines |
-| `--help` | none | one line per command | ≤28 lines, and never on the ceiling |
+| `--help` | none | one line per command | ≤30 lines, and never on the ceiling |
 
 Unknown-reference errors suggest the nearest match (`no WI-0420; did you
 mean WI-0042?`), which converts the most likely agent typo into a single
@@ -435,7 +436,7 @@ corrected call rather than a search.
 | `src/szsdlc/graph.py` | Relation graph, inverse derivation, derived attributes, cycle detection |
 | `src/szsdlc/roadmap.py` | Roadmap records, horizons, placement operations |
 | `src/szsdlc/workflow.py` | Status transitions and gate evaluation |
-| `src/szsdlc/render.py` | Jinja2 view + record rendering, plus the `compare()` used by both `sync` and validate's staleness rule |
+| `src/szsdlc/render.py` | Jinja2 view + record rendering, plus the `compare()` used by both `render` and validate's staleness rule |
 | `src/szsdlc/validate.py` | All consistency rules |
 | `src/szsdlc/context.py` | Compact state for `SessionStart` and `show --context` |
 | `src/szsdlc/standards.py` | Glob matching for standards injection |
@@ -1478,6 +1479,72 @@ the only way to reach it was to walk `docs/sdlc/requirements/` by hand.
 >   and widening them is a separate question about what those two views are
 >   *for*. `list` and `show` are the general entity queries and the ones a
 >   script reaches for. Deferred deliberately rather than overlooked.
+
+---
+
+## Phase 7 — One word, one operation (2026-11-21)
+
+### Task 27: `render`, `commit`, `sync` — and one commit per turn — **DONE**
+
+**Requirement.** Two problems with one cause. The `git` backend of Task 24
+introduced reconciling-with-a-remote and called it `sync`, which was already
+the name of regenerating the views. By the time both existed the word named
+three things at once, and the frequency of the commit was wrong in the same
+breath: every edit and every CLI command produced one.
+
+The collision was not theoretical. It had already produced:
+
+- `sync_on_turn_end`, a user-facing plugin option whose name says *backend* and
+  whose implementation gated *rendering* — the local variable reading it is
+  called `rendering`. Turning it off still pushed to the remote.
+- a backend sync invoked with the reason string `"render after pull"`.
+- `szsdlc.backend`'s docstring documenting `szsdlc sync` as a backend sync
+  while `docs/reference.md` documented the same command as "regenerate every
+  view and record". Both were half right, which is the failure mode a single
+  name for two operations always has.
+
+**The language.** Three words, and no two of them are the same thing:
+
+| Word | What it does | Reaches the network |
+|---|---|---|
+| **render** | derives the generated views and records from the entities | no |
+| **commit** | records the project where its backend keeps it | no |
+| **sync** | reconciles the backend with its remote: commit, pull, push | yes |
+
+- [x] **Step 1:** `render.sync()` → `render.render()`, `szsdlc sync` (the render-only command) → `szsdlc render`, and every docstring, fix string and generated-file banner that meant rendering. The `compare()` primitive and validate's staleness rule are untouched — only the name they are reached by.
+- [x] **Step 2:** `szsdlc commit` promoted to a top-level command: render, then record, no network. Reachable on its own so work can be committed offline, or against a remote that cannot be answered for. In the working tree it refuses rather than succeeding silently, because git is already doing the job there.
+- [x] **Step 3:** `szsdlc sync` keeps the behaviour it had — render, then commit, pull and push — and is now documented as that one operation rather than as two. Rendering first is sync doing its job, not a second meaning: a sync that pushed stale views would be wrong.
+- [x] **Step 4:** `sync_on_turn_end` → `render_on_turn_end` in `plugin.json`, with the old key still read through `RENAMED_OPTIONS` for one release. An installed plugin carries the choice someone made against the old name; dropping the key would not restore the default, it would ignore a decision already taken.
+- [x] **Step 5:** The per-edit and per-command commits removed — `PostToolUse` renders and nothing else, and a CLI command inside a turn records nothing. The turn-end hook's existing sync already commits exactly once before it rebases, so that commit became the turn's commit; no new commit path was added.
+- [x] **Step 6:** Tests rewritten to the new contract, plus `test_a_whole_turn_is_one_commit` (three commands and every idea edited → one commit), the `szsdlc commit` cases, and the renamed-option fallback. `HELP_BUDGET` 28 → 30, deliberately.
+
+> **Decisions taken while implementing:**
+>
+> - **"sync" went to the backend, not to the renderer.** Both are defensible
+>   and the deciding argument is what the word means to someone who has not
+>   read this file: reconciling two copies of the same data across a boundary.
+>   Rendering is a one-way derivation and never was a sync. `render` also
+>   already named the module that does it.
+> - **The commit cannot come after `validate`.** The turn-end order asked for
+>   was render → validate → commit → push, and git does not allow it: a rebase
+>   needs a clean tree, so the commit must precede the pull. The order is
+>   render → commit → pull → render again if something was pulled → validate →
+>   push. Gating the commit on `validate` passing was considered and rejected
+>   for the same reason the push is not gated on it — an unfinished turn is
+>   still work, and keeping it on one machine is how it gets lost.
+> - **Nothing was added to make the batching safe.** Removing the eager commits
+>   needed no new durability mechanism: the edits are on disk in the store, and
+>   `has_local_changes` reads the working tree, so the next commit or sync from
+>   any entry point sweeps in whatever is uncommitted. A session that dies
+>   mid-turn leaves its work there, and the next session's start sync records
+>   it. This is why the change is a deletion rather than a feature.
+> - **The old commit messages are not migrated.** A history of `szsdlc: edit
+>   WI-0042.md` stays as it is. It is a log of what happened, and rewriting it
+>   would be the same mistake as hand-editing a generated file.
+> - **`--help` grew by two lines, which is the cost of the fix.** Three
+>   operations that differ in whether they touch the network cannot share one
+>   line. Two lines of help are cheaper than an agent guessing which command
+>   reaches a remote — the guess this task exists to remove.
 
 ---
 

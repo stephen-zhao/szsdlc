@@ -99,8 +99,10 @@ context                 in-flight work and the counters block
 list [filters]          by type, status, tag, parent, coverage, placement
 trace <ref> [--depth]   relations both ways, back to the idea
 standards match <path>  conventions governing these paths
-sync                    regenerate every view and record; silent, never validates
+render                  regenerate every view and record; silent, never validates
 validate                every consistency rule; silent when clean
+commit                  render, then record the project locally; no network
+sync                    render, then reconcile with the backend: commit, pull, push
 backend [show|sync]     where the project is kept; sync it with its remote now
 ```
 
@@ -131,19 +133,28 @@ The plugin wires five:
 | `SessionStart` | Pulls from the [backend](#backends-where-a-project-is-kept)'s remote, if any, then prepends `szsdlc context` — a session begins knowing the state without searching for it |
 | `UserPromptSubmit` | Pulls from and pushes to the backend's remote, if any, before Claude answers. Silent unless that failed |
 | `PreToolUse` | Blocks edits to generated files, and injects the standards governing the file being edited |
-| `PostToolUse` | Runs `sync` when an entity or roadmap file changes, then commits locally to the backend — no network |
-| `Stop` | Runs `sync`, then `validate` — blocking on errors only — and pushes to the backend's remote either way |
+| `PostToolUse` | Runs `render` when an entity or roadmap file changes. Records nothing — the turn is the commit boundary |
+| `Stop` | Renders, syncs with the backend, then runs `validate` — blocking on errors only. Pushes either way |
 
 `Stop` fires when Claude finishes responding — the end of a turn, and the
 closest Claude Code has to a post-turn event. Both halves run in the one
 handler because each entry under the event is its own process and its own load
 of the project.
 
-Sync runs first so `validate` judges the state the turn leaves behind rather
-than blocking on a fix that was about to happen anyway. It is also the one
-sync nobody asked for, so it leaves a hand-edited generated file alone for
+It is also the turn's one commit boundary. The sequence is render → commit →
+pull → render again if something was pulled → validate → push. The commit sits
+inside the sync, and therefore before the pull, because git cannot rebase a
+dirty tree; `validate` comes after the pull so that what it judges includes
+whatever the sync brought in, and the push happens whether or not `validate`
+passed, because an unfinished turn is still work and keeping it on one machine
+is how it gets lost.
+
+Rendering runs first so `validate` judges the state the turn leaves behind
+rather than blocking on a fix that was about to happen anyway, and so the
+commit records current views rather than stale ones. It is also the one render
+nobody asked for, so it leaves a hand-edited generated file alone for
 `validate` to report: overwritten text cannot be recovered, and the evidence
-for that error is the file. `szsdlc sync` still overwrites.
+for that error is the file. `szsdlc render` still overwrites.
 
 Every hook is a silent no-op in a project without `.szsdlc/config.yml`, so the
 plugin is harmless installed globally.
@@ -156,10 +167,14 @@ Declared in [`.claude-plugin/plugin.json`](../.claude-plugin/plugin.json) under
 
 | Setting | Default | What it does |
 |---|---|---|
-| `sync_on_turn_end` | `true` | Run `sync` as the turn ends, not only when a source file is written. Off, `Stop` is `validate` alone |
+| `render_on_turn_end` | `true` | Run `render` as the turn ends, not only when a source file is written. Off, `Stop` is the backend sync and `validate` alone |
+
+Renamed from `sync_on_turn_end`, which named the wrong operation: it governed
+rendering and never the backend. The old key is still read, for one release, so
+a choice already made is not silently dropped.
 
 Not `.szsdlc/config.yml` keys: that file is the project's model, read by the
-CLI and by CI, which have no turns to sync at.
+CLI and by CI, which have no turns to render at.
 
 ## Backends: where a project is kept
 
@@ -247,13 +262,22 @@ not per change:
 
 | When | What |
 |---|---|
-| session start, before each prompt, turn end | full sync: pull, then push |
-| after each edit, and each CLI command Claude runs | local commit only — no network |
+| session start, before each prompt, turn end | full sync: commit, pull, then push |
+| after each edit, and each CLI command Claude runs | nothing — the turn is the boundary |
 | `szsdlc sync`, `szsdlc backend sync` | full sync, on demand |
+| `szsdlc commit` | render, then commit — no network |
 | a CLI command typed in a terminal | full sync if it changed anything, since no turn end follows |
 
 Commands tell the two cases apart by `CLAUDECODE=1`, which Claude Code sets in
 the shells it runs commands in.
+
+**A turn produces one commit.** An edit is not a unit of history: a turn that
+touches twelve files is one change to the project, and committing each write
+made the log a transcript of Claude's tool calls rather than a record of what
+changed. Nothing is at risk in between — the edits are on disk in the store,
+and `has_local_changes` reads the working tree, so the next commit or sync
+sweeps in whatever is sitting there uncommitted. A session that dies mid-turn
+leaves its work uncommitted in the store; the next session's start syncs it.
 
 For `git`, a commit records everything in the clone; a sync commits, rebases
 onto the remote branch, and pushes. It never turns a successful command into a failure. If the

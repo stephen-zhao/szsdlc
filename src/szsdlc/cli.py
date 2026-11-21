@@ -91,8 +91,10 @@ COMMANDS: list[tuple[str, str]] = [
     ("list [filters]", "by type, status, tag, parent, coverage, placement"),
     ("trace <ref> [--depth]", "relations both ways, back to the idea"),
     ("standards match <path>", "conventions governing these paths"),
-    ("sync", "regenerate every view and record; silent, never validates"),
+    ("render", "regenerate every view and record; silent, never validates"),
     ("validate", "every consistency rule; silent when clean"),
+    ("commit", "render, then record the project locally; no network"),
+    ("sync", "render, then reconcile with the backend: commit, pull, push"),
     ("backend [show|sync]", "where the project is kept; sync it with its remote now"),
 ]
 
@@ -245,9 +247,17 @@ def build_parser() -> Parser:
     standards.add_argument("--json", action="store_true", dest="as_json")
     standards.set_defaults(run=cmd_standards)
 
+    render = subparsers.add_parser("render", prog="szsdlc render")
+    render.add_argument("--verbose", action="store_true")
+    render.set_defaults(run=cmd_render)
+
+    commit = subparsers.add_parser("commit", prog="szsdlc commit")
+    commit.add_argument("--verbose", action="store_true")
+    commit.set_defaults(run=cmd_commit)
+
     sync = subparsers.add_parser("sync", prog="szsdlc sync")
     sync.add_argument("--verbose", action="store_true")
-    sync.set_defaults(run=cmd_sync)
+    sync.set_defaults(run=cmd_render)
 
     validate = subparsers.add_parser("validate", prog="szsdlc validate")
     validate.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
@@ -1334,12 +1344,16 @@ def cmd_standards(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# sync
+# render
 # ---------------------------------------------------------------------------
 
 
-def cmd_sync(args: argparse.Namespace) -> int:
-    """Regenerate every view and record. Never validates.
+def cmd_render(args: argparse.Namespace) -> int:
+    """Regenerate every view and record. Never validates, never reaches a remote.
+
+    Rendering is a one-way derivation: entities in, generated markdown out. It
+    is the whole of `szsdlc render`, and the first step of `commit` and `sync`,
+    because neither should record or send a view that is out of date.
 
     C4 — silent on the happy path. This runs after every file write and at
     every turn end; output there has no consumer and would reach context.
@@ -1347,12 +1361,41 @@ def cmd_sync(args: argparse.Namespace) -> int:
     from . import render as render_module
 
     session = Session(args.project)
-    changed = render_module.sync(session.config, session.store, _graph(session),
-                                 _roadmaps(session))
+    changed = render_module.render(session.config, session.store, _graph(session),
+                                   _roadmaps(session))
     if args.verbose:
         for item in changed:
             out(_relative(session, item.path))
     return 0
+
+
+# ---------------------------------------------------------------------------
+# commit
+# ---------------------------------------------------------------------------
+
+
+def cmd_commit(args: argparse.Namespace) -> int:
+    """Render, then record the project in its backend. Never reaches the network.
+
+    The local half of `sync`, reachable on its own so that work can be recorded
+    with no remote configured, or with one that cannot be reached. A project in
+    the working tree has no backend to record into, and this is then `render`
+    plus a one-line refusal rather than a silent success.
+    """
+    from . import backend as backend_module
+
+    status = cmd_render(args)
+
+    backend_module.project_root(args.project)  # create the store if needed
+    found = backend_module.locate(args.project)
+    if found is None:
+        raise BadInput("no backend is configured here; the project is in the working tree, "
+                       "where git records it directly.",
+                       fix="set SZSDLC_BACKEND in the env block of .claude/settings.json")
+    report = backend_module.commit(found, "commit")
+    if report is not None and not report.ok:
+        raise Refused(f"{report.problem}", fix=report.fix)
+    return status
 
 
 # ---------------------------------------------------------------------------
@@ -1363,7 +1406,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
 def cmd_validate(args: argparse.Namespace) -> int:
     """Every consistency rule. Silent when clean; findings when not.
 
-    The single enforcement point: `sync` runs constantly and tolerantly during
+    The single enforcement point: `render` runs constantly and tolerantly during
     a turn, this runs once at the end and strictly.
     """
     from . import validate as validate_module
@@ -1499,8 +1542,12 @@ def run(argv: Sequence[str] | None = None) -> int:
     status = runner(args)
     try:
         if args.command != "sync" and backend_module.in_claude_turn():
-            # The Stop hook pushes once, as the turn ends.
-            report = backend_module.commit_at(args.project, args.command)
+            # Nothing is recorded here. The turn-end hook renders, commits once
+            # and syncs; a commit per command made a turn's history a list of
+            # the tool calls that produced it rather than of what it changed.
+            # Uncommitted work is not at risk: `has_local_changes` reads the
+            # working tree, so the next sync picks up whatever is sitting there.
+            report = None
         else:
             # After an explicit sync, only what it rendered is left to send.
             report = backend_module.sync_at(args.project, args.command, only_if_changed=True)
@@ -1519,9 +1566,11 @@ def _warn_backend(exc: OSError) -> None:
           "Fix: szsdlc backend sync", file=sys.stderr)
 
 
-#: Commands that do their own syncing, or none: `hook` because each handler
-#: decides when to sync, `backend` because syncing is its subject.
-BACKEND_EXEMPT = {"hook", "backend"}
+#: Commands that do their own recording, or none: `hook` because each handler
+#: decides when to render, commit and sync; `backend` and `commit` because the
+#: backend is their subject and they would otherwise be wrapped in a second,
+#: contradictory one — `commit` in particular must not reach the network.
+BACKEND_EXEMPT = {"hook", "backend", "commit"}
 
 
 def _force_utf8_streams() -> None:

@@ -51,7 +51,7 @@ CORE_FIELDS = frozenset({"id", "title", "tags", "status", "relations"})
 
 #: Where a `section`-layout type keeps its entries when it does not say. Inside
 #: the type's own directory, so everything that watches or scans that directory
-#: — the sync hook included — keeps working without being told about layouts.
+#: — the render hook included — keeps working without being told about layouts.
 DEFAULT_SECTION_FILE = "index.md"
 
 #: What one entry may occupy. `dynamic` is not one of them: it is a type saying

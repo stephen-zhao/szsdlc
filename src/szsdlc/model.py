@@ -13,7 +13,7 @@ construction; for a `dynamic` type they do not, and an entry is laid out again
 as it earns it — a thought starts as a section, gets its own file when it
 grows, and gets a directory the moment something has to live beside it.
 
-The harder property is the second one. `sync` must render a half-built project,
+The harder property is the second one. `render` must render a half-built project,
 so loading is *permissive*: a file whose frontmatter will not parse becomes an
 explicit :class:`UnparseableEntity` carrying its path and the parse error, and
 a status outside the configured workflow loads exactly as written. Neither is
@@ -98,7 +98,7 @@ def parse_progress(text: str) -> Progress:
 class UnparseableEntity:
     """A file the loader could not read, represented rather than raised.
 
-    It appears in views with its path and error — dropping it would let `sync`
+    It appears in views with its path and error — dropping it would let `render`
     conceal precisely what `validate` exists to surface.
     """
 
@@ -420,7 +420,7 @@ def frontmatter_schema(config: Config, entity_type: EntityType) -> dict[str, Any
 
 def schema_findings(config: Config, entity: Entity) -> list[str]:
     """Frontmatter problems as messages. Returned, never raised: these describe
-    the *project*, and `sync` has to render a project that has them."""
+    the *project*, and `render` has to render a project that has them."""
     schema = frontmatter_schema(config, entity.type)
     data = frontmatter.jsonify(entity.data)
     validator = Draft202012Validator(schema)
