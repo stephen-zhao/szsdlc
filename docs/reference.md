@@ -146,13 +146,22 @@ closest Claude Code has to a post-turn event. Both halves run in the one
 handler because each entry under the event is its own process and its own load
 of the project.
 
-It is also the turn's one commit boundary. The sequence is render → commit →
-pull → render again if something was pulled → validate → push. The commit sits
-inside the reconcile, and therefore before the pull, because git cannot rebase a
-dirty tree; `validate` comes after the pull so that what it judges includes
-whatever the reconcile brought in, and the push happens whether or not `validate`
-passed, because an unfinished turn is still work and keeping it on one machine
-is how it gets lost.
+It is also the turn's one commit boundary:
+
+```
+render → reconcile (commit, pull, push)
+       → render and reconcile again, if the pull brought anything
+       → validate
+```
+
+`validate` runs **last, after the push**, and nothing is gated on it: an
+unfinished turn is still work, and keeping it on one machine is how it gets
+lost, so the commit and the push happen either way and `validate` reports on
+what was sent. It is last rather than merely late because the pull is what it
+has to judge — the merged state, not the one this machine had before. The
+commit sits inside the reconcile and therefore before the pull, because git
+cannot rebase a dirty tree, so "commit only once `validate` passes" is not on
+offer even if it were wanted.
 
 Rendering runs first so `validate` judges the state the turn leaves behind
 rather than blocking on a fix that was about to happen anyway, and so the

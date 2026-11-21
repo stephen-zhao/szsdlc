@@ -373,32 +373,54 @@ def test_a_command_that_changes_files_pushes_them(configured, bare, workdir, cap
     assert last_commit(bare) == "szsdlc: capture"
 
 
-def test_sync_is_a_deprecated_alias_for_render(configured, bare, workdir, capsys):
-    """`sync` named rendering up to 0.2.4, so it keeps doing that.
+def test_sync_is_a_deprecated_alias_that_changes_nothing(configured, bare, workdir,
+                                                         capsys):
+    """`sync` keeps doing what the command did up to 0.2.4: a full reconcile.
 
-    The banner at the top of every generated file in every existing project
-    says "rerun `szsdlc sync`". Pointing the word at the backend instead would
-    have left those banners naming a command that now reaches the network —
-    a silent change in what an upgrade does, which is the one thing a rename
-    must not cause. So the alias follows the banners, and the network
-    operation took a name it never shared: `reconcile`.
+    The word *named* rendering, and the banner in every already-generated file
+    says "rerun `szsdlc sync`" — but the command rendered **and** reached the
+    remote, a pull before and a push after. Mapping the alias to `render` would
+    read better against those banners and would silently drop the push for
+    anyone scripting it against a backend. A deprecated name behaves as it did
+    and says it is going; it does not change what an upgrade does.
     """
     run("init")
-    assert run("capture", "a thought the alias should render") == 0
+    assert run("capture", "a thought the alias should send") == 0
+    idea = next((configured.store / "ideas").rglob("*.md"))
+    idea.write_text(idea.read_text() + "\nmarker-7a1b\n")
     head = git("--git-dir", str(bare), "rev-parse", "main")
-    inbox = next(configured.root.rglob("inbox.md"))
-    inbox.write_text("stale\n")
     capsys.readouterr()
 
     assert run("sync") == 0
     captured = capsys.readouterr()
-    # It renders, exactly as `render` does...
-    assert "a thought the alias should render" in inbox.read_text()
-    # ...does not reach the remote, exactly as `render` does not...
-    assert git("--git-dir", str(bare), "rev-parse", "main") == head
-    # ...and says so, on stderr, so a caller reading stdout is unaffected.
-    assert "deprecated" in captured.err and "szsdlc render" in captured.err
+    # It renders, and it reaches the remote — both, as it always did.
+    relative = idea.relative_to(configured.store).as_posix()
+    assert git("--git-dir", str(bare), "rev-parse", "main") != head
+    assert "marker-7a1b" in git("--git-dir", str(bare), "show", f"main:{relative}")
+    inbox = next(p for p in remote_files(bare) if p.endswith("inbox.md"))
+    assert "a thought the alias should send" in git(
+        "--git-dir", str(bare), "show", f"main:{inbox}")
+    # And it says it is deprecated, on stderr, so stdout stays usable.
+    assert "deprecated" in captured.err and "szsdlc reconcile" in captured.err
     assert "deprecated" not in captured.out
+
+
+def test_sync_without_a_backend_is_still_just_a_render(user, workdir, capsys):
+    """The other half of "changes nothing", and the ordinary case.
+
+    With no backend there is nothing to reconcile, so the alias renders and
+    stops — which is exactly what `szsdlc sync` did in a working-tree project
+    before any of this. The banners in those projects keep working unchanged.
+    """
+    assert run("init") == 0
+    assert run("capture", "a thought in the working tree") == 0
+    capsys.readouterr()
+
+    assert run("sync", "--verbose") == 0
+    captured = capsys.readouterr()
+    assert "deprecated" in captured.err
+    inbox = next(Path(workdir).rglob("inbox.md"))
+    assert "a thought in the working tree" in inbox.read_text()
 
 
 def test_render_never_reaches_the_remote(configured, bare, workdir, capsys):

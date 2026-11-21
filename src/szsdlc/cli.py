@@ -107,12 +107,22 @@ HIDDEN_COMMANDS = {"hook", "sync"}
 #: Each warns on stderr and then does exactly what its replacement does, so a
 #: project pinned to an older szsdlc keeps working across the upgrade.
 #:
-#: `sync` named rendering for every release up to 0.2.4, and the banner at the
-#: top of every generated file in every project says "rerun `szsdlc sync`".
-#: Those banners outnumber any script by orders of magnitude, so the alias
-#: follows them: it renders, and it does not reach the network. The operation
-#: that does is `reconcile`, which never shared the name.
-DEPRECATED_COMMANDS = {"sync": "render"}
+#: `sync` is mapped to `reconcile` rather than to `render`, although the word
+#: named rendering and the banner in every already-generated file says "rerun
+#: `szsdlc sync`". Up to 0.2.4 the *command* rendered **and** reached the
+#: remote — a pull before and a push after — so `reconcile` is what it already
+#: did, in both cases that exist:
+#:
+#:     no backend configured   render only, since there is nothing to reconcile
+#:     a backend configured    render, then commit, pull and push
+#:
+#: Mapping it to `render` instead would read better against those banners and
+#: would quietly drop the push for everyone scripting it against a backend.
+#: A deprecated name has one job — behave as it did, and say it is going — and
+#: the alias that satisfies it is the one that does not change what an upgrade
+#: does. Nothing here endorses the word: `reconcile` is the name to use, and
+#: `render` the one those banners should have printed.
+DEPRECATED_COMMANDS = {"sync": "reconcile"}
 
 
 def compact_help() -> str:
@@ -270,7 +280,9 @@ def build_parser() -> Parser:
     reconcile.add_argument("--verbose", action="store_true")
     reconcile.set_defaults(run=cmd_render)
 
-    # Deprecated: `render` under the name it had up to 0.2.4. Hidden from help.
+    # Deprecated: `reconcile` under the name it had up to 0.2.4, which is what
+    # that command already did. Hidden from help. Same runner as `reconcile` —
+    # the network legs are the wrapper's, keyed off the resolved name.
     sync = subparsers.add_parser("sync", prog="szsdlc sync")
     sync.add_argument("--verbose", action="store_true")
     sync.set_defaults(run=cmd_render)
@@ -1555,7 +1567,7 @@ def run(argv: Sequence[str] | None = None) -> int:
     if replacement is not None:
         # stderr, so a script that pipes stdout is unaffected by the notice.
         print(f"szsdlc {args.command} is deprecated and will be removed; "
-              f"it now does exactly what szsdlc {replacement} does.\n"
+              f"it is now called szsdlc {replacement}, and behaves the same.\n"
               f"Fix: szsdlc {replacement}", file=sys.stderr)
 
     # A deprecated alias behaves as its replacement, including here.

@@ -1543,17 +1543,28 @@ none of them is `sync`, which is retired to a deprecated alias:
 >   it.
 > - **The commit cannot come after `validate`.** The turn-end order asked for
 >   was render → validate → commit → push, and git does not allow it: a rebase
->   needs a clean tree, so the commit must precede the pull. The order is
->   render → commit → pull → render again if something was pulled → validate →
->   push. Gating the commit on `validate` passing was considered and rejected
->   for the same reason the push is not gated on it — an unfinished turn is
->   still work, and keeping it on one machine is how it gets lost.
+>   needs a clean tree, so the commit must precede the pull. The order the hook
+>   runs, unchanged from Task 24 in this respect, is
+>
+>       render → reconcile (commit, pull, push)
+>              → render and reconcile again, if the pull brought anything
+>              → validate
+>
+>   so `validate` is **last, after the push**. Nothing is gated on it, for the
+>   same reason the push is not: an unfinished turn is still work, and keeping
+>   it on one machine is how it gets lost. It is last rather than merely late
+>   because the merged state is what it has to judge.
+>
+>   *This was first written up here, and in `docs/reference.md` and the `stop`
+>   docstring, as "… → validate → push", which the code never did. Caught by a
+>   reader asking for the sequence back; corrected in all three places. The
+>   mistake was in the description, not the behaviour.*
 > - **Nothing was added to make the batching safe.** Removing the eager commits
 >   needed no new durability mechanism: the edits are on disk in the store, and
->   `has_local_changes` reads the working tree, so the next commit or sync from
->   any entry point sweeps in whatever is uncommitted. A session that dies
->   mid-turn leaves its work there, and the next session's start sync records
->   it. This is why the change is a deletion rather than a feature.
+>   `has_local_changes` reads the working tree, so the next commit or reconcile
+>   from any entry point sweeps in whatever is uncommitted. A session that dies
+>   mid-turn leaves its work there, and the next session's start reconcile
+>   records it. This is why the change is a deletion rather than a feature.
 > - **The old commit messages are not migrated.** A history of `szsdlc: edit
 >   WI-0042.md` stays as it is. It is a log of what happened, and rewriting it
 >   would be the same mistake as hand-editing a generated file.

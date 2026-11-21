@@ -397,19 +397,27 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
 
     This is the turn's one boundary, and the only place a commit is made: the
     whole turn becomes a single commit here, rather than one per edit and one
-    per command. The sequence is render → commit → pull → render again if
-    something was pulled → validate → push, and each step is where it is for a
-    reason:
+    per command. The sequence is
+
+        render → reconcile (commit, pull, push)
+               → render and reconcile again, if the pull brought anything
+               → validate
+
+    and each step is where it is for a reason:
 
     One handler rather than two `Stop` entries, which would each load the
     project. Rendering runs first so validate judges the state the turn leaves
     behind rather than naming a fix that was about to happen anyway, and so the
-    commit records current views rather than stale ones. The commit is inside
-    the reconcile and therefore before the pull, because git cannot rebase a dirty
-    tree — "commit after validating" is not available, and gating it on
-    validate would leave a failing turn's work on one machine. Validate comes
-    after the pull so that what is judged includes whatever the reconcile brought
-    in.
+    commit records current views rather than stale ones.
+
+    **Validate runs last, after the push, not before it.** Nothing is gated on
+    it: an unfinished turn is still work, and keeping it on one machine is how
+    it gets lost, so the commit and the push happen either way and `validate`
+    reports on what was sent. It is last rather than merely late because the
+    pull is what it must judge — the merged state, not the one this machine had
+    before. The commit is inside the reconcile and therefore before the pull,
+    because git cannot rebase a dirty tree, so "commit only once validate
+    passes" is not on offer even if it were wanted.
 
     Args:
         payload: The hook's JSON input; `cwd` is read from it when not passed.
