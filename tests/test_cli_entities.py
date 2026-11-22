@@ -164,6 +164,35 @@ def test_a_status_outside_the_workflow_is_refused(run, seeded):
     assert "is not a status of work_item" in err
 
 
+def test_a_proposed_decision_can_be_rejected(run, project):
+    """A proposal that loses is an outcome, not a gap in the workflow: the
+    options and the reason this one lost are the reusable part."""
+    run("new", "decision", "--title", "Sentinel not cluster")
+    code, output, _ = run("set", "ADR-0001", "status=rejected")
+    assert code == 0
+    assert output.strip() == "ADR-0001: status proposed → rejected"
+
+
+def test_a_rejected_decision_is_terminal(run, project):
+    run("new", "decision", "--title", "Sentinel not cluster")
+    run("set", "ADR-0001", "status=rejected")
+    code, _, err = run("set", "ADR-0001", "status=accepted")
+    assert code == EXIT_REFUSED
+    assert "rejected is terminal" in err
+
+
+def test_an_accepted_decision_is_superseded_rather_than_rejected(run, project):
+    """Rejection is the proposal losing, so it is reachable only from
+    `proposed`. Undoing a decision already taken is what `superseded` is for —
+    the refusal has to say so rather than leaving the caller to guess."""
+    run("new", "decision", "--title", "Sentinel not cluster")
+    run("set", "ADR-0001", "status=accepted")
+    code, _, err = run("set", "ADR-0001", "status=rejected")
+    assert code == EXIT_REFUSED
+    assert "accepted → rejected is not a legal transition" in err
+    assert "Fix: szsdlc set ADR-0001 status=superseded" in err
+
+
 def test_the_artifact_gate_names_the_file_to_write(run, seeded):
     for status in ("groomed", "ready", "designing"):
         run("set", "WI-0001", f"status={status}")
