@@ -12,12 +12,17 @@
     SZSDLC_BACKEND_GIT_CLONE_PATH  the exact clone, overriding CLONE_ROOT.
                                    `{project}` allowed
 
-A commit records everything in the clone locally. A sync commits, rebases
-onto the remote branch and pushes. History stays linear, and two machines writing different entities —
-the ordinary case, since every entity is its own file or section — rebase
-cleanly. When a rebase does conflict it is abandoned rather than left half
-done: the local commits stay, nothing is pushed, and the problem names the
-clone so it can be resolved by hand.
+A sync commits everything in the clone, fetches, rebases onto the remote
+branch and pushes — in that order, because git cannot rebase a dirty tree.
+That order is also why there is no "record but do not send" operation and
+none is needed: a sync that cannot reach the remote has already committed,
+says so once, and the next one sends it.
+
+History stays linear, and two machines writing different entities — the
+ordinary case, since every entity is its own file or section — rebase cleanly.
+When a rebase does conflict it is abandoned rather than left half done: the
+local commits stay, nothing is pushed, and the problem names the clone so it
+can be resolved by hand.
 
 git is run with prompting disabled and a timeout, because a hook that waits
 for a password nobody can type hangs the session it belongs to. Credentials
@@ -51,17 +56,17 @@ from . import (
 TIMEOUT = 45
 
 #: Seconds a purely local invocation can take. A local commit makes three of
-#: them, inside an edit hook that Claude Code kills after 30 seconds.
+#: them, and the tightest hook it runs under is UserPromptSubmit, which Claude
+#: Code kills after 60 seconds — a budget shared with the fetch and the push.
 LOCAL_TIMEOUT = 8
 
 #: The transports git may use. Everything else — `ext::`, and any `foo::` URL
 #: that would launch a `git-remote-foo` helper found on PATH — is refused.
 PROTOCOLS = ("file", "git", "http", "https", "ssh")
 
-#: Seconds a whole commit, and a whole sync, may take — the PostToolUse hook
-#: allows 30, SessionStart and UserPromptSubmit 60. Each git call gets what is
-#: left, so the calls cannot add up past the hook that runs them.
-COMMIT_BUDGET = 25
+#: Seconds a whole sync may take — SessionStart and UserPromptSubmit allow
+#: 60, and `Stop` 120. Each git call gets what is left, so the calls cannot add
+#: up past the hook that runs them.
 SYNC_BUDGET = 50
 
 #: A `helper::address` URL names a remote helper program to run.
@@ -120,6 +125,7 @@ class GitError(Exception):
 
 class GitBackend:
     type: ClassVar[str] = "git"
+    relocates: ClassVar[bool] = True
     keys: ClassVar[frozenset[str]] = frozenset(
         {"URL", "BRANCH", "SUBDIR", "CLONE_ROOT", "CLONE_PATH"})
 
@@ -132,7 +138,7 @@ class GitBackend:
         self.root = clone / subdir if subdir else clone
         #: The tree the project belongs to; the clone must not contain it.
         self.working_tree = working_tree
-        #: When the current commit or sync must be done by (time.monotonic()).
+        #: When the current sync must be done by (time.monotonic()).
         self._deadline: float | None = None
 
     @classmethod
@@ -300,8 +306,8 @@ class GitBackend:
     def _verify_clone(self) -> None:
         """The clone is of our URL, on our branch — or it is not used at all.
 
-        Checked on reuse and again before every commit and sync, because a
-        store found by path is restored from the registry without settings.
+        Checked on reuse and again before every sync, because a store found
+        by path is restored from the registry without settings.
         """
         local = self.store
         origin = self._config("remote.origin.url")
@@ -364,25 +370,6 @@ class GitBackend:
         count = self._git("rev-list", "--count", f"{upstream}..HEAD", check=False)
         return (count.stdout.strip() or "0") != "0"
 
-    def commit(self, reason: str) -> SyncReport:
-        report = SyncReport()
-        if not (self.store / ".git").exists():
-            report.problem = f"{self.store} is not a git clone."
-            report.fix = "remove it; the next szsdlc command clones it again"
-            return report
-        self._deadline = time.monotonic() + COMMIT_BUDGET
-        try:
-            self._verify_clone()
-            self._commit(reason)
-        except ConfigError as exc:
-            report.problem, report.fix = exc.problem, exc.fix
-        except GitError as exc:
-            report.problem = self._redacted(exc)
-            report.fix = f"git -C {self.store} status"
-        finally:
-            self._deadline = None
-        return report
-
     def sync(self, reason: str) -> SyncReport:
         report = SyncReport()
         if not (self.store / ".git").exists():
@@ -399,7 +386,7 @@ class GitBackend:
             branch = self._branch()
             self._commit(reason)
             if self._fetch(report) and self._integrate(branch, report):
-                if report.pulled:
+                if report.incoming:
                     # What was pulled may have turned SUBDIR into a symlink out.
                     self._refuse_escape()
                 self._push(branch, report)
@@ -469,7 +456,7 @@ class GitBackend:
         if not self._ok("rev-parse", "--verify", "--quiet", "HEAD"):
             # Nothing local yet: an empty clone the remote has since filled.
             self._git("checkout", "--quiet", "-B", branch, f"origin/{branch}")
-            report.pulled = True
+            report.incoming = True
             return True
         behind = self._git("rev-list", "--count", f"HEAD..{upstream}", check=False)
         if (behind.stdout.strip() or "0") == "0":
@@ -481,7 +468,7 @@ class GitBackend:
                               "they are kept locally and were not pushed.")
             report.fix = f"git -C {self.store} pull --rebase origin {branch}"
             return False
-        report.pulled = True
+        report.incoming = True
         return True
 
     def _push(self, branch: str, report: SyncReport) -> None:
@@ -491,7 +478,7 @@ class GitBackend:
             pushed = self._git("push", "--quiet", "--set-upstream", "origin",
                                f"HEAD:refs/heads/{branch}", check=False)
             if pushed.returncode == 0:
-                report.pushed = True
+                report.outgoing = True
                 return
             # Someone pushed in between: take theirs and try once more.
             if attempt == 0 and self._fetch(report) and self._integrate(branch, report):

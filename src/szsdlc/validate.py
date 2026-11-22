@@ -1,6 +1,6 @@
 """Every consistency rule, one function each.
 
-`sync` renders an invalid project happily; this is what objects. That is only
+`render` renders an invalid project happily; this is what objects. That is only
 coherent because *project* validity and *model* validity are different things:
 a finding here is always a statement about the user's work. A broken model
 invariant is a szsdlc bug and raises an internal error instead, and the two
@@ -12,7 +12,7 @@ promoted from one to the other by accident: the level is stated at the rule.
 
 Staleness of generated files is a rule here like any other, implemented with
 the render module's `compare()` primitive. `validate` is the umbrella;
-rendering is a mechanism it borrows. That is why there is no `sync --check` —
+rendering is a mechanism it borrows. That is why there is no `render --check` —
 CI and pre-commit ask one question, not two.
 """
 
@@ -404,7 +404,7 @@ def stale_generated(config: Config, store: EntityStore, graph: Graph,
     renderer = render_module.Renderer(config, store, graph, roadmaps)
 
     # A record whose dataset is missing, malformed or off-schema cannot be
-    # rendered at all. `sync` skips it so one bad file cannot take down every
+    # rendered at all. `render` skips it so one bad file cannot take down every
     # other generated view; saying so is this command's job.
     for problem in renderer.record_problems():
         findings.append(Finding(
@@ -418,7 +418,7 @@ def stale_generated(config: Config, store: EntityStore, graph: Graph,
             findings.append(Finding(
                 kind="missing-generated", ref=item.name,
                 message=f"{item.path.name} has never been generated",
-                fix="szsdlc sync",
+                fix="szsdlc render",
             ))
             continue
 
@@ -427,15 +427,15 @@ def stale_generated(config: Config, store: EntityStore, graph: Graph,
             # Distinguished from staleness on purpose: this one loses work.
             findings.append(Finding(
                 kind="hand-edited", ref=item.name,
-                message=f"{item.path.name} was edited by hand; the next sync "
+                message=f"{item.path.name} was edited by hand; the next render "
                         f"will overwrite it",
-                fix="szsdlc sync",
+                fix="szsdlc render",
             ))
         elif text != item.content:
             findings.append(Finding(
                 kind="stale-generated", ref=item.name,
                 message=f"{item.path.name} is out of date",
-                fix="szsdlc sync",
+                fix="szsdlc render",
             ))
     return _collapse_by_kind(findings)
 
@@ -448,7 +448,7 @@ def _collapse_by_kind(findings: list[Finding]) -> list[Finding]:
     """Fold a repeated generated-file finding into one row.
 
     Every view being absent is *one* fact about the project — nobody has run
-    `sync` yet — and a fresh project has eight of them. Reported one per file
+    `render` yet — and a fresh project has eight of them. Reported one per file
     they fill nearly half a 20-row budget with the same instruction, which
     trains a reader to skim exactly the output that must not be skimmed.
     Hand-edited files stay itemised at any count: which file lost work is the
@@ -472,7 +472,7 @@ def _collapse_by_kind(findings: list[Finding]) -> list[Finding]:
             kind=kind, ref="generated",
             message=f"{len(group)} generated files {state} "
                     f"({', '.join(f.ref for f in group[:3])}, …)",
-            fix="szsdlc sync",
+            fix="szsdlc render",
         ))
     return kept
 

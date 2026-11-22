@@ -21,6 +21,7 @@ from . import Context, SyncReport, path_setting, required
 
 class DirBackend:
     type: ClassVar[str] = "dir"
+    relocates: ClassVar[bool] = True
     keys: ClassVar[frozenset[str]] = frozenset({"PATH"})
 
     def __init__(self, path: Path) -> None:
@@ -52,9 +53,6 @@ class DirBackend:
 
     def has_local_changes(self) -> bool:
         return False
-
-    def commit(self, reason: str) -> SyncReport:
-        return SyncReport()
 
     def sync(self, reason: str) -> SyncReport:
         return SyncReport()

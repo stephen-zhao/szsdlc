@@ -295,8 +295,11 @@ def test_a_mutation_reports_its_result_within_budget(tmp_path, invoke, argv, bud
 
 #: One line per command, plus the header and the footer. Raised from 25 to 28
 #: when `move` landed, because 25 was exactly what the help already used and a
-#: ceiling with nothing under it cannot be tested against.
-HELP_BUDGET = 28
+#: ceiling with nothing under it cannot be tested against. Raised to 30 when
+#: `sync` was split into `render`, `commit` and `sync`: three operations that
+#: differ in whether they touch the network cannot share one line, and two
+#: lines of help are cheaper than an agent guessing which one reaches a remote.
+HELP_BUDGET = 29
 
 #: (argv, max lines). The audit table in docs/plan.md is the specification;
 #: a command that outgrows its budget fails here.
@@ -392,7 +395,10 @@ def test_help_fits_the_budget_with_room_to_grow():
     found that and left it as a decision. Adding `move` forced the decision:
     the budget rose to 28, and the headroom is now asserted separately, so the
     next command added is a deliberate raise of this number rather than a
-    silent slide into the wall.
+    silent slide into the wall. Splitting `sync` into `render`, `commit` and
+    `sync` was the next such raise, to 30 — and withdrawing `commit` from the
+    language gave that line straight back, to 29. A ratchet that only turns one
+    way is not a ratchet, it is a slide with a slower gradient.
     """
     from szsdlc.cli import compact_help
 

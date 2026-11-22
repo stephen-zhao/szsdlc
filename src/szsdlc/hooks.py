@@ -1,15 +1,25 @@
 """Claude Code hook handlers.
 
 Hooks are what make the deterministic operations automatic and the gates
-non-optional. The division of labour matters: `sync` runs constantly and
+non-optional. The division of labour matters: `render` runs constantly and
 tolerantly — on every write, and again as the turn ends — while `validate` runs
 once, at the end, and strictly.
 
-When the project lives in a remote (see :mod:`szsdlc.backend`), the hooks are
-also what keep it in step: a full sync as the session starts, before every
-prompt is answered and as the turn ends, and a local commit — no network —
-after every edit, so a turn reaches the remote once rather than per edit. A failed sync
-never blocks anything; it is said, and retried at the next hook.
+Two words, and one of them composes the other. **render** derives the
+generated views and records from the entities: local, one-way, and no
+business of a backend's. **sync** is render followed by whatever the project's
+backend does to bring its store into step with wherever it keeps it —
+nothing at all for `workdir` and `dir`, and for `git` a commit, a fetch, a
+rebase and a push. The render is first because nothing should record or send
+a view that is out of date.
+
+The hooks are what make that automatic: a sync as the session starts, before
+every prompt is answered, and as the turn ends. Nothing is sent in between. An
+edit is not a unit of history — a turn that touches twelve files is one change
+— so the turn is the boundary, and a turn of its own work is recorded once.
+Work arriving from elsewhere costs a second pass for the redraw, because a view
+cannot be drawn from an entity that has not arrived yet. A failed sync never
+blocks anything; it is said, and tried again at the next hook.
 
 Every handler is a **silent no-op outside a szsdlc project**, so the plugin is
 harmless installed globally. That is not politeness — a hook that errors in a
@@ -35,6 +45,12 @@ EXIT_BLOCK = 2
 TRUTHY = {"1", "true", "yes", "on"}
 FALSEY = {"0", "false", "no", "off"}
 
+#: Options that have been renamed, and the older names still read for them, in
+#: order. An installed plugin carries the settings someone chose against the
+#: name it had then; dropping the old key would not restore the default, it
+#: would silently ignore a choice already made. Read for one release.
+RENAMED_OPTIONS = {"render_on_turn_end": ("sync_on_turn_end",)}
+
 
 def option(key: str, default: bool) -> bool:
     """Read a plugin setting from the environment Claude Code provides.
@@ -51,14 +67,16 @@ def option(key: str, default: bool) -> bool:
     Returns:
         The configured value, or `default`.
     """
-    raw = os.environ.get(f"CLAUDE_PLUGIN_OPTION_{key.upper()}")
-    if raw is None:
+    for name in (key, *RENAMED_OPTIONS.get(key, ())):
+        raw = os.environ.get(f"CLAUDE_PLUGIN_OPTION_{name.upper()}")
+        if raw is None:
+            continue
+        value = raw.strip().lower()
+        if value in TRUTHY:
+            return True
+        if value in FALSEY:
+            return False
         return default
-    value = raw.strip().lower()
-    if value in TRUTHY:
-        return True
-    if value in FALSEY:
-        return False
     return default
 
 
@@ -117,8 +135,8 @@ def _backend_failure(start: Path | str | None, error: str | None,
     No project at all is the ordinary state of most directories a hook runs in,
     and stays silent. But a selected backend means the user expects one, and a
     clone that failed or settings that are wrong are worth saying. The store is
-    still synced when it exists: a broken config edit is committed and pushed
-    like any other, and a repair someone else pushed is pulled in.
+    still synced when it exists: a broken config edit is recorded and sent
+    like any other, and a repair someone else made arrives the same way.
     """
     from . import backend
 
@@ -134,63 +152,41 @@ def _backend_failure(start: Path | str | None, error: str | None,
     try:
         problem = backend.describe_problem(backend.sync_at(start, reason))
     except Exception as exc:
-        problem = _unexpected("sync", exc)
+        problem = _unexpected(exc)
     if problem:
         lines.append(problem)
     return "\n".join(lines)
 
 
-def _backend_sync(session, reason: str, *,
-                  only_if_changed: bool = False) -> tuple[str | None, bool]:
-    """Sync the project's backend, if it has one.
+def _sync(session, reason: str, *, only_if_changed: bool = False,
+          keep_hand_edited: bool = False,
+          should_render: bool = True,
+          on_render_error=None) -> tuple[str | None, bool]:
+    """Render, then sync. Every hook that sends anything comes through here.
 
-    Returns a problem to report, and whether anything was pulled — in which
-    case the caller's session describes the state from before the pull. Never
-    raises, for the same reason `_session` does, but an unexpected failure is
-    still reported rather than passed off as success.
+    Returns a problem to report, and whether anything arrived — in which case
+    the caller's session describes the state from before it. Never raises, for
+    the same reason `_session` does, but an unexpected failure is still
+    reported rather than passed off as success.
     """
     from . import backend
+    from . import sync as sync_module
 
     try:
-        report = backend.sync_at(session.config.root, reason,
-                                 only_if_changed=only_if_changed)
+        report = sync_module.run(session, reason, only_if_changed=only_if_changed,
+                                 keep_hand_edited=keep_hand_edited,
+                                 should_render=should_render,
+                                 on_render_error=on_render_error)
     except Exception as exc:
-        return _unexpected("sync", exc), False
-    return backend.describe_problem(report), bool(report and report.pulled)
+        return _unexpected(exc), False
+    return backend.describe_problem(report), bool(report and report.incoming)
 
 
-def _backend_commit(session, reason: str) -> str | None:
-    """Commit the project's changes locally, if it has a backend. No network.
-
-    Returns a problem to report, as `_backend_sync` does.
-    """
-    from . import backend
-
-    try:
-        return backend.describe_problem(backend.commit_at(session.config.root, reason),
-                                        action="commit")
-    except Exception as exc:
-        return _unexpected("commit", exc)
-
-
-def _commit_path(path: Path) -> str | None:
-    """Commit the managed store holding `path`, without loading the project."""
-    from . import backend
-
-    try:
-        if backend.managed(path) is None:
-            return None
-        return backend.describe_problem(backend.commit_at(path, f"edit {path.name}"),
-                                        action="commit")
-    except Exception as exc:
-        return _unexpected("commit", exc)
-
-
-def _unexpected(action: str, exc: Exception) -> str:
+def _unexpected(exc: Exception) -> str:
     detail = str(exc).strip().splitlines()
-    return (f"szsdlc backend {action}: {type(exc).__name__}"
+    return (f"szsdlc sync: {type(exc).__name__}"
             + (f": {detail[0]}" if detail else "")
-            + "; changes are kept locally.\nFix: szsdlc backend sync")
+            + "; changes are kept locally.\nFix: szsdlc sync")
 
 
 def _backend_line(session) -> str | None:
@@ -236,11 +232,11 @@ def session_start(payload: dict[str, Any], cwd: str | None = None) -> int:
 
     # Pull before the store is read, so the counters describe the remote's state;
     # a pull can change the config itself, so the session is loaded again.
-    problem, pulled = _backend_sync(session, "session start")
-    if pulled:
+    problem, incoming = _sync(session, "session start")
+    if incoming:
         session, error = _load(where)
         if session is None:
-            print("\n".join(line for line in (problem, f"szsdlc: after pulling, {error}")
+            print("\n".join(line for line in (problem, f"szsdlc: after syncing, {error}")
                             if line))
             return EXIT_OK
 
@@ -273,7 +269,7 @@ def user_prompt_submit(payload: dict[str, Any], cwd: str | None = None) -> int:
         if failure:
             print(failure)
         return EXIT_OK
-    problem, _ = _backend_sync(session, "before prompt")
+    problem, _ = _sync(session, "before prompt")
     if problem:
         print(problem)
     return EXIT_OK
@@ -311,7 +307,7 @@ def pre_edit(payload: dict[str, Any], cwd: str | None = None) -> int:
             source = _source_hint(session, path)
             print(f"{path.name} is generated by szsdlc and must not be edited.",
                   file=sys.stderr)
-            print(f"Fix: edit {source}, then run szsdlc sync", file=sys.stderr)
+            print(f"Fix: edit {source}, then run szsdlc render", file=sys.stderr)
             return EXIT_BLOCK
 
     matched = standards_module.matching(session.config, [path])
@@ -341,9 +337,20 @@ def _source_hint(session, path: Path) -> str:
 
 
 def post_edit(payload: dict[str, Any], cwd: str | None = None) -> int:
-    """Regenerate when a source file changed. Tolerant, silent, every time."""
-    from . import render as render_module
-    from .graph import Graph
+    """Render when a source file changed. Tolerant, silent, every time.
+
+    Renders, and reaches no backend. An edit is not a unit of history: a turn
+    that touches twelve files is one change to the project, and sending each
+    write made the record a transcript of Claude's tool calls instead. The
+    turn-end hook is where the boundary actually is. Nothing is at risk in
+    between — the edit is on disk in the store, and `has_local_changes` reads
+    it, so the next sync from any entry point sweeps in what is sitting
+    there.
+
+    This is the one caller that renders without sending, and it still goes
+    through the composite: one render, one place, one definition of tolerant.
+    """
+    from . import sync as sync_module
 
     path = edited_path(payload)
     if path is None:
@@ -352,33 +359,15 @@ def post_edit(payload: dict[str, Any], cwd: str | None = None) -> int:
     session = _session(cwd or payload.get("cwd") or path.parent)
     if session is None:
         # The edit may itself be what broke the project (its config, say).
-        # It is still committed, so it is not the one change that is lost.
-        problem = _commit_path(path)
-        if problem:
-            _emit("PostToolUse", problem)
+        # The turn-end hook still syncs on a project that will not load.
         return EXIT_OK
 
     if _is_source(session, path):
-        try:
-            graph = Graph(session.config, session.store, session.ids)
-            render_module.sync(session.config, session.store, graph)
-        except Exception:  # pragma: no cover - never break a turn over a redraw
-            pass
-    # Any file in the project is committed — the config too, not only sources.
-    if _inside(session.config.root, path):
-        problem = _backend_commit(session, f"edit {path.name}")
-        if problem:
-            _emit("PostToolUse", problem)
+        # Failures are swallowed here, deliberately: a broken template is
+        # `validate`'s to report at the turn end, not something to put in
+        # Claude's context after every write.
+        sync_module.render(session)
     return EXIT_OK
-
-
-def _inside(root: Path, path: Path) -> bool:
-    candidate = path if path.is_absolute() else (root / path)
-    try:
-        candidate.resolve().relative_to(root.resolve())
-    except (OSError, ValueError):
-        return False
-    return True
 
 
 def _is_source(session, path: Path) -> bool:
@@ -408,13 +397,34 @@ def _is_source(session, path: Path) -> bool:
 
 
 def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
-    """Render, sync with the backend, then validate, at the end of a turn.
+    """Sync, then validate, at the end of a turn.
+
+    This is the turn's one boundary, and the only place the turn's work is
+    recorded: the whole turn becomes one change here, rather than one per edit
+    and one per command. The sequence is
+
+        sync                       (render, then the backend's own work)
+          → sync again, reloaded,  if anything arrived
+          → validate
+
+    and each step is where it is for a reason:
 
     One handler rather than two `Stop` entries, which would each load the
-    project. Rendering runs first so validate judges the state the turn leaves
-    behind rather than naming a fix that was about to happen anyway, and the
-    backend sync before validate so that what is judged includes whatever the
-    sync pulled in.
+    project. The render is inside the sync, and therefore first, so that
+    validate judges the state the turn leaves behind rather than naming a fix
+    that was about to happen anyway — and so that nothing is recorded or sent
+    stale.
+
+    The second pass is not a retry. Views cannot be drawn from entities that
+    have not arrived yet, so what came in is drawn, and sent, now rather than
+    at the next sync — otherwise what is kept disagrees with itself until
+    something else happens to run.
+
+    **Validate runs last, and nothing is gated on it.** An unfinished turn is
+    still work, and keeping it on one machine is how it gets lost, so the
+    sync happens either way and `validate` reports on what was sent. It is
+    last rather than merely late because what arrived is what it must judge:
+    the merged state, not the one this machine had before.
 
     Args:
         payload: The hook's JSON input; `cwd` is read from it when not passed.
@@ -423,7 +433,6 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
     Returns:
         EXIT_OK, or EXIT_BLOCK when validate found errors.
     """
-    from . import render as render_module
     from . import validate as validate_module
     from .graph import Graph
 
@@ -435,46 +444,33 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
             print(failure, file=sys.stderr)
         return EXIT_OK
 
-    graph = Graph(session.config, session.store, session.ids)
-    rendering = option("sync_on_turn_end", default=True)
+    rendering = option("render_on_turn_end", default=True)
 
-    if rendering:
-        try:
-            # A hand-edited generated file is a blocking error below, and the
-            # evidence for it is the file itself.
-            render_module.sync(session.config, session.store, graph,
-                               should_keep_hand_edited=True)
-        except Exception:  # pragma: no cover - never break a turn over a redraw
-            pass
-
-    # Pushed whether or not validate passes: an unfinished turn is still work,
-    # and keeping it only on this machine is how it gets lost.
-    problem, pulled = _backend_sync(session, "turn end")
+    # Sent whether or not validate passes: an unfinished turn is still work,
+    # and keeping it only on this machine is how it gets lost. The render is
+    # the composite's, not this hook's — `keep_hand_edited` because a
+    # hand-edited generated file is a blocking error below and the evidence for
+    # it is the file itself.
+    problem, incoming = _sync(session, "turn end", keep_hand_edited=True,
+                              should_render=rendering)
     if problem:
         print(problem, file=sys.stderr)
-    if pulled:
-        # Judge what was pulled, not what was here before: reload, and redraw
-        # the views from the pulled entities so they are not reported stale.
+    if incoming:
+        # Judge what arrived, not what was here before: reload, redraw from the
+        # entities that arrived so they are not stale, and send that too —
+        # now, not at the next sync, so what is kept matches.
         session, error = _load(where)
         if session is None:
-            print(f"szsdlc: after pulling, {error}", file=sys.stderr)
+            print(f"szsdlc: after syncing, {error}", file=sys.stderr)
             return EXIT_BLOCK
-        graph = Graph(session.config, session.store, session.ids)
         if rendering:
-            try:
-                render_module.sync(session.config, session.store, graph,
-                                   should_keep_hand_edited=True)
-            except Exception as exc:
-                # Not fatal, but say it: validate is about to call the views
-                # stale, and this is why.
-                print(f"szsdlc: redrawing after the pull failed: "
-                      f"{type(exc).__name__}: {exc}", file=sys.stderr)
-            # Sent now, not at the next sync, so the remote's views match.
-            redraw_problem, _ = _backend_sync(session, "render after pull",
-                                              only_if_changed=True)
+            redraw_problem, _ = _sync(
+                session, "redraw after sync", only_if_changed=True,
+                keep_hand_edited=True, on_render_error=_say_redraw_failed)
             if redraw_problem:
                 print(redraw_problem, file=sys.stderr)
 
+    graph = Graph(session.config, session.store, session.ids)
     findings = validate_module.run(session.config, session.store, graph)
     errors = [f for f in findings if f.is_error]
 
@@ -489,6 +485,17 @@ def stop(payload: dict[str, Any], cwd: str | None = None) -> int:
     if len(errors) > 10:
         print(f"  … {len(errors) - 10} more — szsdlc validate", file=sys.stderr)
     return EXIT_BLOCK
+
+
+def _say_redraw_failed(exc: Exception) -> None:
+    """A draw that failed on what just arrived is worth a line.
+
+    The sync tolerates it — what arrived is kept either way — but the
+    views now disagree with the entities, and `validate` is about to report
+    that without being able to say why.
+    """
+    print(f"szsdlc: redrawing after the sync failed: "
+          f"{type(exc).__name__}: {exc}", file=sys.stderr)
 
 
 HANDLERS = {

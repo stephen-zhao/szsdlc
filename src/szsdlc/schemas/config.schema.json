@@ -108,7 +108,7 @@
     },
 
     "views": {
-      "description": "Generated markdown, written only by `sync`. Never hand-edited.",
+      "description": "Generated markdown, written only by `render`. Never hand-edited.",
       "type": "object",
       "propertyNames": { "$ref": "#/$defs/slug" },
       "additionalProperties": { "$ref": "#/$defs/view" }

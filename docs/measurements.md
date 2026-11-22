@@ -67,7 +67,7 @@ costs 0.38 s, which nobody notices. A cache keyed on mtime would buy back most
 of that and introduce exactly the failure this framework exists to eliminate:
 state that disagrees with the files while claiming not to.
 
-At 2000 entities the `PostToolUse` sync costs 1.76 s per file write, which is
+At 2000 entities the `PostToolUse` render costs 1.76 s per file write, which is
 noticeable. Revisit if a real project reaches that size, and prefer narrowing
 what a hook loads over caching what it loaded last time.
 

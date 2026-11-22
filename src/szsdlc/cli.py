@@ -91,9 +91,10 @@ COMMANDS: list[tuple[str, str]] = [
     ("list [filters]", "by type, status, tag, parent, coverage, placement"),
     ("trace <ref> [--depth]", "relations both ways, back to the idea"),
     ("standards match <path>", "conventions governing these paths"),
-    ("sync", "regenerate every view and record; silent, never validates"),
+    ("render", "regenerate every view and record; silent, never validates"),
     ("validate", "every consistency rule; silent when clean"),
-    ("backend [show|sync]", "where the project is kept; sync it with its remote now"),
+    ("sync", "render, then put the project in step with where it is kept"),
+    ("backend", "where the project is kept, and why"),
 ]
 
 #: Registered but not listed: invoked by hooks.json, never typed by anyone.
@@ -245,9 +246,15 @@ def build_parser() -> Parser:
     standards.add_argument("--json", action="store_true", dest="as_json")
     standards.set_defaults(run=cmd_standards)
 
+    render = subparsers.add_parser("render", prog="szsdlc render")
+    render.add_argument("--verbose", action="store_true")
+    render.set_defaults(run=cmd_render)
+
+    # Same runner as `render`: rendering is all a sync does locally, and the
+    # legs that reach the backend are the wrapper's, keyed off the name.
     sync = subparsers.add_parser("sync", prog="szsdlc sync")
     sync.add_argument("--verbose", action="store_true")
-    sync.set_defaults(run=cmd_sync)
+    sync.set_defaults(run=cmd_render)
 
     validate = subparsers.add_parser("validate", prog="szsdlc validate")
     validate.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
@@ -256,7 +263,7 @@ def build_parser() -> Parser:
     validate.set_defaults(run=cmd_validate)
 
     backend = subparsers.add_parser("backend", prog="szsdlc backend")
-    backend.add_argument("subcommand", nargs="?", choices=["show", "sync"], default="show")
+    backend.add_argument("subcommand", nargs="?", choices=["show"], default="show")
     backend.set_defaults(run=cmd_backend)
 
     # Hidden: invoked by hooks.json, never typed. It lives on this parser so
@@ -1334,12 +1341,16 @@ def cmd_standards(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
-# sync
+# render
 # ---------------------------------------------------------------------------
 
 
-def cmd_sync(args: argparse.Namespace) -> int:
-    """Regenerate every view and record. Never validates.
+def cmd_render(args: argparse.Namespace) -> int:
+    """Regenerate every view and record. Never validates, never reaches a remote.
+
+    Rendering is a one-way derivation: entities in, generated markdown out. It
+    is the whole of `szsdlc render`, and the first step of `commit` and `sync`,
+    because neither should record or send a view that is out of date.
 
     C4 — silent on the happy path. This runs after every file write and at
     every turn end; output there has no consumer and would reach context.
@@ -1347,8 +1358,8 @@ def cmd_sync(args: argparse.Namespace) -> int:
     from . import render as render_module
 
     session = Session(args.project)
-    changed = render_module.sync(session.config, session.store, _graph(session),
-                                 _roadmaps(session))
+    changed = render_module.render(session.config, session.store, _graph(session),
+                                   _roadmaps(session))
     if args.verbose:
         for item in changed:
             out(_relative(session, item.path))
@@ -1363,7 +1374,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
 def cmd_validate(args: argparse.Namespace) -> int:
     """Every consistency rule. Silent when clean; findings when not.
 
-    The single enforcement point: `sync` runs constantly and tolerantly during
+    The single enforcement point: `render` runs constantly and tolerantly during
     a turn, this runs once at the end and strictly.
     """
     from . import validate as validate_module
@@ -1404,23 +1415,18 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_backend(args: argparse.Namespace) -> int:
-    """Show where the project is kept and why, or sync it now.
+    """Show where the project is kept, and why. Inspection only.
+
+    It used to sync as well, which made the inspector for the backend
+    abstraction a second name for the workflow operation — two commands for one
+    thing, differing in error discipline and pass count rather than in what
+    they did. `szsdlc sync` is that operation, and works in any szsdlc
+    repository now that `workdir` is a backend like the others.
 
     Settings are not edited here: they live in Claude Code's settings files,
     beside everything else a user configures there (see szsdlc.settings).
     """
     from . import backend as backend_module
-
-    if args.subcommand == "sync":
-        backend_module.project_root(args.project)  # create the store if needed
-        found = backend_module.locate(args.project)
-        if found is None:
-            raise BadInput("no backend is configured here; the project is in the working tree.",
-                           fix="set SZSDLC_BACKEND in the env block of .claude/settings.json")
-        report = backend_module.sync(found, "backend sync")
-        if report is not None and not report.ok:
-            raise Refused(f"{report.problem}", fix=report.fix)
-        return 0
 
     def show(line: str) -> None:
         # Every value here came from a settings file someone else may have
@@ -1428,23 +1434,30 @@ def cmd_backend(args: argparse.Namespace) -> int:
         out(re.sub(r"[\x00-\x1f\x7f-\x9f]", "?", line))
 
     selection = backend_module.select(args.project)
-    current = backend_module.resolve(args.project)
-    if current is not None:
+
+    # Asked first, not as a fallback: standing inside a store is a fact about
+    # where you are, and it used to be inferred from `resolve` finding nothing
+    # — which it now never does, because every project has a backend.
+    inside = backend_module.managed(args.project or Path.cwd())
+    if inside is not None:
+        current = inside
+        show(f"backend  {current.type}  (this directory is inside its store)")
+        rows = [(label, value) for label, value, _ in current.describe()]
+    else:
+        current = backend_module.resolve(args.project)
         show(f"backend  {current.type}  ({selection.source or 'default'})")
         found = selection.found
         rows = [(label, f"{value}  ({next((found[k].source for k in keys if k in found),
                                           'default')})")
                 for label, value, keys in current.describe()]
-    else:
-        current = backend_module.managed(args.project or Path.cwd())
-        if current is None:
-            show(f"backend  {selection.type}  ({selection.source or 'default'})")
-            return 0
-        show(f"backend  {current.type}  (this directory is inside its store)")
-        rows = [(label, value) for label, value, _ in current.describe()]
 
-    rows.append(("root", str(current.root)
-                 + ("" if current.store.exists() else "  (not created yet)")))
+    if current.root is not None:
+        rows.append(("root", str(current.root)
+                     + ("" if current.store.exists() else "  (not created yet)")))
+    # `workdir` outside a project has neither: no settings to report, and no
+    # root to report them about. One line is the whole truth.
+    if not rows:
+        return 0
     width = max(len(label) for label, _ in rows)
     for label, value in rows:
         show(f"  {label:<{width}}  {value}")
@@ -1481,46 +1494,96 @@ def run(argv: Sequence[str] | None = None) -> int:
         return 2
 
     runner: Callable[[argparse.Namespace], int] = args.run
-    if args.command in BACKEND_EXEMPT:
+    command = args.command
+
+    if command in BACKEND_EXEMPT:
         return runner(args)
 
     from . import backend as backend_module
 
-    if args.command == "sync":
-        # An explicit sync is also a pull, so it renders what others pushed.
-        try:
-            backend_module.project_root(args.project)
-            backend_module.warn(backend_module.sync_at(args.project, "sync"))
-        except SzsdlcError:
-            pass  # the command itself will say it properly
-        except OSError as exc:
-            _warn_backend(exc)
+    refusal = None
+    if command == "sync":
+        backend_module.project_root(args.project)  # create the store if needed
 
     status = runner(args)
     try:
-        if args.command != "sync" and backend_module.in_claude_turn():
-            # The Stop hook pushes once, as the turn ends.
-            report = backend_module.commit_at(args.project, args.command)
+        if command == "render":
+            # `render` is local by definition. Syncing what it wrote would
+            # make the one command documented not to reach anywhere reach
+            # somewhere; the next sync sweeps the rendered files in.
+            report = None
+        elif command == "sync":
+            # `runner` is `render`, so the views are current before anything is
+            # sent, and `--verbose` reports the draw rather than finding it
+            # already done. Then the two-step the turn-end hook also runs: what
+            # arrives is drawn by a second pass, because views cannot be
+            # rendered from entities that have not arrived yet.
+            report = _sync_project(args, args.command, should_render=False)
+            if report is not None and report.incoming:
+                report = _sync_project(args, "redraw after sync",
+                                       only_if_changed=True)
+            # Explicitly asked for, so reported honestly: a failure refuses,
+            # where a sync riding on another command only warns.
+            if report is not None and not report.ok:
+                refusal = report
+        elif backend_module.in_claude_turn():
+            # Nothing is recorded here. The turn-end hook renders, syncs
+            # once and validates; a commit per command made a turn's history a
+            # list of the tool calls that produced it rather than of what it
+            # changed. Nothing is at risk: `has_local_changes` reads the store,
+            # so the next sync picks up whatever is sitting there.
+            report = None
         else:
-            # After an explicit sync, only what it rendered is left to send.
-            report = backend_module.sync_at(args.project, args.command, only_if_changed=True)
+            # A terminal command has no turn end to wait for, so this is its
+            # boundary — and it renders first for the same reason the turn-end
+            # hook does: nothing records or sends a stale view. True of every
+            # backend, `workdir` included, where the sync is a no-op and
+            # the render is the whole of it.
+            report = _sync_project(args, args.command, only_if_changed=True)
     except SzsdlcError as exc:  # pragma: no cover - settings went bad mid-command
         print(exc.render(), file=sys.stderr)
     except OSError as exc:
         _warn_backend(exc)
     else:
-        backend_module.warn(report)
+        if refusal is None:  # a refusal says it once, below, with its fix
+            backend_module.warn(report)
+    if refusal is not None:
+        raise Refused(refusal.problem, fix=refusal.fix)
     return status
+
+
+def _sync_project(args: argparse.Namespace, reason: str, *,
+                  only_if_changed: bool = False,
+                  should_render: bool = True):
+    """Render, then sync — through the one composite every caller uses.
+
+    Loading the project can fail for reasons the command itself will report
+    properly, and a backend can fail on the filesystem; neither may turn a
+    command that worked into one that did not.
+    """
+    from . import sync as sync_module
+
+    try:
+        session = Session(args.project)
+    except SzsdlcError:
+        return None  # the command itself will say it properly
+    try:
+        return sync_module.run(session, reason, only_if_changed=only_if_changed,
+                               should_render=should_render)
+    except OSError as exc:
+        _warn_backend(exc)
+        return None
 
 
 def _warn_backend(exc: OSError) -> None:
     """A backend that failed on the filesystem never fails a command that worked."""
-    print(f"szsdlc backend sync: {exc}; changes are kept locally.\n"
-          "Fix: szsdlc backend sync", file=sys.stderr)
+    print(f"szsdlc sync: {exc}; changes are kept locally.\n"
+          "Fix: szsdlc sync", file=sys.stderr)
 
 
-#: Commands that do their own syncing, or none: `hook` because each handler
-#: decides when to sync, `backend` because syncing is its subject.
+#: Commands that sync for themselves, or not at all: `hook` because each
+#: handler decides when, and `backend` because it only inspects — wrapping the
+#: inspector in the operation it reports on is how the two got confused.
 BACKEND_EXEMPT = {"hook", "backend"}
 
 

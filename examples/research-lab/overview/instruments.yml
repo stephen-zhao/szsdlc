@@ -1,4 +1,4 @@
-# Hand-authored. `szsdlc sync` renders overview/instruments.md from this.
+# Hand-authored. `szsdlc render` renders overview/instruments.md from this.
 instruments:
   - name: Incubator (north)
     serial: INC-N-4471

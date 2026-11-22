@@ -10,7 +10,7 @@ writes to disk.
 The other half of the design is that invalidity is representable. An edge is
 ``(source, kind, target-string)`` with the target held **as written** and
 resolved lazily — you cannot report a dangling reference you refused to
-represent, and `sync` must render a graph that has them.
+represent, and `render` must render a graph that has them.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ class Target:
     @property
     def label(self) -> str:
         """How a view shows it. Degrading visibly is the whole point: dropping
-        a broken edge would let `sync` conceal what `validate` exists to find."""
+        a broken edge would let `render` conceal what `validate` exists to find."""
         if self.resolved:
             return self.entity_id.text  # type: ignore[union-attr]
         if self.entity_id is not None:

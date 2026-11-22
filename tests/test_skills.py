@@ -160,12 +160,16 @@ def test_skills_are_cross_referenced_by_slash_name(skill):
 
 
 def test_no_skill_names_a_command_that_writes_without_saying_so():
-    """`sync` is the hook's job, not a skill's.
+    """`render`, `commit` and `sync` are the hooks' job, not a skill's.
 
-    Views are regenerated on every edit already. A skill that tells the model
-    to run `sync` teaches a habit that is redundant at best and, when the
-    model runs it instead of `validate`, actively hides findings.
+    Views are regenerated on every edit already, and the turn boundary commits
+    and syncs. A skill that tells the model to run one of them teaches a habit
+    that is redundant at best and, when the model runs `render` instead of
+    `validate`, actively hides findings. `commit` and `sync` are worse than
+    redundant in a skill: they move the commit boundary back off the turn,
+    which is the thing Task 27 took it off.
     """
     for path in skill_paths():
         for line in commands_in(path):
-            assert not line.startswith("szsdlc sync"), path.parent.name
+            for verb in ("render", "commit", "sync"):
+                assert not line.startswith(f"szsdlc {verb}"), (path.parent.name, verb)

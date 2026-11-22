@@ -24,7 +24,7 @@ Four questions, answered by looking rather than remembering:
   run. "The code looks right" has never once been sufficient.
 - **Is the trail honest?** Boxes unticked for work that happened, ticked for
   work that did not, and work discovered but never written down all have to
-  be reconciled *now*, while you still know.
+  be put right *now*, while you still know.
 - **What is left over?** Follow-ups belong in the inbox, not in a comment
   nobody reads: `szsdlc capture "retry path still lacks a timeout test"`.
 

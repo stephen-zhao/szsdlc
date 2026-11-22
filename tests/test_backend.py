@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -120,8 +121,30 @@ def test_booleans_parse_in_every_spelling():
 
 
 def test_workdir_is_the_default(workdir):
-    assert backend.resolve(workdir) is None
+    """There is always a backend. The plain case is one of them, not the lack
+    of one — so every caller gets an object and none branches on None."""
+    assert backend.resolve(workdir).type == backend.WORKDIR
     assert backend.select(workdir).type == backend.WORKDIR
+
+
+def test_the_workdir_backend_has_nothing_to_say_and_nothing_to_do(workdir):
+    """The degenerate implementation, pinned.
+
+    Every one of these is a protocol obligation with no work behind it, and
+    two are reached by nothing today — `restore` because this backend is never
+    recorded, `summary` because it is only said when the project is elsewhere.
+    They are asserted so that the next backend, written by copying this one,
+    does not inherit an answer nobody ever read.
+    """
+    assert run("init") == 0
+    chosen = backend.resolve(workdir)
+    assert chosen.describe() == []            # no settings, and you are here
+    assert chosen.summary() == "in the working directory"
+    assert chosen.materialize() is None       # the tree already exists
+    assert backend.sync(chosen, "x").ok  # nothing to bring into agreement
+
+    restored = backend.backend_class("workdir").restore(workdir, {})
+    assert restored.root == workdir  # the project, not an empty directory
 
 
 def test_only_the_selected_backends_keys_are_read(user, workdir, tmp_path):
@@ -136,12 +159,12 @@ def test_only_the_selected_backends_keys_are_read(user, workdir, tmp_path):
 def test_a_project_can_return_to_workdir(user, workdir):
     write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": "u"})
     write_settings(workdir / ".claude" / "settings.json", {"SZSDLC_BACKEND": "workdir"})
-    assert backend.resolve(workdir) is None
+    assert backend.resolve(workdir).type == backend.WORKDIR
 
 
 def test_settings_without_a_selector_do_nothing(user, workdir):
     write_settings(user, {f"{GIT}URL": "u"})
-    assert backend.resolve(workdir) is None
+    assert backend.resolve(workdir).type == backend.WORKDIR
 
 
 def test_an_unknown_backend_is_refused(user, workdir):
@@ -202,7 +225,7 @@ def test_backends_are_pluggable(user, workdir, monkeypatch):
 
         def sync(self, reason):
             calls.append(reason)
-            return backend.SyncReport(pushed=True)
+            return backend.SyncReport(outgoing=True)
 
     backend.backend_class("git")  # populate the registry first
     monkeypatch.setitem(backend.BACKENDS, "fake", Fake)
@@ -226,11 +249,10 @@ def test_dir_writes_straight_into_another_directory(user, workdir, tmp_path, cap
     assert run("capture", "kept elsewhere") == 0
     assert list(workdir.iterdir()) == []
     assert (store / "myproj" / ".szsdlc" / "config.yml").is_file()
-    # Nothing to commit or sync, ever.
-    assert backend.commit_at(workdir, "x").ok
+    # Nothing to sync, ever: the files are already where they are kept.
     assert backend.sync_at(workdir, "x", only_if_changed=True) is None
     report = backend.sync_at(workdir, "x")
-    assert report.ok and not report.pulled and not report.pushed
+    assert report.ok and not report.incoming and not report.outgoing
 
 
 def test_a_relative_dir_path_resolves_against_the_project(workdir):
@@ -372,6 +394,109 @@ def test_a_command_that_changes_files_pushes_them(configured, bare, workdir, cap
     assert last_commit(bare) == "szsdlc: capture"
 
 
+def test_sync_does_what_it_has_always_done(configured, bare, workdir, capsys):
+    """`sync` renders **and** reaches the remote, as the command always did.
+
+    The word has named this since 0.2.4 and is not deprecated: an upgrade must
+    not change what an existing project's `szsdlc sync` does, and this is the
+    test that says so. `render` is the new name, for the local half alone.
+    """
+    run("init")
+    assert run("capture", "a thought the alias should send") == 0
+    idea = next((configured.store / "ideas").rglob("*.md"))
+    idea.write_text(idea.read_text() + "\nmarker-7a1b\n")
+    head = git("--git-dir", str(bare), "rev-parse", "main")
+    capsys.readouterr()
+
+    assert run("sync") == 0
+    captured = capsys.readouterr()
+    # It renders, and it reaches the remote — both, as it always did.
+    relative = idea.relative_to(configured.store).as_posix()
+    assert git("--git-dir", str(bare), "rev-parse", "main") != head
+    assert "marker-7a1b" in git("--git-dir", str(bare), "show", f"main:{relative}")
+    inbox = next(p for p in remote_files(bare) if p.endswith("inbox.md"))
+    assert "a thought the alias should send" in git(
+        "--git-dir", str(bare), "show", f"main:{inbox}")
+    # Silent on success, and in particular not deprecated.
+    assert captured.err == ""
+    assert "deprecated" not in captured.out
+
+
+def test_sync_on_the_workdir_backend_is_just_a_render(user, workdir, capsys):
+    """The other half of "unchanged", and the ordinary case.
+
+    On `workdir` there is nothing to bring into step, so a sync renders and
+    stops — exactly what `szsdlc sync` did in a working-tree project before
+    any of this.
+    """
+    assert run("init") == 0
+    assert run("capture", "a thought in the working tree") == 0
+    for view in Path(workdir).rglob("inbox.md"):
+        view.write_text("stale\n")  # as an interrupted turn leaves it
+    capsys.readouterr()
+
+    # A success, not a refusal: every project has a backend, so `szsdlc sync`
+    # works everywhere, and here the render is the whole of it.
+    assert run("sync", "--verbose") == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    inbox = next(Path(workdir).rglob("inbox.md"))
+    assert "a thought in the working tree" in inbox.read_text()
+
+
+def test_render_never_reaches_the_remote(configured, bare, workdir, capsys):
+    """`render` is the one command documented not to touch the network.
+
+    It writes generated files, so the post-command sync would happily commit
+    and push them — which would make "no network" false for the only command
+    that claims it. The rendered files wait for the next commit or sync.
+    """
+    run("init")
+    assert run("capture", "something to render a view for") == 0
+    # The capture has already been sent; this is the state `render` starts from.
+    head = git("--git-dir", str(bare), "rev-parse", "main")
+    # A source written straight into the store, so a redraw is genuinely owed
+    # and `render` has something of its own to write.
+    idea = next((configured.store / "ideas").rglob("*.md"))
+    idea.write_text(idea.read_text().replace("something to render a view for",
+                                             "a title only render can propagate"))
+
+    assert run("render") == 0
+    assert git("status", "--porcelain", cwd=configured.store) != ""  # written, not sent
+    assert git("--git-dir", str(bare), "rev-parse", "main") == head
+
+    # Not stranded: the next sync sends what render wrote.
+    assert run("sync") == 0
+    assert git("--git-dir", str(bare), "rev-parse", "main") != head
+
+
+def test_a_terminal_command_renders_before_it_sends(configured, bare, workdir, capsys):
+    """A terminal command is its own commit boundary, so it renders first.
+
+    Without this the remote received entities whose generated views still
+    described the project as it was before them — and if the next sync never
+    came, it kept them.
+    """
+    run("init")
+    assert run("capture", "a thought the inbox should show") == 0
+
+    inbox = next(p for p in remote_files(bare) if p.endswith("inbox.md"))
+    assert "a thought the inbox should show" in git(
+        "--git-dir", str(bare), "show", f"main:{inbox}")
+
+
+def test_an_explicit_sync_renders_before_it_sends(configured, bare, workdir, capsys):
+    """Sending a stale view records a project as something it is not."""
+    run("init")
+    assert run("capture", "explicit backend sync") == 0
+    for view in configured.root.rglob("inbox.md"):
+        view.write_text("stale\n")
+
+    assert run("sync") == 0
+    inbox = next(p for p in remote_files(bare) if p.endswith("inbox.md"))
+    assert "explicit backend sync" in git("--git-dir", str(bare), "show", f"main:{inbox}")
+
+
 def test_a_read_only_command_makes_no_commit(configured, bare, workdir, capsys):
     run("init")
     head = git("--git-dir", str(bare), "rev-parse", "main")
@@ -466,7 +591,7 @@ def test_an_unreachable_remote_never_fails_the_command(configured, bare, workdir
     run("init")
     bare.rename(bare.parent / "gone.git")
     assert run("capture", "offline idea") == 0
-    assert "szsdlc backend sync" in capsys.readouterr().err
+    assert "szsdlc sync" in capsys.readouterr().err
     assert git("status", "--porcelain", cwd=configured.store) == ""
 
 
@@ -572,7 +697,7 @@ def test_ignored_project_files_are_reported_not_dropped_silently(configured, bar
     (configured.store / "secret-notes" / "a.md").write_text("x")
     report = backend.sync(configured, "test")
     assert not report.ok and "secret-notes/" in report.problem and "ignored" in report.problem
-    assert report.pushed  # everything else still went out
+    assert report.outgoing  # everything else still went out
     assert "secret-notes/a.md" not in remote_files(bare)
 
 
@@ -588,7 +713,13 @@ def test_an_ordinary_project_in_a_git_repo_is_never_committed(project, tmp_path,
     monkeypatch.chdir(tmp_path)
     assert run("capture", "local only") == 0
     assert "No commits yet" in git("status", cwd=tmp_path)
-    assert backend.sync_at(tmp_path, "x") is None
+
+    # `workdir` is a backend like the others, so syncing reports a no-op
+    # rather than refusing — and a no-op is what it must be. The repository is
+    # the user's: szsdlc renders into it and stops there.
+    report = backend.sync_at(tmp_path, "x")
+    assert report.ok and not report.incoming and not report.outgoing
+    assert "No commits yet" in git("status", cwd=tmp_path)
 
 
 def test_working_inside_the_clone_still_syncs(configured, bare, workdir, monkeypatch, capsys):
@@ -610,7 +741,9 @@ def test_session_start_says_where_the_files_are(configured, workdir, capsys):
     assert f"szsdlc project files: {configured.store}" in capsys.readouterr().out
 
 
-def test_an_edit_commits_locally_and_the_turn_end_pushes(configured, bare, workdir, capsys):
+def test_an_edit_records_nothing_and_the_turn_end_commits_it(configured, bare, workdir,
+                                                             capsys):
+    """An edit is not a unit of history. The turn is the boundary."""
     run("init")
     run("capture", "one")
     pushed = git("--git-dir", str(bare), "rev-parse", "main")
@@ -619,26 +752,50 @@ def test_an_edit_commits_locally_and_the_turn_end_pushes(configured, bare, workd
     idea.write_text(idea.read_text() + "\nmore\n")
     payload = {"cwd": str(workdir), "tool_input": {"file_path": str(idea)}}
     assert hooks.post_edit(payload) == 0
-    assert git("log", "-1", "--format=%s", cwd=configured.store).startswith("szsdlc: edit")
-    assert git("status", "--porcelain", cwd=configured.store) == ""
-    assert git("--git-dir", str(bare), "rev-parse", "main") == pushed  # nothing sent yet
-
-    hooks.stop({"cwd": str(workdir)})
-    assert git("--git-dir", str(bare), "rev-parse", "main") != pushed
-    assert "szsdlc: edit" in git("--git-dir", str(bare), "log", "--format=%s", "main")
-
-
-def test_inside_a_claude_turn_commands_only_commit(configured, bare, workdir,
-                                                   monkeypatch, capsys):
-    run("init")
-    pushed = git("--git-dir", str(bare), "rev-parse", "main")
-    monkeypatch.setenv("CLAUDECODE", "1")
-    assert run("capture", "mid-turn") == 0
-    assert git("log", "-1", "--format=%s", cwd=configured.store).strip() == "szsdlc: capture"
+    # Nothing committed, and nothing lost: the edit is sitting in the store.
+    assert git("status", "--porcelain", cwd=configured.store) != ""
     assert git("--git-dir", str(bare), "rev-parse", "main") == pushed
 
     hooks.stop({"cwd": str(workdir)})
-    assert "szsdlc: capture" in git("--git-dir", str(bare), "log", "--format=%s", "main")
+    assert git("status", "--porcelain", cwd=configured.store) == ""
+    assert git("--git-dir", str(bare), "rev-parse", "main") != pushed
+    assert "szsdlc: turn end" in git("--git-dir", str(bare), "log", "--format=%s", "main")
+
+
+def test_a_whole_turn_is_one_commit(configured, bare, workdir, monkeypatch, capsys):
+    """Twelve edits and three commands are one change to the project.
+
+    The frequency is the point: a commit per edit made the log a transcript of
+    the tool calls that produced a turn rather than a record of what it changed.
+    """
+    run("init")
+    before_head = git("--git-dir", str(bare), "rev-parse", "main")
+    before = len(git("--git-dir", str(bare), "log", "--format=%s", "main").splitlines())
+    monkeypatch.setenv("CLAUDECODE", "1")
+
+    for n in range(3):
+        assert run("capture", f"thought {n}") == 0
+    edited = sorted((configured.store / "ideas").rglob("*.md"))
+    assert edited, "nothing was captured to edit"
+    for idea in edited:
+        idea.write_text(idea.read_text() + "\nmarker-9f3c\n")
+        hooks.post_edit({"cwd": str(workdir), "tool_input": {"file_path": str(idea)}})
+    # Still nothing recorded, and the remote is exactly where it was: the ref
+    # is compared, not merely asked for, so a commit made here would show.
+    assert git("--git-dir", str(bare), "rev-parse", "main") == before_head
+    assert git("status", "--porcelain", cwd=configured.store) != ""
+
+    hooks.stop({"cwd": str(workdir)})
+    after = git("--git-dir", str(bare), "log", "--format=%s", "main").splitlines()
+    assert len(after) - before == 1, after
+    # And that one commit is the turn's work, not an earlier commit that
+    # happened to land while the edits were skipped.
+    assert git("status", "--porcelain", cwd=configured.store) == ""
+    head = git("--git-dir", str(bare), "rev-parse", "main")
+    assert head != before_head
+    for idea in edited:
+        relative = idea.relative_to(configured.store).as_posix()
+        assert "marker-9f3c" in git("--git-dir", str(bare), "show", f"main:{relative}")
 
 
 def test_an_explicit_sync_inside_a_turn_still_pushes(configured, bare, workdir,
@@ -650,18 +807,51 @@ def test_an_explicit_sync_inside_a_turn_still_pushes(configured, bare, workdir,
     assert "note.md" in remote_files(bare)
 
 
-def test_a_commit_outside_a_clone_says_so(configured, workdir):
-    report = backend.commit(configured, "x")  # never materialized
+def test_a_sync_outside_a_clone_says_so(configured, workdir):
+    report = backend.sync(configured, "x")  # never materialized
     assert not report.ok and "not a git clone" in report.problem
 
 
-def test_an_edit_to_the_config_is_committed_too(configured, bare, workdir, capsys):
+def test_the_git_backend_keeps_work_when_the_remote_is_gone(configured, bare, workdir,
+                                                            capsys):
+    """Degrading to local-only is `git`'s own business, not an operation.
+
+    There is no command for "record but do not send": a sync that cannot
+    reach the remote still records what it was given, says so once, and the
+    next one sends it. A reachable remote cannot show this — a sync that
+    quietly fetched would leave the branch unchanged and pass — so the remote
+    is taken away.
+    """
+    run("init")
+    shutil.rmtree(bare)
+    (configured.store / "offline.md").write_text("written with no remote")
+    capsys.readouterr()
+
+    assert run("sync") != 0  # asked for directly, so the failure is said
+    assert "could not reach" in capsys.readouterr().err
+    # Recorded regardless: the tree is clean and the work is in history.
+    assert git("status", "--porcelain", cwd=configured.store) == ""
+    assert "offline.md" in git("show", "--name-only", "--format=", "HEAD",
+                               cwd=configured.store)
+
+    # And not stranded: the next sync, once the remote is back, sends it.
+    git("init", "--bare", "--quiet", "--initial-branch=main", str(bare))
+    assert run("sync") == 0
+    assert "offline.md" in remote_files(bare)
+
+
+def test_an_edit_to_the_config_is_swept_in_at_the_turn_end(configured, bare, workdir,
+                                                           capsys):
+    """The commit is of the project, not of the sources: the config too."""
     run("init")
     config = configured.store / ".szsdlc" / "config.yml"
     config.write_text(config.read_text() + "\n# tuned\n")
     assert hooks.post_edit({"cwd": str(workdir), "tool_input": {"file_path": str(config)}}) == 0
+    assert git("status", "--porcelain", cwd=configured.store) != ""
+
+    hooks.stop({"cwd": str(workdir)})
     assert git("status", "--porcelain", cwd=configured.store) == ""
-    assert git("log", "-1", "--format=%s", cwd=configured.store).strip() == "szsdlc: edit config.yml"
+    assert "# tuned" in git("--git-dir", str(bare), "show", "main:.szsdlc/config.yml")
 
 
 def test_an_edit_outside_the_project_commits_nothing(configured, bare, workdir, capsys):
@@ -674,16 +864,32 @@ def test_an_edit_outside_the_project_commits_nothing(configured, bare, workdir, 
     assert "loose.md" in git("status", "--porcelain", cwd=configured.store)
 
 
-def test_a_failed_edit_commit_is_reported_into_context(configured, workdir, monkeypatch, capsys):
+def test_the_edit_hook_never_reaches_the_backend(configured, workdir, monkeypatch, capsys):
+    """It renders and nothing else, so it has no backend failure to report.
+
+    The hook used to commit here, which put a git invocation on the critical
+    path of every write — and an `index.lock` collision in Claude's context for
+    something nobody asked for.
+    """
+    from szsdlc.backend import git as git_backend
+
     run("init")
-    idea = configured.store / ".szsdlc" / "config.yml"
-    monkeypatch.setattr(backend, "commit_at",
-                        lambda *a, **k: backend.SyncReport(problem="index.lock exists"))
+    config = configured.store / ".szsdlc" / "config.yml"
+    config.write_text(config.read_text() + "\n# edited\n")
+
+    def explode(*args, **kwargs):
+        raise AssertionError("the edit hook reached the backend")
+
+    monkeypatch.setattr(backend, "sync_at", explode)
+    monkeypatch.setattr(backend, "sync", explode)
+    monkeypatch.setattr(git_backend.GitBackend, "sync", explode)
     capsys.readouterr()
-    hooks.post_edit({"cwd": str(workdir), "tool_input": {"file_path": str(idea)}})
-    emitted = json.loads(capsys.readouterr().out)
-    assert "szsdlc backend commit: index.lock exists" in \
-        emitted["hookSpecificOutput"]["additionalContext"]
+    assert hooks.post_edit({"cwd": str(workdir),
+                            "tool_input": {"file_path": str(config)}}) == 0
+    assert capsys.readouterr().out == ""
+    # The wrappers are not the only route to a commit, so assert the outcome
+    # too: an edit leaves the store dirty, whichever way it got there.
+    assert git("status", "--porcelain", cwd=configured.store) != ""
 
 
 def test_an_unexpected_sync_failure_is_still_reported(configured, workdir, monkeypatch, capsys):
@@ -696,7 +902,7 @@ def test_an_unexpected_sync_failure_is_still_reported(configured, workdir, monke
     capsys.readouterr()
     assert hooks.user_prompt_submit({"cwd": str(workdir)}) == 0
     out = capsys.readouterr().out
-    assert "szsdlc backend sync: PermissionError: locks directory is read-only" in out
+    assert "szsdlc sync: PermissionError: locks directory is read-only" in out
 
 
 def test_session_start_describes_the_state_after_the_pull(configured, bare, workdir,
@@ -739,7 +945,7 @@ def test_prompt_hook_reports_a_failed_sync_into_context(configured, bare, workdi
     bare.rename(bare.parent / "gone.git")
     capsys.readouterr()
     hooks.dispatch("user-prompt-submit", io.StringIO(json.dumps({"cwd": str(workdir)})))
-    assert "szsdlc backend sync" in capsys.readouterr().out
+    assert "szsdlc sync" in capsys.readouterr().out
 
 
 def test_backend_show_names_every_source(configured, bare, user, workdir, capsys):
@@ -767,24 +973,21 @@ def test_backend_show_inside_a_store_with_nothing_selected(configured, workdir,
     assert "inside its store" in capsys.readouterr().out
 
 
-def test_backend_sync_runs_on_demand(configured, bare, workdir, capsys):
+def test_an_explicit_sync_runs_on_demand(configured, bare, workdir, capsys):
     run("init")
     (configured.store / "note.md").write_text("x")
-    assert run("backend", "sync") == 0
+    assert run("sync") == 0
     assert "note.md" in remote_files(bare)
 
 
-def test_backend_sync_reports_a_failure(configured, bare, workdir, capsys):
+def test_an_explicit_sync_reports_a_failure(configured, bare, workdir, capsys):
+    """Asked for directly, so answered honestly: a failure refuses. The same
+    failure under another command is a warning, because that command worked."""
     run("init")
     (configured.store / "note.md").write_text("x")
     bare.rename(bare.parent / "gone.git")
-    assert run("backend", "sync") == 3
+    assert run("sync") == 3
     assert "could not reach" in capsys.readouterr().err
-
-
-def test_backend_sync_without_a_backend_is_refused(workdir, capsys):
-    assert run("backend", "sync") != 0
-    assert "SZSDLC_BACKEND" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -935,8 +1138,8 @@ def test_local_git_work_fits_inside_the_edit_hook():
     assert git_backend.LOCAL_TIMEOUT * 3 < post
 
 
-def test_an_explicit_sync_reaches_the_remote_once(configured, bare, workdir, monkeypatch,
-                                                  capsys):
+def test_an_explicit_sync_reaches_the_remote_once(configured, bare, workdir,
+                                                  monkeypatch, capsys):
     from szsdlc.backend import git as git_backend
 
     run("init")
@@ -983,7 +1186,7 @@ def test_a_pulled_config_that_breaks_the_project_blocks_the_turn(configured, bar
                     lambda other: (other / ".szsdlc" / "config.yml").write_text("{nope: [\n"))
     capsys.readouterr()
     assert hooks.stop({"cwd": str(workdir)}) == hooks.EXIT_BLOCK
-    assert "after pulling" in capsys.readouterr().err
+    assert "after syncing" in capsys.readouterr().err
 
 
 def test_a_pulled_symlink_out_of_the_clone_stops_the_sync(user, bare, workdir, tmp_path,
@@ -1090,11 +1293,15 @@ def test_a_sync_never_outlasts_its_budget(configured, workdir, monkeypatch, caps
 
 
 def test_a_broken_config_is_still_committed_and_synced(configured, bare, workdir, capsys):
+    """A config edit that breaks the project is a change like any other.
+
+    It is the one most worth sending: the repair may have to come from the
+    machine that can still load the project.
+    """
     run("init")
     config = configured.store / ".szsdlc" / "config.yml"
     config.write_text("{nope: [\n")
     assert hooks.post_edit({"cwd": str(workdir), "tool_input": {"file_path": str(config)}}) == 0
-    assert git("status", "--porcelain", cwd=configured.store) == ""
     capsys.readouterr()
     assert hooks.stop({"cwd": str(workdir)}) == hooks.EXIT_OK
     assert "szsdlc backend: " in capsys.readouterr().err
@@ -1112,7 +1319,7 @@ def test_the_redraw_after_a_pull_is_pushed_too(configured, bare, workdir, tmp_pa
 
     push_from_other(bare, tmp_path, add_idea, "unrendered")
     assert hooks.stop({"cwd": str(workdir)}) == hooks.EXIT_OK
-    assert last_commit(bare) == "szsdlc: render after pull"
+    assert last_commit(bare) == "szsdlc: redraw after sync"
 
 
 def test_a_redraw_that_fails_after_a_pull_is_said(configured, bare, workdir, tmp_path,
@@ -1125,8 +1332,8 @@ def test_a_redraw_that_fails_after_a_pull_is_said(configured, bare, workdir, tmp
     def broken(*args, **kwargs):
         raise RuntimeError("template missing")
 
-    monkeypatch.setattr(render, "sync", broken)
+    monkeypatch.setattr(render, "render", broken)
     capsys.readouterr()
     hooks.stop({"cwd": str(workdir)})
-    assert "redrawing after the pull failed: RuntimeError: template missing" in \
+    assert "redrawing after the sync failed: RuntimeError: template missing" in \
         capsys.readouterr().err
