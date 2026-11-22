@@ -2,7 +2,8 @@
 
 Every command here is consumed by an agent, so both halves cost tokens: a
 hard-to-produce input causes retry loops, and a verbose output pollutes context
-for the rest of the session. The contract in docs/plan.md governs the whole
+for the rest of the session. The command surface contract (REQ-0012 in
+szsdlc-szsdlc) governs the whole
 surface, and three of its rules are enforced right here rather than per command:
 
 **C2/C7** — no traceback ever reaches stderr, argparse usage dumps are

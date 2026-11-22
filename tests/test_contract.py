@@ -2,7 +2,7 @@
 
 Every command here is consumed by an agent, so both halves cost tokens: a
 hard-to-produce input causes retry loops, and a verbose output pollutes context
-for the rest of the session. The audit table in docs/plan.md *is* the
+for the rest of the session. The audit table in REQ-0012 (szsdlc-szsdlc) *is* the
 specification, and this module is what makes it one rather than an aspiration.
 
 The two-shot property is the sharp end. For every error class: stderr is at
@@ -301,7 +301,7 @@ def test_a_mutation_reports_its_result_within_budget(tmp_path, invoke, argv, bud
 #: lines of help are cheaper than an agent guessing which one reaches a remote.
 HELP_BUDGET = 29
 
-#: (argv, max lines). The audit table in docs/plan.md is the specification;
+#: (argv, max lines). The audit table in REQ-0012 (szsdlc-szsdlc) is the specification;
 #: a command that outgrows its budget fails here.
 BUDGETS = [
     (("inbox",), 21),

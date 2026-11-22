@@ -1,8 +1,10 @@
 # Reference
 
 The model, the command surface, configuration, hooks, and how to work on the
-code. For *why* any of this is shaped the way it is, see
-[`research.md`](research.md); for what it costs, [`measurements.md`](measurements.md).
+code. For *why* any of this is shaped the way it is, and for what it costs, see
+the szsdlc-szsdlc project (`szsdlc` tracks its own SDLC; run `szsdlc backend`) — the
+research, the measurements, the decisions and the delivered plan all live there
+as entities rather than as prose in this repo.
 
 ```bash
 szsdlc capture "users keep losing unsaved drafts"     # → IDEA-0007
@@ -392,3 +394,49 @@ The suite runs on Python 3.12 and 3.14, on Linux and Windows. Line endings are
 pinned by `.gitattributes`: the POSIX launcher needs LF, and the bundled
 templates need it too, since a generated file's content-hash would otherwise
 differ between platforms.
+
+Venvs are **per platform** and not portable across the Windows/WSL boundary, so
+keep one each; `.gitignore` covers `.venv*/`. The Python floor is set by the
+*host* rather than by preference: plugin hooks invoke this CLI through the
+Windows Python, so the floor has to be whatever both sides can run.
+
+### The file map
+
+| Path | Responsibility |
+|---|---|
+| `.claude-plugin/plugin.json` | Plugin manifest: name `szsdlc`, version, hooks path |
+| `hooks/hooks.json` | SessionStart / PreToolUse / PostToolUse / Stop wiring |
+| `skills/capture/SKILL.md` | Turn loose conversation into captured ideas |
+| `skills/refine/SKILL.md` | Judge what an idea should become; spawn typed entities |
+| `skills/spike/SKILL.md` | Run a spike to an answer, write `findings.md` |
+| `skills/design/SKILL.md` | Produce `design.md` for a ready work item |
+| `skills/plan/SKILL.md` | Produce `plan.md` task list from a design |
+| `skills/execute/SKILL.md` | Work the plan task-by-task, tick boxes, log |
+| `skills/close/SKILL.md` | Verify completion, transition to terminal status |
+| `skills/decide/SKILL.md` | Author a decision entity |
+| `skills/roadmap/SKILL.md` | Propose horizon and sequence changes, apply via `schedule` |
+| `skills/trace/SKILL.md` | Answer "what satisfies REQ-x / where did WI-y come from" |
+| `bin/szsdlc`, `bin/szsdlc.cmd` | Cross-platform launchers resolving the interpreter |
+| `src/szsdlc/cli.py` | Argument parsing and dispatch |
+| `src/szsdlc/errors.py` | The single error channel: C2 shape, exit codes, and the project/model split |
+| `src/szsdlc/config.py` | Load/validate `.szsdlc/config.yml`, apply defaults |
+| `src/szsdlc/ids.py` | Id pattern, prefix/key registry, per-(type,key) counters, tombstone resolution |
+| `src/szsdlc/text.py` | Every normalization in one place: slugs, tags, edit distance, nearest-match |
+| `src/szsdlc/frontmatter.py` | Surgical block-level frontmatter editing: change one field, leave every other byte alone |
+| `src/szsdlc/model.py` | Entity parsing for every layout, frontmatter round-trip, progress parsing |
+| `src/szsdlc/sections.py` | The `section` layout's storage: split one shared file into entries, and write one back without disturbing its neighbours |
+| `src/szsdlc/graph.py` | Relation graph, inverse derivation, derived attributes, cycle detection |
+| `src/szsdlc/roadmap.py` | Roadmap records, horizons, placement operations |
+| `src/szsdlc/workflow.py` | Status transitions and gate evaluation |
+| `src/szsdlc/render.py` | Jinja2 view + record rendering, plus the `compare()` used by both `render` and validate's staleness rule |
+| `src/szsdlc/validate.py` | All consistency rules |
+| `src/szsdlc/context.py` | Compact state for `SessionStart` and `show --context` |
+| `src/szsdlc/standards.py` | Glob matching for standards injection |
+| `src/szsdlc/schemas/*.schema.json` | Config, entity, roadmap, record schemas — **inside the package**, so they survive `pip install` |
+| `src/szsdlc/defaults/config.yml` | The six default entity types, relations, horizons and views, entirely as data |
+| `src/szsdlc/templates/` | Default entity, view, record templates (same packaging reason) |
+| `tests/` | pytest suite with fixture projects |
+| `README.md`, `AGENTS.md` | Landing page (description + install) and agent entry point |
+| `docs/reference.md` | Model, command surface, configuration, hooks, development |
+
+---
