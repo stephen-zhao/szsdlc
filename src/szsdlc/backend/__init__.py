@@ -1,13 +1,14 @@
-"""Where a project's files live, and keeping them in step with a remote.
+"""Where a project's files live, and keeping them in step with wherever
+that is.
 
-By default a project lives where `.szsdlc/config.yml` is found above the
-working directory — the `workdir` backend, which is no backend at all. Any
-other backend moves the project out of the working directory, so szsdlc writes
-nothing there:
+A project is always on a backend. By default it is `workdir`: the project lives
+where `.szsdlc/config.yml` is found above the working directory, and there is
+nothing to keep in step with. Any other backend moves the project out of the
+working directory, so szsdlc writes nothing there:
 
-- `dir` keeps the project in another local directory, with nothing to reconcile;
-- `git` keeps it in a remote repository, through a hidden local clone that is
-  reconciled automatically.
+- `workdir` — the working tree itself;
+- `dir` — another local directory;
+- `git` — a remote repository, through a local clone it keeps on the side.
 
 Settings are read through :mod:`szsdlc.settings` — user-wide in
 `~/.claude/settings.json`, overridden per project in
@@ -23,39 +24,39 @@ ordinary behaviour with `SZSDLC_BACKEND=workdir`. An unknown key in the
 selected backend's namespace is refused, because an ignored setting is one
 that does not do what it says.
 
-Three operations, deliberately distinct, because two of them were once both
-called a sync and the word then named nothing in particular:
+This package has **one** operation: :meth:`Backend.sync`, which brings a
+store into step with wherever that backend keeps it, and reports what moved
+in which direction. How it does that is the implementation's own
+business, and deliberately not describable here — `workdir` has nothing to do,
+`dir` has nothing to do, and what `git` does is in :mod:`szsdlc.backend.git`
+and nowhere else. Nothing outside this package branches on the type, and no
+caller may assume a commit, a remote or a network.
 
-- **render** (:mod:`szsdlc.render`) derives the generated views from the
-  entities. Local, one-way, and no business of a backend's — it is listed here
-  only because it is the first step of the other two, neither of which should
-  record or send a view that is out of date.
-- **commit** records a store's changes where the backend keeps them, without
-  touching the network.
-- **reconcile** brings the store and its remote into agreement: commit, pull,
-  then push. It is **not** called a sync. `sync` named rendering for every
-  release up to 0.2.4 — it is still accepted as a deprecated alias for
-  `szsdlc render` — so reusing it here would have changed what an existing
-  project's command did rather than merely what it was called.
+**render is not an operation of this package.** Deriving the generated views
+from the entities (:mod:`szsdlc.render`) is local, one-way, and knows about
+templates and the graph, none of which a backend has any business knowing.
+It is nevertheless the first step of every sync, because nothing should
+record or send a view that is out of date — so the two are composed one level
+up, in :mod:`szsdlc.sync`, which is what the CLI and the hooks call.
 
-Inside a Claude Code turn, nothing is committed as the turn runs. An edit is
-not a unit of history — a turn that touches twelve files is one change to the
-project — so the turn is the boundary, and the turn-end hook renders, commits
-once and reconciles. Work is not at risk in between, because the edits are on
-disk in the store and :meth:`Backend.has_local_changes` reads the working tree:
-the next commit or reconcile, from whichever entry point reaches it first,
-sweeps in whatever is sitting there uncommitted.
+Inside a Claude Code turn, nothing is sent as the turn runs. An edit is not a
+unit of history — a turn that touches twelve files is one change to the
+project — so the turn is the boundary, and the turn-end hook syncs once.
+Work is not at risk in between: the edits are on disk in the store, and
+:meth:`Backend.has_local_changes` reads it, so the next sync from
+whichever entry point reaches it first sweeps in whatever is sitting there.
 
-A full reconcile runs when a session starts, before a prompt is answered, when
-a turn ends, and on an explicit `szsdlc reconcile` or `szsdlc backend
-reconcile`; `szsdlc commit` does the local half alone. A CLI command typed in a
-terminal has no turn end to wait for, so it reconciles as soon as it changes
-something. Every reconcile is best-effort: a command that succeeded is never
-reported as failed because the network was down. The change stays local, the
-problem is said once, and the next reconcile tries again.
+A sync runs when a session starts, before a prompt is answered, when a
+turn ends, and on an explicit `szsdlc sync`. A command typed in a terminal
+has no turn end to wait for, so it syncs as soon as it changes something.
+A sync riding on another command is best-effort: a command that succeeded is
+never reported as failed because a backend could not reach what is behind it.
+The change stays local, the problem is said once, and the next sync tries
+again. An explicit `szsdlc sync` refuses instead, because there the sync is
+the whole of what was asked for.
 
 A backend is a class implementing :class:`Backend`, registered in
-:data:`BACKENDS`. Nothing outside this package knows which one is in use.
+:data:`BACKENDS`.
 """
 
 from __future__ import annotations
@@ -92,11 +93,18 @@ PROJECT_PLACEHOLDER = "{project}"
 
 
 @dataclass
-class ReconcileReport:
-    """What one reconcile did. `problem` set means it did not finish."""
+class SyncReport:
+    """What one sync did. `problem` set means it did not finish.
 
-    pulled: bool = False
-    pushed: bool = False
+    Direction, not mechanism: `incoming` is the only field anything branches
+    on, and what it asks is "did the store change under me, so must I reload
+    and redraw?" — not "was there a git pull".
+    """
+
+    #: State arrived from where the project is kept; reload before reading it.
+    incoming: bool = False
+    #: Local state was sent there.
+    outgoing: bool = False
     problem: str | None = None
     fix: str | None = None
 
@@ -118,7 +126,8 @@ class Context:
 
 
 class Backend(Protocol):
-    """One way of storing a project, and of reconciling it if it has a remote.
+    """One way of storing a project, and of keeping it in step with where
+    that is.
 
     Constructing one must not touch the disk or the network.
     """
@@ -127,6 +136,11 @@ class Backend(Protocol):
     type: ClassVar[str]
     #: Its key suffixes: `URL` for `SZSDLC_BACKEND_GIT_URL`.
     keys: ClassVar[frozenset[str]]
+    #: Whether this backend keeps the project somewhere other than the
+    #: working tree. True of every backend that exists to move it; False only
+    #: of `workdir`, where the store is the tree and is found by walking up.
+    #: A relocated store is recorded, because nothing else could find it.
+    relocates: ClassVar[bool]
 
     @classmethod
     def from_settings(cls, found: dict[str, Setting], context: Context) -> Backend:
@@ -164,16 +178,17 @@ class Backend(Protocol):
         """
 
     def has_local_changes(self) -> bool:
-        """Whether the store holds anything the remote has not seen."""
+        """Whether the store holds anything not yet sent where it is kept."""
 
-    def commit(self, reason: str) -> ReconcileReport:
-        """Record local changes without reaching the remote. Never raises.
+    def sync(self, reason: str) -> SyncReport:
+        """Bring the store and wherever it is kept into step.
 
-        A backend with nothing to record locally does nothing.
+        Best-effort and never raises: a problem goes in the report, with a fix,
+        and the caller's own work is never failed because of it. *How* is
+        entirely the implementation's business — whether anything is copied,
+        committed, or reached over a network is not asked here and must not be
+        inferred by anything that calls this.
         """
-
-    def reconcile(self, reason: str) -> ReconcileReport:
-        """Bring remote changes in and send local ones out. Never raises."""
 
 
 #: Populated on first use, so importing this module costs nothing. Another
@@ -188,8 +203,9 @@ def _load_registry() -> None:
         return
     from .dir import DirBackend
     from .git import GitBackend
+    from .workdir import WorkdirBackend
 
-    for cls in (DirBackend, GitBackend):
+    for cls in (DirBackend, GitBackend, WorkdirBackend):
         BACKENDS.setdefault(cls.type, cls)
     _builtins_loaded = True
 
@@ -199,7 +215,7 @@ def backend_class(type_name: str) -> type[Backend]:
     try:
         return BACKENDS[type_name]
     except KeyError:
-        known = ", ".join([WORKDIR, *sorted(BACKENDS)])
+        known = ", ".join(sorted(BACKENDS))
         raise ConfigError(f"{SELECTOR}={type_name!r} is not a known backend.",
                           fix=f"set {SELECTOR} to one of: {known}") from None
 
@@ -275,18 +291,14 @@ def select(start: Path | str | None = None) -> Selection:
     everything = settings_module.load(start)
     chosen = everything.get(SELECTOR)
     type_name = chosen.value.strip().lower() if chosen and chosen.value.strip() else WORKDIR
-    if type_name == WORKDIR:
-        return Selection(WORKDIR, chosen.source if chosen else None, {})
     prefix = key_prefix(type_name)
     found = {key[len(prefix):]: s for key, s in everything.items() if key.startswith(prefix)}
     return Selection(type_name, chosen.source if chosen else None, found)
 
 
-def resolve(start: Path | str | None = None) -> Backend | None:
-    """The backend in effect for `start`, or None for `workdir`."""
+def resolve(start: Path | str | None = None) -> Backend:
+    """The backend in effect for `start`. Never None: `workdir` is one too."""
     selection = select(start)
-    if selection.type == WORKDIR:
-        return None
     cls = backend_class(selection.type)
     unknown = sorted(set(selection.found) - cls.keys)
     if unknown:
@@ -425,27 +437,45 @@ def _locked(store: Path) -> Iterator[None]:
 def project_root(start: Path | str | None = None) -> Path | None:
     """The project root a backend puts in effect for `start`, made ready.
 
-    None for `workdir`, and when `start` is already inside a managed store —
-    ordinary discovery finds the root from there. Otherwise the store is
+    None when `start` is already inside a managed store — ordinary discovery
+    finds the root from there — and None when there is no project at all, which
+    the `workdir` backend reports by having no root. Otherwise the store is
     created if needed, which may reach the network.
     """
     if managed(start or Path.cwd()) is not None:
         return None
     backend = resolve(start)
-    if backend is None:
-        return None
     ensure(backend)
     return backend.root
+
+
+def relocates(backend: Backend) -> bool:
+    """Whether `backend` keeps the project away from the working tree.
+
+    Defaulted for a backend that does not say, and defaulted to True: a
+    backend exists in order to move a project somewhere, and the two errors
+    are not equal. A store recorded needlessly is a stale line in a registry;
+    a store not recorded is a project nothing can find again.
+    """
+    return getattr(backend, "relocates", True)
 
 
 def ensure(backend: Backend) -> None:
     with _locked(backend.store):
         backend.materialize()
-    _register(backend)
+    if relocates(backend):
+        _register(backend)
 
 
 def locate(start: Path | str | None = None) -> Backend | None:
-    """The managed store serving `start`, without creating anything."""
+    """The backend serving `start` *right now*, without creating anything.
+
+    None only when a relocated store has not been created yet — an
+    unmaterialized clone, say — so a hook never clones to answer the question.
+    A backend that has not moved the project anywhere is always there, which is
+    why `workdir` always locates and `szsdlc sync` works in any szsdlc
+    repository.
+    """
     here = start or Path.cwd()
     found = managed(here)
     if found is not None:
@@ -454,31 +484,17 @@ def locate(start: Path | str | None = None) -> Backend | None:
         backend = resolve(here)
     except ConfigError:
         return None
-    if backend is None:
-        return None
+    if not relocates(backend):
+        return backend
     return managed(backend.store)
 
 
-def reconcile(backend: Backend, reason: str, *, only_if_changed: bool = False) -> ReconcileReport | None:
+def sync(backend: Backend, reason: str, *, only_if_changed: bool = False) -> SyncReport | None:
     """Sync one store. None when there was nothing to do."""
     with _locked(backend.store):
         if only_if_changed and not backend.has_local_changes():
             return None
-        return backend.reconcile(reason)
-
-
-def commit(backend: Backend, reason: str) -> ReconcileReport:
-    """Record a store's local changes, without reaching the remote."""
-    with _locked(backend.store):
-        return backend.commit(reason)
-
-
-def commit_at(start: Path | str | None, reason: str) -> ReconcileReport | None:
-    """Commit whatever managed store serves `start`; None when there is none."""
-    backend = locate(start)
-    if backend is None:
-        return None
-    return commit(backend, reason)
+        return backend.sync(reason)
 
 
 def in_claude_turn() -> bool:
@@ -490,26 +506,32 @@ def in_claude_turn() -> bool:
     return os.environ.get("CLAUDECODE") == "1"
 
 
-def reconcile_at(start: Path | str | None, reason: str, *,
-                 only_if_changed: bool = False) -> ReconcileReport | None:
-    """Reconcile whatever managed store serves `start`; None when there is none."""
+def sync_at(start: Path | str | None, reason: str, *,
+            only_if_changed: bool = False) -> SyncReport | None:
+    """Sync whatever managed store serves `start`; None when there is none."""
     backend = locate(start)
     if backend is None:
         return None
-    return reconcile(backend, reason, only_if_changed=only_if_changed)
+    return sync(backend, reason, only_if_changed=only_if_changed)
 
 
-def describe_problem(report: ReconcileReport | None, *, action: str = "reconcile") -> str | None:
+def describe_problem(report: SyncReport | None) -> str | None:
+    """A sync problem, in the usual two-line shape.
+
+    Named for the command, because `szsdlc sync` is what a reader can run
+    to see it again. It used to say "szsdlc backend sync", which was a
+    command and no longer is.
+    """
     if report is None or report.ok:
         return None
-    text = f"szsdlc backend {action}: {report.problem}"
+    text = f"szsdlc sync: {report.problem}"
     if report.fix:
         text += f"\nFix: {report.fix}"
     return text
 
 
-def warn(report: ReconcileReport | None) -> None:
-    """Say a reconcile problem on stderr, in the usual two-line shape."""
+def warn(report: SyncReport | None) -> None:
+    """Say a sync problem on stderr."""
     text = describe_problem(report)
     if text:
         print(text, file=sys.stderr)

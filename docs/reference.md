@@ -101,15 +101,18 @@ trace <ref> [--depth]   relations both ways, back to the idea
 standards match <path>  conventions governing these paths
 render                  regenerate every view and record; silent, never validates
 validate                every consistency rule; silent when clean
-commit                  render, then record the project locally; no network
-reconcile               render, commit, then pull and push the backend's remote
-backend [show|reconcile]  where the project is kept; reconcile it now
+sync                    render, then put the project in step with where it is kept
+backend                 where the project is kept, and why
 ```
 
-`sync` is still accepted as a **deprecated alias for `render`** — the name it
-had up to 0.2.4, and the one the banner in every already-generated file still
-prints. It warns on stderr and will be removed. It does not reach the network:
-the operation that does is `reconcile`, which never shared the name.
+`sync` is not new and is not deprecated. Up to 0.2.4 it rendered *and*, on a
+backend with a remote, reached that remote — a pull before and a push after —
+and that is exactly what it still does. The banner in every generated file says
+"rerun `szsdlc sync`" and goes on being right.
+
+What is new is **`render`**: the local half on its own, for the case where you
+want the views redrawn and nothing sent. Splitting it out is additive, so no
+existing command changed what it does.
 
 Every command is designed to be called by an agent. Mutations report the
 resulting state in one line, so no confirming read is needed. Refusals are at
@@ -133,42 +136,40 @@ written as documentation as much as data.
 
 The plugin wires five:
 
-| Event | What it does |
-|---|---|
-| `SessionStart` | Pulls from the [backend](#backends-where-a-project-is-kept)'s remote, if any, then prepends `szsdlc context` — a session begins knowing the state without searching for it |
-| `UserPromptSubmit` | Pulls from and pushes to the backend's remote, if any, before Claude answers. Silent unless that failed |
-| `PreToolUse` | Blocks edits to generated files, and injects the standards governing the file being edited |
-| `PostToolUse` | Runs `render` when an entity or roadmap file changes. Records nothing — the turn is the commit boundary |
-| `Stop` | Renders, reconciles with the backend, then runs `validate` — blocking on errors only. Pushes either way |
+```
+SessionStart      sync ──► szsdlc context, prepended to the session
+UserPromptSubmit  sync                      (silent unless it failed)
+PreToolUse        refuse an edit to a generated file
+                  inject the standards governing the path being edited
+PostToolUse       render                    (never a backend: Stop is that)
+Stop              sync ──┬─ nothing arrived ───────────────────► validate
+                         └─ something did ──► reload ──► sync ──► validate
+```
 
-`Stop` fires when Claude finishes responding — the end of a turn, and the
-closest Claude Code has to a post-turn event. Both halves run in the one
-handler because each entry under the event is its own process and its own load
+`Stop` fires when Claude finishes responding — the closest Claude Code has to a
+post-turn event, and **the turn's one boundary**: the whole turn is recorded
+there, not once per edit and once per command. One handler rather than two
+entries under the event, because each entry is its own process and its own load
 of the project.
 
-It is also the turn's one commit boundary:
+Why that order:
 
-```
-render → reconcile (commit, pull, push)
-       → render and reconcile again, if the pull brought anything
-       → validate
-```
+- **`render` is inside the sync, so it is first.** Nothing records or
+  sends a view that no longer matches the entities beside it — and if the next
+  sync never comes, that stale view is what is kept.
+- **The second pass is not a retry.** A view cannot be drawn from an entity
+  that has not arrived yet, so what arrived is drawn, and sent, now rather than
+  whenever something next happens to run.
+- **`validate` is last, and nothing is gated on it.** An unfinished turn is
+  still work, and keeping it on one machine is how it gets lost, so the
+  sync happens either way and `validate` reports on what was sent. Last
+  rather than merely late because what arrived is what it has to judge: the
+  merged state, not the one this machine had before.
 
-`validate` runs **last, after the push**, and nothing is gated on it: an
-unfinished turn is still work, and keeping it on one machine is how it gets
-lost, so the commit and the push happen either way and `validate` reports on
-what was sent. It is last rather than merely late because the pull is what it
-has to judge — the merged state, not the one this machine had before. The
-commit sits inside the reconcile and therefore before the pull, because git
-cannot rebase a dirty tree, so "commit only once `validate` passes" is not on
-offer even if it were wanted.
-
-Rendering runs first so `validate` judges the state the turn leaves behind
-rather than blocking on a fix that was about to happen anyway, and so the
-commit records current views rather than stale ones. It is also the one render
-nobody asked for, so it leaves a hand-edited generated file alone for
-`validate` to report: overwritten text cannot be recovered, and the evidence
-for that error is the file. `szsdlc render` still overwrites.
+This render is the one nobody asked for, so it leaves a hand-edited generated
+file alone for `validate` to report: overwritten text cannot be recovered, and
+the evidence for that error is the file itself. `szsdlc render` still
+overwrites.
 
 Every hook is a silent no-op in a project without `.szsdlc/config.yml`, so the
 plugin is harmless installed globally.
@@ -181,21 +182,30 @@ Declared in [`.claude-plugin/plugin.json`](../.claude-plugin/plugin.json) under
 
 | Setting | Default | What it does |
 |---|---|---|
-| `render_on_turn_end` | `true` | Run `render` as the turn ends, not only when a source file is written. Off, `Stop` is the backend reconcile and `validate` alone |
+| `render_on_turn_end` | `true` | Draw at the turn end, not only when a source file is written. Off, `Stop` syncs and validates without drawing first |
 
-Renamed from `sync_on_turn_end`, which named the wrong operation: it governed
-rendering and never the backend. The old key is still read, for one release, so
-a choice already made is not silently dropped.
+Off still syncs. Choosing not to redraw is not choosing not to keep the
+work. Renamed from `sync_on_turn_end`, which named the wrong operation — it
+governed rendering and never the backend — and the old key is still read, for
+one release, so a choice already made is not silently dropped.
 
 Not `.szsdlc/config.yml` keys: that file is the project's model, read by the
 CLI and by CI, which have no turns to render at.
 
 ## Backends: where a project is kept
 
-By default a project lives where `.szsdlc/config.yml` is found above the
-working directory. A **backend** can keep it somewhere else instead: another
-local directory, or a remote that szsdlc keeps in step automatically. szsdlc
-then writes nothing into the directory you are working in.
+Every project is on a backend. By default it is `workdir`: the project lives
+where `.szsdlc/config.yml` is found above the working directory, and there is
+nothing to keep it in step with. Any other backend keeps it somewhere else —
+another local directory, or a remote — and szsdlc then writes nothing into the
+directory you are working in.
+
+A backend has **one** operation, `sync`: bring the store into step with
+wherever this backend keeps it, and report what moved and in which direction.
+How is the implementation's own business and is deliberately not described at
+this level — no caller may assume a commit, a remote or a network.
+`render` is not a backend operation at all; the two are composed one level up,
+which is what `szsdlc sync` and every hook call.
 
 ### Configuring one
 
@@ -222,9 +232,17 @@ unknown key in the selected backend's namespace is an error.
 
 | `SZSDLC_BACKEND` | The project lives |
 |---|---|
-| `workdir` (default) | in the working tree, as without any backend. Set this in a project to opt out of a user-wide backend |
-| `dir` | in another local directory, with nothing to reconcile |
-| `git` | in a remote git repository, through a hidden clone that is reconciled automatically |
+| `workdir` (default) | in the working tree. Set it in a project to opt out of a user-wide backend |
+| `dir` | in another local directory |
+| `git` | in a remote git repository, through a clone szsdlc keeps on the side |
+
+What a sync is, per backend:
+
+```
+workdir   nothing. the store is the working tree
+dir       nothing. the directory is the project, not a copy of it
+git       commit, fetch, rebase, push        (git's words, and git's alone)
+```
 
 **`dir`**
 
@@ -266,70 +284,74 @@ is printed. `szsdlc init` creates the project wherever the backend keeps it.
 An existing clone is used only if it is a clone of `SZSDLC_BACKEND_GIT_URL`
 with `SZSDLC_BACKEND_GIT_BRANCH` (or, when unset, the remote's default branch)
 checked out; otherwise it is refused rather than repurposed. This is checked
-again before every commit and reconcile. A clone that would contain the working tree,
-and a `SUBDIR` that resolves outside the clone, are refused too.
+again before every sync. A clone that would contain the working tree, and
+a `SUBDIR` that resolves outside the clone, are refused too.
 
-### Syncing
+### When a sync happens
 
-With a backend that has a remote, the remote is reached at turn boundaries,
-not per change:
+A backend is reached at turn boundaries, not per change:
 
-| When | What |
-|---|---|
-| session start, before each prompt, turn end | full reconcile: commit, pull, then push |
-| after each edit, and each CLI command Claude runs | nothing — the turn is the boundary |
-| `szsdlc reconcile`, `szsdlc backend reconcile` | full reconcile, on demand |
-| `szsdlc commit` | render, then commit — no network |
-| `szsdlc render`, `szsdlc sync` | nothing — rendering is local by definition |
-| a CLI command typed in a terminal | render, then full reconcile if it changed anything, since no turn end follows |
+```
+session start, each prompt, turn end     sync
+szsdlc sync                              sync, on demand
+szsdlc render                            render only — local by definition
+szsdlc backend                           nothing; it only reports
+after each edit                          render only
+each command Claude runs mid-turn        nothing — the turn end does it
+each command typed in a terminal         render, then sync if it changed
+                                         anything, since no turn end follows
+```
 
-Commands tell the two cases apart by `CLAUDECODE=1`, which Claude Code sets in
+A command tells the last two apart by `CLAUDECODE=1`, which Claude Code sets in
 the shells it runs commands in.
 
-Everything that records or sends renders first, including the terminal path and
-`backend reconcile`. Nothing should commit or push a generated view that no
-longer matches the entities beside it — and if the next reconcile never comes,
-the remote keeps the stale one.
+**A turn of its own work is recorded once.** An edit is not a unit of history:
+a turn that touches twelve files is one change to the project, and sending each
+write made the record a transcript of Claude's tool calls rather than of what
+changed. Nothing is at risk in between — the edits are on disk in the store,
+and `has_local_changes` reads it, so the next sync from whichever entry
+point reaches it first sweeps in what is sitting there. A session that dies
+mid-turn leaves its work unsent; the next session's start syncs it.
 
-**A turn of its own work produces one commit.** An edit is not a unit of
-history: a turn that touches twelve files is one change to the project, and
-committing each write made the log a transcript of Claude's tool calls rather
-than a record of what changed. Nothing is at risk in between — the edits are on
-disk in the store, and `has_local_changes` reads the working tree, so the next
-commit or reconcile sweeps in whatever is sitting there uncommitted. A session
-that dies mid-turn leaves its work uncommitted in the store; the next session's
-start reconciles it.
+Work arriving from elsewhere costs a second pass, for the redraw, because a
+view cannot be drawn from an entity that has not arrived yet.
 
-A turn that **pulls** someone else's work produces a second commit, for the
-redraw: views cannot be rendered from entities that have not arrived yet, so
-the sequence is commit, pull, render, commit. Calling `szsdlc commit` by name
-mid-turn also adds one, which is the point of asking for it.
+### What `git` does, and only `git`
 
-For `git`, a commit records everything in the clone; a reconcile commits, rebases
-onto the remote branch, and pushes. It never turns a successful command into a failure. If the
-remote cannot be reached, or a rebase conflicts, the changes stay committed in
-the clone. The problem is reported on stderr (or in Claude's context, from the
-prompt and edit hooks), and the next reconcile tries again; a rebase that fails or
-times out is aborted, never left half done. Files in the project that the
-repository's `.gitignore` excludes are not forced in, but a reconcile names them
-rather than reporting success. git runs with prompts disabled and
-a timeout, so credentials must work without being typed in, through an SSH
-agent or a credential helper. Only the `file`, `git`, `http`, `https` and `ssh`
-transports are allowed (`GIT_ALLOW_PROTOCOL`, which a git config setting cannot
-widen); a `<helper>::<address>` URL, which would run a `git-remote-<helper>`
-program, is refused. A whole commit is held to 25 seconds and a whole reconcile to
-50, so neither outlasts the hook running it. A clone whose `pushurl` points
-anywhere but `SZSDLC_BACKEND_GIT_URL` is refused, and its `.git/config`, which
-holds the URL, is readable by its owner only.
+A sync commits everything in the clone, fetches, rebases onto the remote
+branch and pushes — in that order, because git cannot rebase a dirty tree. So
+there is no operation for "record but do not send", and none is needed: a
+sync that cannot reach the remote has already committed. It says so once,
+on stderr or in Claude's context, and the next one sends it. A rebase that
+fails or times out is aborted, never left half done.
+
+A failure is reported where it belongs. `szsdlc sync`, asked for by name,
+refuses — that is the whole of what was asked. The same failure under `szsdlc
+capture` is a warning, because the capture worked. Files in the project that
+the repository's `.gitignore` excludes are not forced in, but a sync names
+them rather than reporting success.
+
+git runs with prompts disabled and a timeout, so credentials must work without
+being typed in, through an SSH agent or a credential helper. Only the `file`,
+`git`, `http`, `https` and `ssh` transports are allowed (`GIT_ALLOW_PROTOCOL`,
+which a git config setting cannot widen); a `<helper>::<address>` URL, which
+would run a `git-remote-<helper>` program, is refused. A whole sync is
+held to 50 seconds, so it does not outlast the hook running it. A clone whose
+`pushurl` points anywhere but `SZSDLC_BACKEND_GIT_URL` is refused, and its
+`.git/config`, which holds the URL, is readable by its owner only.
 
 ### Adding a backend
 
 A backend (sftp, http, ...) is a class implementing the `Backend` protocol in
-[`backend/__init__.py`](../src/szsdlc/backend/__init__.py): its `type` and
-`keys`, `from_settings`, `materialize`, `has_local_changes`, `commit` and `reconcile`, plus
-`state`/`restore` so a store found on disk can be recognised again. Register it
-in `BACKENDS`. Nothing outside that package knows which backend is in use.
-[`dir.py`](../src/szsdlc/backend/dir.py) is the smallest example.
+[`backend/__init__.py`](../src/szsdlc/backend/__init__.py): its `type`, `keys`
+and `relocates`, then `from_settings`, `materialize`, `has_local_changes` and
+`sync`, plus `state`/`restore` so a store found on disk can be recognised
+again. Register it in `BACKENDS`. Nothing outside that package knows which
+backend is in use, and nothing in it is shared between implementations —
+[`git.py`](../src/szsdlc/backend/git.py) owns every line about commits and
+remotes. [`dir.py`](../src/szsdlc/backend/dir.py) is the smallest example;
+[`workdir.py`](../src/szsdlc/backend/workdir.py) is `dir` with the directory
+already decided, and is the degenerate case worth reading first.
 
 ### Resolving an interpreter
 

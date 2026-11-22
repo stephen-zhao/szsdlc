@@ -470,6 +470,10 @@ def test_a_model_invariant_breach_is_not_a_finding(run, clean, monkeypatch):
 def test_context_counters_come_from_the_same_rules(run, clean, write_entity):
     write_entity("work_item", 9, "title: T\nstatus: idea\nopened: 2026-08-01\n",
                  slug="no-parent")
+    # Settle the views first. `write_entity` goes behind the CLI, so without
+    # this the staleness rule fires for the first command and not the second,
+    # and the two counters would differ for a reason that is not a rule.
+    run("render")
     _, validate_out, _ = run("validate", "--json")
     _, context_out, _ = run("context", "--json")
 

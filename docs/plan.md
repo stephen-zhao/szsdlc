@@ -51,7 +51,7 @@ automatic and the gates non-optional; skills carry only judgment.
 | Grouping axes | Two, independent, both metadata: **tags** (what this touches) and **epic** (toward what outcome, via `parent`) | Tags are many-per-item and cheap; an epic is a single deliberate bundle with its own lifecycle. Neither belongs in an identifier, and neither substitutes for the other |
 | Relations | Stated on one side only; inverses generated | DRY — the back-link is rendered, never authored |
 | Task tracking | Markdown checkboxes, parsed for progress | One format, readable by human and script |
-| Git automation | **Reversed in Phase 7.** A `git` backend keeps the project in a remote repository and records it there; the forge is still unknown to the framework — only git is, and only through its CLI | "Forge-agnostic" was the right goal and "no git" was the wrong way to reach it: a project that lives in two places needs reconciling, and leaving that to the user meant it did not happen |
+| Git automation | **Reversed in Phase 7.** A `git` backend keeps the project in a remote repository and records it there; the forge is still unknown to the framework — only git is, and only through its CLI | "Forge-agnostic" was the right goal and "no git" was the wrong way to reach it: a project that lives in two places has to be kept in step, and leaving that to the user meant it did not happen |
 | Commit frequency | **One commit per turn**, made at the turn-end boundary by the `Stop` hook | An edit is not a unit of history. A commit per write made the log a transcript of Claude's tool calls rather than a record of what changed |
 
 ---
@@ -1045,7 +1045,7 @@ What was checked mechanically, and passes:
 - **Every path in the file map exists** (35 of them).
 - **The command audit table and the parser agree in both directions** — no row
   names a command that does not exist, and no command is missing a row.
-  `--help` and the table are separately reconciled by `tests/test_contract.py`.
+  `--help` and the table are checked against each other by `tests/test_contract.py`.
 - **The exit codes C7 assigns are the codes the code uses**: 2 bad input,
   3 refused, 4 validation failed, 5 config error, 1 internal error.
 - **`--help` is inside its 25-line budget**, all ten skills inside their
@@ -1484,71 +1484,97 @@ the only way to reach it was to walk `docs/sdlc/requirements/` by hand.
 
 ## Phase 7 — One word, one operation (2026-11-21)
 
-### Task 27: `render`, `commit`, `reconcile` — and one commit per turn — **DONE**
+### Task 27: `render` and `sync` — and one commit per turn — **DONE**
 
 **Requirement.** Two problems with one cause. The `git` backend of Task 24
-introduced reconciling-with-a-remote and called it `sync`, which was already
-the name of regenerating the views. By the time both existed the word named
-three things at once, and the frequency of the commit was wrong in the same
-breath: every edit and every CLI command produced one.
+taught `sync` to reach a remote, and `sync` was already the name of
+regenerating the views. By the time both existed the word named two things at
+once — and the frequency of the commit was wrong in the same breath: every edit
+and every CLI command produced one.
 
 The collision was not theoretical. It had already produced:
 
-- `sync_on_turn_end`, a user-facing plugin option whose name says *backend* and
-  whose implementation gated *rendering* — the local variable reading it is
-  called `rendering`. Turning it off still pushed to the remote.
+- `sync_on_turn_end`, a user-facing plugin option whose name says *the whole
+  operation* and whose implementation gated *rendering only* — the local
+  variable reading it is called `rendering`. Turning it off still pushed.
 - a backend sync invoked with the reason string `"render after pull"`.
 - `szsdlc.backend`'s docstring documenting `szsdlc sync` as a backend sync
   while `docs/reference.md` documented the same command as "regenerate every
   view and record". Both were half right, which is the failure mode a single
   name for two operations always has.
 
-**The language.** Three words, and no two of them are the same thing — and
-none of them is `sync`, which is retired to a deprecated alias:
+**The language.** Two words, and the fix is a split rather than a rename:
 
-| Word | What it does | Reaches the network |
+| Word | What it does | Reaches a network |
 |---|---|---|
 | **render** | derives the generated views and records from the entities | no |
-| **commit** | records the project where its backend keeps it | no |
-| **reconcile** | brings the backend and its remote into agreement: commit, pull, push | yes |
-| ~~sync~~ | deprecated alias for `render`; warns, and will be removed | no |
+| **sync** | render, then whatever the backend does to put the store in step | depends on the backend |
 
-- [x] **Step 1:** `render.sync()` → `render.render()`, `szsdlc sync` (the render-only command) → `szsdlc render`, and every docstring, fix string and generated-file banner that meant rendering. The `compare()` primitive and validate's staleness rule are untouched — only the name they are reached by.
-- [x] **Step 2:** `szsdlc commit` promoted to a top-level command: render, then record, no network. Reachable on its own so work can be committed offline, or against a remote that cannot be answered for. In the working tree it refuses rather than succeeding silently, because git is already doing the job there.
-- [x] **Step 3:** The network operation is **`reconcile`** — `szsdlc reconcile`, `szsdlc backend reconcile`, `Backend.reconcile()`, `ReconcileReport` — and `sync` is a deprecated alias for `render`, hidden from `--help`, warning on stderr. Rendering first is reconcile doing its job, not a second meaning: a reconcile that pushed stale views would be wrong.
-- [x] **Step 3a:** Everything that records or sends renders first, which the first attempt did not: the terminal command path and `backend reconcile` both committed and pushed whatever views were last written, and `szsdlc render` was itself swept into the post-command reconcile — making the one command documented not to reach a remote reach one. The terminal render is gated on a backend actually being configured, so an ordinary working-tree project still renders only from the edit hook.
-- [x] **Step 4:** `sync_on_turn_end` → `render_on_turn_end` in `plugin.json`, with the old key still read through `RENAMED_OPTIONS` for one release. An installed plugin carries the choice someone made against the old name; dropping the key would not restore the default, it would ignore a decision already taken.
-- [x] **Step 5:** The per-edit and per-command commits removed — `PostToolUse` renders and nothing else, and a CLI command inside a turn records nothing. The turn-end hook's existing sync already commits exactly once before it rebases, so that commit became the turn's commit; no new commit path was added.
-- [x] **Step 6:** Tests rewritten to the new contract, plus `test_a_whole_turn_is_one_commit` (three commands and every idea edited → one commit, asserting the remote ref before and after and the edited content inside the commit), `test_sync_is_a_deprecated_alias_for_render`, `test_render_never_reaches_the_remote`, `test_commit_works_with_the_remote_gone` (the bare repo is deleted, so "no network" is tested with no network), the terminal and `backend reconcile` render-first cases, and the renamed-option fallback. `HELP_BUDGET` 28 → 30, deliberately.
-- [x] **Step 7:** A review pass found three tests that passed for the wrong reason — one accepting any added commit without checking it held the turn's edits, one patching only the two wrapper functions on a path with a third route to a commit, and one asserting "never reaches the remote" against a remote that was reachable. All three now assert the outcome rather than the route.
+`sync` keeps the name it has had since 0.2.4 and everything it did under it. It
+rendered *and*, on a backend with a remote, pulled before and pushed after;
+that is what it still does. What was missing was a name for the local half on
+its own, and that name is `render`. The split is **additive**: no existing
+command changed what it does, nothing is deprecated, and the banner in every
+already-generated file — "rerun `szsdlc sync`" — goes on being correct.
+
+- [x] **Step 1:** `render.sync()` → `render.render()`, and every docstring, fix
+      string and generated-file banner that meant rendering only. The
+      `compare()` primitive and validate's staleness rule are untouched — only
+      the name they are reached by.
+- [x] **Step 2:** `szsdlc render` added as a top-level command: regenerate
+      every view and record, and reach nothing. It is the one command
+      documented not to touch a backend, which is a promise the wrapper has to
+      keep for it — see Step 3a.
+- [x] **Step 3:** `szsdlc sync` keeps its name, its behaviour and its line in
+      `--help`, with a description that finally covers both halves instead of
+      only the local one. Rendering first is the sync doing its job, not a
+      second meaning: a sync that pushed stale views would be wrong.
+- [x] **Step 3a:** Everything that records or sends renders first, which the
+      first attempt did not: the terminal command path sent whatever views were
+      last written, and `szsdlc render` was itself swept into the post-command
+      sync — making the one command documented not to reach a remote reach one.
+- [x] **Step 4:** `sync_on_turn_end` → `render_on_turn_end` in `plugin.json`,
+      with the old key still read through `RENAMED_OPTIONS` for one release.
+      This one *is* a rename, and the only one: the key named the whole
+      operation and governed the local half. An installed plugin carries the
+      choice someone made against the old name; dropping the key would not
+      restore the default, it would ignore a decision already taken.
+- [x] **Step 5:** The per-edit and per-command commits removed — `PostToolUse`
+      renders and nothing else, and a CLI command inside a turn sends nothing.
+      The turn-end sync already committed exactly once before rebasing, so that
+      commit became the turn's commit; no new commit path was added.
+- [x] **Step 6:** Tests rewritten to the new contract, plus
+      `test_a_whole_turn_is_one_commit` (three commands and every idea edited →
+      one commit, asserting the remote ref before and after and the edited
+      content inside the commit), `test_sync_does_what_it_has_always_done`,
+      `test_render_never_reaches_the_remote`, and the terminal render-first
+      case. `HELP_BUDGET` 28 → 30, deliberately.
+- [x] **Step 7:** A review pass found three tests that passed for the wrong
+      reason — one accepting any added commit without checking it held the
+      turn's edits, one patching only the two wrapper functions on a path with
+      a third route to a commit, and one asserting "never reaches the remote"
+      against a remote that was reachable. All three now assert the outcome
+      rather than the route.
 
 > **Decisions taken while implementing:**
 >
-> - **"sync" went to neither, and the backend took a new word.** Giving it to
->   the backend was the first decision here, on the argument that reconciling
->   two copies across a boundary is what the word means to everyone. It was
->   reversed on an upgrade argument that beats it: the banner at the top of
->   every file generated by every release up to 0.2.4 says "rerun `szsdlc
->   sync`", and those banners vastly outnumber any script. Keeping the name for
->   the backend would have left them all naming a command that now reaches the
->   network — a silent change in what an upgrade *does*, not merely in what
->   something is called, which is the one outcome a rename must not produce. So
->   `sync` follows the banners as a deprecated alias for `render`, and the
->   network operation took `reconcile`, a word it never shared with anything.
-> - **`reconcile` over `exchange`, `mirror`, and a `push`/`pull` split.**
->   `mirror` implies one-way copying and misdescribes a rebase that brings
->   other work in; `exchange` reads badly as a noun; and the operation is
->   atomic — commit, rebase, push — so two directional commands would each do
->   the whole thing. It is long to type and almost never typed: the hooks run
->   it.
+> - **`sync` kept its name; `render` was split out instead.** The first attempt
+>   went the other way: it gave the network operation a new word and left
+>   `sync` as a deprecated alias. Two of those were tried — `sync` aliased to
+>   `render`, which silently dropped the push for every project already on a
+>   backend, and then `sync` aliased to the new word, which behaved correctly
+>   but deprecated a name that was never wrong. The third reading is the right
+>   one and is obvious in hindsight: `sync` already meant "render, then put
+>   this in step with where it is kept". Only the local half lacked a name.
+>   Renaming a correct word to introduce a missing one is backwards.
 > - **The commit cannot come after `validate`.** The turn-end order asked for
 >   was render → validate → commit → push, and git does not allow it: a rebase
 >   needs a clean tree, so the commit must precede the pull. The order the hook
 >   runs, unchanged from Task 24 in this respect, is
 >
->       render → reconcile (commit, pull, push)
->              → render and reconcile again, if the pull brought anything
->              → validate
+>       sync                        (render, then the backend's own work)
+>         → sync again, reloaded,   if anything arrived
+>         → validate
 >
 >   so `validate` is **last, after the push**. Nothing is gated on it, for the
 >   same reason the push is not: an unfinished turn is still work, and keeping
@@ -1561,26 +1587,146 @@ none of them is `sync`, which is retired to a deprecated alias:
 >   mistake was in the description, not the behaviour.*
 > - **Nothing was added to make the batching safe.** Removing the eager commits
 >   needed no new durability mechanism: the edits are on disk in the store, and
->   `has_local_changes` reads the working tree, so the next commit or reconcile
->   from any entry point sweeps in whatever is uncommitted. A session that dies
->   mid-turn leaves its work there, and the next session's start reconcile
->   records it. This is why the change is a deletion rather than a feature.
+>   `has_local_changes` reads the working tree, so the next sync from any entry
+>   point sweeps in whatever is uncommitted. A session that dies mid-turn
+>   leaves its work there, and the next session's start sync records it. This
+>   is why the change is a deletion rather than a feature.
 > - **The old commit messages are not migrated.** A history of `szsdlc: edit
 >   WI-0042.md` stays as it is. It is a log of what happened, and rewriting it
 >   would be the same mistake as hand-editing a generated file.
-> - **`--help` grew by two lines, which is the cost of the fix.** Three
->   operations that differ in whether they touch the network cannot share one
->   line. Two lines of help are cheaper than an agent guessing which command
->   reaches a remote — the guess this task exists to remove. The deprecated
->   `sync` spends none of the budget: it is in `HIDDEN_COMMANDS`, beside the
->   `hook` entry point, since advertising something being removed is the one
->   thing help is not for.
+> - **`--help` grew by a line, which is the cost of the fix.** Two operations
+>   that differ in whether they touch a network cannot share one line. A line
+>   of help is cheaper than an agent guessing which command reaches a remote —
+>   the guess this task exists to remove.
 > - **A turn's commit count is stated with its exception, not absolutely.** The
->   turn-end sequence commits before it pulls, and a pull that brings entities
->   in needs those views redrawn and sent — a second commit, unavoidable
->   without rendering from entities that have not arrived. The docs say "a turn
->   of its own work produces one commit" and name the pull case, rather than
->   claiming an invariant the code does not hold.
+>   turn-end sequence commits before it pulls, and work arriving needs those
+>   views redrawn and sent — a second commit, unavoidable without rendering
+>   from entities that have not arrived. The docs say "a turn of its own work
+>   produces one commit" and name the other case, rather than claiming an
+>   invariant the code does not hold.
+
+---
+
+### Task 28: `workdir` is a backend, and `commit` is not an operation — **DONE**
+
+**Requirement.** Task 27 left two leaks, found by reading the command list
+aloud. `szsdlc sync` and `szsdlc backend sync` were two commands for one
+operation, differing in error discipline and pass count rather than in what
+they did — and neither worked in an ordinary project, because `workdir` was not
+a backend but a string the rest of the package compared against. "There is no
+backend" was a case every caller carried: a dozen `is None` branches and three
+return types that were optional only to encode it.
+
+The third leak was `commit`. Task 27's first attempt promoted it to a top-level
+command on the argument that offline work needs recording — which is true, and
+is `git`'s own business. Every other backend answered the call by doing
+nothing, and `Backend`'s own docstring described its workflow as "commit, pull,
+push", which is one implementation's mechanism stated as the abstraction's
+contract.
+
+**The language.** Two words, and one composes the other:
+
+```
+render      the entities ──► every generated view and record     local, one-way
+sync        render ──► whatever the backend does                 see below
+validate    reads everything, writes nothing, reports            local
+```
+
+```
+workdir   nothing. the store is the working tree         (the default)
+dir       nothing. the directory is the project, not a copy of it
+git       commit, fetch, rebase, push
+```
+
+The second block is the point: it is the only place those words appear, and
+`Backend` neither names nor implies them.
+
+- [x] **Step 1:** `WorkdirBackend`, as `DirBackend` with the directory already
+      decided — literally a subclass, since the store *is* a plain local
+      directory with nothing to put in step. Three differences, each a method:
+      no settings (`keys` is empty; the directory comes from the upward walk
+      for `.szsdlc/config.yml` that discovery always did), nothing created
+      (`materialize` is a no-op — a missing project is `szsdlc init`'s job, and
+      guessing would plant one wherever a command happened to run), and
+      `describe()` returns nothing, because there are no settings to report and
+      the path is where you are standing.
+- [x] **Step 2:** `resolve()` returns a `Backend`, never `None`, and `locate()`
+      answers for every szsdlc project. The `is None` branches in `select`,
+      `ensure`, `locate`, `project_root` and `cmd_backend` went with it.
+- [x] **Step 3:** `Backend.commit`, `GitBackend.commit`, `DirBackend.commit`,
+      `backend.commit()`, `backend.commit_at()`, `COMMIT_BUDGET` and `szsdlc
+      commit` all removed. Offline recording is unaffected and untouched:
+      `GitBackend.sync` commits *before* it fetches, because git cannot rebase
+      a dirty tree, so a sync that cannot reach the remote has already recorded
+      the work. There was never a need for a command.
+- [x] **Step 4:** `szsdlc backend` narrowed to inspection — one subcommand,
+      `show`. `szsdlc sync` is the operation, and now works anywhere.
+- [x] **Step 5:** `SyncReport.pulled`/`pushed` → `incoming`/`outgoing`.
+      Direction is what the one branching caller asks about ("did the store
+      change under me, so must I reload?"); `pulled` answered it in git's
+      vocabulary, which no other backend speaks.
+- [x] **Step 6:** `szsdlc.sync` — the composite, one level above both layers,
+      holding the render that every caller needs and no backend may know about.
+      Six paths reached a backend before this; two of them, `SessionStart` and
+      `UserPromptSubmit`, sent without rendering first, so a session killed
+      mid-turn left unrendered edits for the next session to record and push. A
+      rule held by convention in six places is a rule with two exceptions
+      nobody noticed.
+- [x] **Step 7:** `relocates` replaced the `needs_registry` flag the first
+      attempt added. Same values, but a question the abstraction can ask
+      honestly — "do you keep the project somewhere other than the working
+      tree?" — rather than one about szsdlc's own bookkeeping. It is read
+      through a helper that defaults to `True` for a backend that does not say:
+      a needless registry entry is a stale line, a missing one is a project
+      nothing can find again.
+- [x] **Step 8:** Terminal commands render before they send, on every backend
+      rather than only where one is configured — the Task 27 gate was written
+      when `workdir` meant "no backend", and "nothing records or sends a stale
+      view" has no exception to make. On `workdir` the render is the whole of
+      it, which is what `szsdlc schedule` in a terminal now also redraws.
+- [x] **Step 9:** Docs rewritten as diagrams rather than prose, in
+      `docs/reference.md`, `AGENTS.md` and the `backend` package docstring.
+      `Backend` is described by what it promises and nothing else; commits,
+      fetches, rebases and pushes appear under `git` and nowhere above it.
+
+> **Decisions taken while implementing:**
+>
+> - **`WorkdirBackend` extends `DirBackend` rather than reimplementing it.**
+>   The suggestion came from outside the implementation and was right: the two
+>   differ in where the directory comes from, not in what a directory is. The
+>   subclass is four methods long, and three of them return nothing.
+> - **The local-only fallback stayed inside `GitBackend`.** It was tempting to
+>   give `Backend.sync` a documented "degrade to local" contract, since `git`
+>   needs one. That would have been the same leak in a new place: a future sftp
+>   backend has no local half to degrade to, and would have to implement a
+>   promise it cannot keep. Graceful degradation is `git`'s, stated in
+>   `git.py`.
+> - **An explicit `szsdlc sync` renders through its own runner, not through a
+>   pre-pass.** The first version reached the backend before the command ran,
+>   which rendered silently and left `--verbose` with nothing to report. The
+>   order is now the same two-step the turn-end hook runs — render, send, and
+>   send again reloaded if anything arrived — so one description covers both.
+> - **A failed explicit sync refuses; the same failure under another command
+>   warns.** Asked for by name, the sync is the whole of what was asked, so a
+>   problem is the command's result. Riding on `szsdlc capture`, it is not: the
+>   capture worked, and reporting it as failed because a remote was unreachable
+>   would be a lie about the thing the caller asked for.
+> - **The composite reports a failed render rather than swallowing it.**
+>   Rendering stays tolerant — a broken template must not stop someone's work
+>   being kept — but the turn-end hook can say that the views now disagree with
+>   the entities, and `validate` is about to report exactly that without being
+>   able to say why. So `render()` returns the exception and the caller decides;
+>   only the turn-end redraw takes it up.
+> - **`workdir` is never recorded in the store registry.** Registering it would
+>   make `managed()` — "is this path inside a store we keep elsewhere?" — true
+>   of every ordinary repository, inverting what its callers ask. This is why
+>   `relocates` exists at all, and the one thing `szsdlc backend` had to be
+>   restructured for: "this directory is inside its store" used to be inferred
+>   from `resolve()` finding nothing, which now never happens.
+> - **`restore` and `summary` on `WorkdirBackend` are protocol obligations
+>   nothing reaches.** Both are asserted by a test that says so, rather than
+>   left uncovered: the next backend will be written by copying this file, and
+>   an answer nobody ever read is an answer nobody checked.
 
 ---
 

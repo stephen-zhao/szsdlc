@@ -584,7 +584,9 @@ def test_rescheduling_touches_only_the_roadmap_file(run, ready, project):
     run("schedule", "WI-0001", "--horizon", "later")
     after = fingerprint()
     changed = {k for k in set(before) | set(after) if before.get(k) != after.get(k)}
-    assert changed == {"roadmaps/roadmap.yml"}
+    # The roadmap and the view drawn from it. Nothing else: not the work item
+    # that moved, not its epic, not a view that does not show the order.
+    assert changed == {"roadmaps/roadmap.yml", "views/roadmap.md"}
 
 
 # ---------------------------------------------------------------------------

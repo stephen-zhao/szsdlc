@@ -84,36 +84,41 @@ Bounded listings (`inbox`, `list`, `next`) cap themselves and say so when they
 truncate. `--limit 0` lifts the cap; use it when you actually need everything,
 which is rarer than it feels.
 
-## Three words for three operations
+## Two words, and one composes the other
 
-These used to be two words for three operations, which is how a project ends up
-with a command whose name tells you nothing about whether it touches the
-network:
+```
+render      the entities ──► every generated view and record     local, one-way
+sync        render ──► whatever the backend does                 see below
+validate    reads everything, writes nothing, reports            local
+```
 
-| Word | What it does | Reaches the network |
-|---|---|---|
-| **render** | derives the generated views and records from the entities | no |
-| **commit** | records the project where its backend keeps it | no |
-| **reconcile** | brings the backend and its remote into agreement: commit, pull, push | yes |
+`render` is the first step of a sync, always, because nothing should record or
+send a view that is out of date. Neither is a thing you normally run — the
+hooks render on every write and sync at the turn boundary — but when you read
+the word, it means exactly this.
 
-`render` is one-way and local: entities in, generated markdown out. It is the
-first step of the other two, because neither should record or send a view that
-is out of date. None of the three is a thing you normally run — the hooks
-render on every write and reconcile at the turn boundary — but when you read
-the word, it means exactly one of these.
+**`sync` is the name it has always had.** Up to 0.2.4 the command rendered
+*and* reached the remote, and that is exactly what it still does; the banner
+in every generated file says `szsdlc sync` and keeps being right. What is new
+is `render`, for the local half on its own.
 
-**None of them is called a sync.** That word named rendering up to 0.2.4, and
-the banner in every file generated before then still says `szsdlc sync`, so
-`sync` is kept as a deprecated alias for `render` and warns when used. Pointing
-it at the backend instead would have left those banners naming a command that
-now reaches the network — a change in what an upgrade *does*, not just in what
-it is called.
+**What a sync does is the backend's business, not yours.** `szsdlc sync` works
+in any szsdlc project; what it then does is:
 
-A turn of its own work produces **one** commit. An edit is not a unit of
-history; a turn that touches twelve files is one change to the project, and the
-turn-end hook is where that change is recorded. A turn that *pulls* someone
-else's work produces a second one for the redraw, because views cannot be
-rendered from entities that have not arrived yet.
+```
+workdir   nothing. the store is the working tree         (the default)
+dir       nothing. the directory is the project, not a copy of it
+git       commit, fetch, rebase, push
+```
+
+There is no `szsdlc commit`, deliberately. "Record but not send" is how `git`
+degrades when it cannot reach the remote — it commits first, says so, and the
+next sync sends it — not an operation to ask for by name.
+
+A turn of its own work is recorded **once**, at the turn end. An edit is not a
+unit of history; a turn that touches twelve files is one change to the project.
+A turn that receives someone else's work costs a second pass for the redraw,
+because a view cannot be drawn from an entity that has not arrived yet.
 
 ## Skills
 
@@ -126,8 +131,9 @@ initiative, because both write to the project and to the codebase.
 
 If the session began with `szsdlc project files: <path>`, a backend keeps the
 project in that directory or a clone of a remote, not in the working directory.
-Edit entity files at that path, and never copy them into the repo. Changes are committed as you
-make them and pushed when the turn ends. `szsdlc backend` shows where it is and why.
+Edit entity files at that path, and never copy them into the repo. The turn end
+is where the turn's work is recorded and sent, once. `szsdlc backend` shows
+where the project is kept, and why.
 
 ## When something looks wrong
 
