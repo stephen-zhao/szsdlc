@@ -1,6 +1,7 @@
 """The single error channel for everything a user or agent can get wrong.
 
-Two rules from the command surface contract (docs/plan.md) shape this module,
+Two rules from the command surface contract (REQ-0012 in szsdlc-szsdlc)
+shape this module,
 and both exist because every message here is read by an agent that pays tokens
 for it:
 

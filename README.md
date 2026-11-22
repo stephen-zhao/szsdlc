@@ -39,9 +39,13 @@ one `uv` manages — so no virtualenv setup is needed for the hooks to work. See
 
 - [`docs/reference.md`](docs/reference.md) — model, commands, configuration, hooks, development
 - [`AGENTS.md`](AGENTS.md) — the agent-facing contract, six rules with reasons
-- [`docs/measurements.md`](docs/measurements.md) — measured token cost and load time
-- [`docs/research.md`](docs/research.md) — the evidence and the options weighed
-- [`docs/plan.md`](docs/plan.md) — the implementation plan, with every decision recorded against the task that forced it
+
+szsdlc tracks its own SDLC in **szsdlc-szsdlc**, using the `git` backend. The
+research that chose this design, the measured token costs, the architectural
+decisions and the delivered implementation plan live there as entities — not as
+prose in this repo, because a plan kept as prose beside the code it describes
+is the exact drift this framework exists to remove. Run `szsdlc backend` to see
+where it is kept.
 
 ## License
 
