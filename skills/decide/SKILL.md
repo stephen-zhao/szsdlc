@@ -34,9 +34,9 @@ everything is read by nobody — costlier than the one it fails to record.
 
 ## Status and links
 
-Accept it once it is actually agreed — `szsdlc set ADR-0009 status=accepted`.
-Not in the same breath as proposing it: the proposed state exists so a human
-can disagree. Wire it to what it came from and what it touches:
+Accept it once agreed — `szsdlc set ADR-0009 status=accepted`. The proposed
+state exists so a human can disagree, and `status=rejected` records that they
+did, with the reason it lost. Wire it to what it came from and what it touches:
 
 ```bash
 szsdlc link ADR-0009 informed_by SPK-0003     # the investigation behind it

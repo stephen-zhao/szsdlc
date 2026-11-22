@@ -241,9 +241,12 @@ entity_types:
       initial: proposed
       states:
         proposed:
-          to: [accepted, superseded]
+          to: [accepted, rejected, superseded]
         accepted:
           to: [superseded]
+        rejected:
+          terminal: true
+          description: Considered and turned down. The reasoning is kept; a rejected option is the cheapest kind to look up.
         superseded:
           terminal: true
 
