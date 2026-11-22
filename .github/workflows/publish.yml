@@ -1,20 +1,16 @@
 name: Publish to PyPI
 
 # Publishing is deliberately hard to trigger, and every path into it names one
-# exact tag. There are two, and only two:
+# exact tag:
 #
-#   1. workflow_dispatch, with a required `tag` input. A human names the single
+#   1. workflow_dispatch, with a required `tag` input - a human names the one
 #      tag to publish. No default, no glob, no list, no "latest".
-#   2. workflow_run after Bump Version — and only when that run actually
-#      produced a version-bump commit carrying exactly one new v* tag.
+#   2. workflow_run after Bump Version, and only when that run produced a
+#      version-bump commit carrying exactly one new v* tag.
 #
-# There is deliberately NO `push: tags` trigger. A tag arriving at origin must
-# never publish anything on its own: a tag can be pushed by hand, or swept
-# along by `push.followTags` from a clone holding a stale one. That is exactly
-# how 1.0.0 reached PyPI on 2026-11-21, built from an August tag whose bump had
-# been reverted months earlier. PyPI never allows a version number to be
-# re-uploaded, so 1.0.0 is permanently burnt. The tag trigger bought nothing
-# that workflow_dispatch does not, and it cost a version number.
+# There is deliberately no `push: tags` trigger: a tag reaching origin, by hand
+# or swept along by `push.followTags` from a clone holding a stale one, must
+# never publish on its own.
 
 on:
   workflow_dispatch:
@@ -171,8 +167,8 @@ jobs:
       contents: write  # required for creating GitHub releases
 
     steps:
-      # The one tag `resolve` settled on. Never github.ref, and never whatever
-      # `git describe` happens to find at build time.
+      # The one tag `resolve` settled on - never github.ref, and never a tag
+      # guessed at build time.
       - name: Checkout ${{ needs.resolve.outputs.tag }}
         uses: actions/checkout@v4
         with:
