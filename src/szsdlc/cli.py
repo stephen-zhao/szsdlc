@@ -162,6 +162,8 @@ def build_parser() -> Parser:
     setter = subparsers.add_parser("set", prog="szsdlc set")
     setter.add_argument("ref")
     setter.add_argument("assignments", nargs="+", metavar="field=value")
+    setter.add_argument("--force", action="store_true")
+    setter.add_argument("--reason", default=None)
     setter.set_defaults(run=cmd_set)
 
     for verb, runner in (("tag", cmd_tag), ("untag", cmd_untag)):
@@ -772,6 +774,94 @@ def _retire_from_roadmaps(session: "Session", entity: Entity) -> list[str]:
     return removed
 
 
+def _force_reason(args: argparse.Namespace, entity: Entity) -> str | None:
+    """The reason a `set --force` gives, or a refusal; None without `--force`.
+
+    Read before anything is written, so a refusal never leaves half a change.
+    `--force` is a person overriding the workflow, and the reason is what
+    makes the override legible later — so it is required, read from stdin
+    when not given (as `drop` does), and never defaulted.
+    """
+    ref = entity.id.text
+    statuses = [a for a in args.assignments if a.partition("=")[0].strip() == "status"]
+    if not args.force:
+        if args.reason is not None:
+            raise BadInput(
+                f"set: --reason explains a forced move, and there is no --force.",
+                fix=f"szsdlc set {ref} {' '.join(map(shlex.quote, args.assignments))}",
+            )
+        return None
+    if not statuses:
+        raise BadInput(
+            f"set: --force applies only to a status= assignment, and there is none.",
+            fix=f'szsdlc set {ref} status=<status> --force --reason "why"',
+        )
+
+    reason = args.reason
+    if reason is None and not sys.stdin.isatty():
+        reason = sys.stdin.read()
+    reason = " ".join((reason or "").split())
+    if not reason:
+        raise BadInput(
+            f"{ref}: a forced status change needs a reason, so the exception "
+            f"is legible later.",
+            fix=f"szsdlc set {ref} {' '.join(map(shlex.quote, args.assignments))} "
+                f'--force --reason "why this move"',
+        )
+    return reason
+
+
+def _record_forced_move(entity: Entity, transition: Any, reason: str) -> None:
+    """The latest forced move in `forced_reason`, the history in the journal.
+
+    Both are opt-in by declaration, never by type name: a type that declares
+    no `forced_reason` gets no field, and one with no journal — or a layout
+    with nowhere to keep one — keeps no history. A forced move never relays
+    an entity out to make room; that would be a side effect nobody asked for.
+    """
+    stamp = dt.date.today().isoformat()
+    move = f"{transition.before} → {transition.after}: {reason}"
+    if "forced_reason" in entity.type.fields:
+        entity.set_field("forced_reason", f"{stamp} {move}")
+    artifact = entity.type.journal_artifact
+    if artifact and entity.artifact_path(artifact) is not None:
+        _append_journal(entity, artifact, f"forced {move}")
+
+
+def _reopen_notes(session: Session, entity: Entity) -> list[str]:
+    """What reaching a terminal status had done, now that it is undone.
+
+    Only reported, never reversed. Scheduling is a judgment about the whole
+    set, so a reopened item is not put back on a roadmap; dependents are
+    blocked again by construction, since only a terminal dependency counts as
+    met; a closed parent is pointed out, not reopened.
+    """
+    notes: list[str] = []
+    ref = entity.id.text
+
+    if entity.type.flag("schedulable") and session.config.roadmaps:
+        spec = next(iter(session.config.roadmaps.values()))
+        named = (f" --roadmap {spec.name}" if len(session.config.roadmaps) > 1 else "")
+        notes.append(f"unscheduled — szsdlc schedule {ref} "
+                     f"--horizon {spec.horizons[0]}{named}")
+
+    graph = _graph(session)
+    blocked = [d.id.text for d in graph.sources(entity, DEPENDENCY_RELATION)
+               if not d.is_terminal]
+    if blocked:
+        notes.append(f"blocks again: {', '.join(blocked)}")
+
+    parent_ref = entity.parent()
+    if parent_ref:
+        try:
+            parent = session.store.get(session.ids.resolve(parent_ref))
+        except SzsdlcError:
+            parent = None
+        if parent is not None and parent.is_terminal:
+            notes.append(f"parent {parent.id.text} is {parent.status}")
+    return notes
+
+
 def cmd_set(args: argparse.Namespace) -> int:
     from . import workflow as workflow_module
 
@@ -779,6 +869,7 @@ def cmd_set(args: argparse.Namespace) -> int:
     entity = session.entity(args.ref)
     settable = ["title", "status", *entity.type.fields]
     reported: list[str] = []
+    reason = _force_reason(args, entity)
 
     for assignment in args.assignments:
         field, separator, raw = assignment.partition("=")
@@ -804,9 +895,18 @@ def cmd_set(args: argparse.Namespace) -> int:
             )
 
         if field == "status":
-            transition = workflow_module.move(entity, raw)
-            reported.append(f"status {transition.before} → {transition.after}")
+            was_terminal = entity.is_terminal
+            transition = workflow_module.move(entity, raw, force=args.force)
+            if transition.forced:
+                assert reason is not None
+                _record_forced_move(entity, transition, reason)
+                reported.append(f"status {transition.before} → {transition.after} "
+                                f"(forced: {reason})")
+            else:
+                reported.append(f"status {transition.before} → {transition.after}")
             reported += _retire_from_roadmaps(session, entity)
+            if was_terminal and not entity.is_terminal:
+                reported += _reopen_notes(session, entity)
         else:
             before = entity.field(field)
             entity.set_field(field, _coerce(session, entity, field, raw))
@@ -1076,6 +1176,13 @@ def cmd_log(args: argparse.Namespace) -> int:
             fix=f'szsdlc log {entity.id.text} "what happened"',
         )
 
+    _append_journal(entity, artifact, message)
+    # C4 — the audit budgets this at zero lines. It runs constantly.
+    return 0
+
+
+def _append_journal(entity: Entity, artifact: str, message: str) -> None:
+    """Append dated lines to the journal: the one writer `log` and `set --force` share."""
     path = entity.artifact_path(artifact)
     assert path is not None
     stamp = dt.date.today().isoformat()
@@ -1085,8 +1192,6 @@ def cmd_log(args: argparse.Namespace) -> int:
     if existing and not existing.endswith("\n"):
         existing += "\n"
     path.write_bytes((existing + body).encode("utf-8"))
-    # C4 — the audit budgets this at zero lines. It runs constantly.
-    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -1167,6 +1272,11 @@ def _roadmap_order(roadmaps: dict, horizon: str | None) -> dict[str, int]:
     return order
 
 
+#: The relation whose targets must be terminal before work is actionable.
+#: Named once, so `next` and the reopen report cannot disagree about it.
+DEPENDENCY_RELATION = "depends_on"
+
+
 def _blocked(session: Session, graph, entity: Entity) -> bool:
     """True while any dependency has not reached a terminal status.
 
@@ -1174,7 +1284,7 @@ def _blocked(session: Session, graph, entity: Entity) -> bool:
     out. An unresolvable dependency does not block — it is a validate finding,
     and treating a typo as a blocker would hide the queue rather than the typo.
     """
-    for target in graph.targets(entity.id, "depends_on"):
+    for target in graph.targets(entity.id, DEPENDENCY_RELATION):
         if not target.resolved:
             continue
         dependency = session.store.get(target.entity_id)

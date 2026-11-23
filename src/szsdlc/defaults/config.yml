@@ -52,6 +52,10 @@ entity_types:
     schedulable: false
     persistent: false
     fields:
+      forced_reason:
+        type: text
+        required: false
+        description: 'The latest forced status change and why, e.g. "2026-11-23 ready → groomed: not next". Written by `set --force`; the history is the journal''s.'
       captured:
         type: date
         required: true
@@ -87,6 +91,10 @@ entity_types:
     schedulable: true
     persistent: false
     fields:
+      forced_reason:
+        type: text
+        required: false
+        description: 'The latest forced status change and why, e.g. "2026-11-23 ready → groomed: not next". Written by `set --force`; the history is the journal''s.'
       opened:
         type: date
         required: true
@@ -117,6 +125,10 @@ entity_types:
     schedulable: false
     persistent: true
     fields:
+      forced_reason:
+        type: text
+        required: false
+        description: 'The latest forced status change and why, e.g. "2026-11-23 ready → groomed: not next". Written by `set --force`; the history is the journal''s.'
       opened:
         type: date
         required: true
@@ -155,6 +167,10 @@ entity_types:
     schedulable: true
     persistent: false
     fields:
+      forced_reason:
+        type: text
+        required: false
+        description: 'The latest forced status change and why, e.g. "2026-11-23 ready → groomed: not next". Written by `set --force`; the history is the journal''s.'
       opened:
         type: date
         required: true
@@ -187,6 +203,10 @@ entity_types:
     schedulable: true
     persistent: false
     fields:
+      forced_reason:
+        type: text
+        required: false
+        description: 'The latest forced status change and why, e.g. "2026-11-23 ready → groomed: not next". Written by `set --force`; the history is the journal''s.'
       opened:
         type: date
         required: true
@@ -231,6 +251,10 @@ entity_types:
     schedulable: false
     persistent: true
     fields:
+      forced_reason:
+        type: text
+        required: false
+        description: 'The latest forced status change and why, e.g. "2026-11-23 ready → groomed: not next". Written by `set --force`; the history is the journal''s.'
       opened:
         type: date
         required: true

@@ -40,6 +40,8 @@ the plan with a logged reason — do not tick them. Work that should not be
 finished is abandoned instead, with the reason recorded; a refusal names the
 transitions that are legal from here.
 
+Reopening is `set … --force --reason "…"`, and only on the person's say-so.
+
 ## Afterwards
 
 Run `szsdlc validate`. Closing frequently changes derived state elsewhere —

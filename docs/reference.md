@@ -87,7 +87,7 @@ refine <ref> --into T   spawn a typed entity from an idea
 inbox                   unrefined ideas, oldest first
 drop <ref> --reason ..  close an idea that went nowhere, with a reason
 new <TYPE> --title ..   create a typed entity directly; --status to import
-set <ref> field=value   set scalar fields; enforces the workflow
+set <ref> field=value   set scalar fields; enforces the workflow; --force for exceptions
 tag|untag <ref> <tag>   add or remove tags, normalized on write
 link|unlink a <r> b     author or remove one edge; inverses are generated
 convert <ref> <TYPE>    reclassify, leaving a resolving tombstone
@@ -123,6 +123,31 @@ reports it as a gate disagreement until the artifacts are written:
 $ szsdlc new work_item --title "Old work" --status done
 WI-0031  work-items/WI-0031-old-work/entity.md  done; owes: plan.md is missing
 ```
+
+### Exceptions to the workflow
+
+`set <ref> status=<s> --force --reason "<why>"` makes a status change the
+workflow does not list: moving back, skipping ahead, recovering from a status
+the workflow does not declare, and reopening a terminal item. It names no type
+and no state, so it works on any workflow.
+
+- `--reason` is required, from the flag or from stdin, and is echoed in the
+  output. `--force` without a `status=` assignment is refused.
+- It lifts only the path. The target must be a declared status other than the
+  current one, and **its gates still apply**: forcing to `done` needs every
+  task ticked.
+- Forcing a move the workflow already allows is an ordinary move, and is not
+  recorded as forced.
+- A forced move appends `- <date> forced <from> → <to>: <reason>` to the
+  journal where the type has one, and writes the same move to `forced_reason`
+  where the type declares that field (every default type does). The field
+  holds only the latest forced move; the journal is the history.
+- Reopening a terminal item reports what reaching it had done: the item is off
+  every roadmap (`szsdlc schedule` puts it back), its dependents are blocked
+  again, and its parent may be closed. `dropped_reason` is kept.
+
+`--force` is for exceptions and for a person's decision. A move a project makes
+routinely belongs in its workflow, as a `to:` entry, not in a habit of forcing.
 
 `sync` is not new and is not deprecated. Up to 0.2.4 it rendered *and*, on a
 backend with a remote, reached that remote — a pull before and a push after —

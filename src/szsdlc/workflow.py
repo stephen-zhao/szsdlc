@@ -25,6 +25,9 @@ class Transition:
     entity: str
     before: str | None
     after: str
+    #: True only when `force` actually lifted a refusal. Forcing a move the
+    #: workflow already allows overrides nothing, so it is not recorded.
+    forced: bool = False
 
     def __str__(self) -> str:
         return f"{self.entity}: status {self.before} → {self.after}"
@@ -179,8 +182,16 @@ def step_toward(entity: Entity, target: str) -> str | None:
     return None
 
 
-def check(entity: Entity, status: str) -> None:
-    """Refuse the move to `status`, or return silently."""
+def check(entity: Entity, status: str, force: bool = False) -> bool:
+    """Refuse the move to `status`, or return whether `force` was needed.
+
+    `force` lifts exactly two refusals: a target missing from the current
+    state's `to`, and a current status the workflow does not declare. Both are
+    statements about the *path*. Everything about the *destination* still
+    holds — it must be declared, must differ from where the entity is, and its
+    gates must be met — because `--force` is a person's decision about where
+    the work belongs, never a way around what a state requires.
+    """
     workflow = entity.type.workflow
     ref = entity.id.text
 
@@ -197,40 +208,51 @@ def check(entity: Entity, status: str) -> None:
             fix=f"szsdlc show {ref}",
         )
 
+    overridden = False
     if entity.status not in workflow.states:
         # A hand-edited status loads, but `set` will not move from one: there is
         # no transition graph to consult.
-        raise Refused(
-            f"{ref}: current status {entity.status!r} is not in the "
-            f"{entity.type.name} workflow, so no transition from it is defined.",
-            fix=f"szsdlc set {ref} status={workflow.initial}",
-            see=f"statuses: {', '.join(workflow.states)}",
-        )
-
-    if not workflow.can_move(entity.status or "", status):
-        legal = workflow.states[entity.status or ""].to
-        raise Refused(
-            f"{ref}: {entity.status} → {status} is not a legal transition.",
-            fix=(f"szsdlc set {ref} status={legal[0]}" if legal
-                 else f"szsdlc show {ref}"),
-            see=(f"from {entity.status}: {', '.join(legal)}" if legal
-                 else f"{entity.status} is terminal"),
-        )
+        if force:
+            overridden = True
+        else:
+            raise Refused(
+                f"{ref}: current status {entity.status!r} is not in the "
+                f"{entity.type.name} workflow, so no transition from it is defined.",
+                fix=f"szsdlc set {ref} status={workflow.initial}",
+                see=f"statuses: {', '.join(workflow.states)}",
+            )
+    elif not workflow.can_move(entity.status or "", status):
+        if force:
+            overridden = True
+        else:
+            legal = workflow.states[entity.status or ""].to
+            raise Refused(
+                f"{ref}: {entity.status} → {status} is not a legal transition.",
+                fix=(f"szsdlc set {ref} status={legal[0]}" if legal
+                     else f"szsdlc show {ref}"),
+                see=(f"from {entity.status}: {', '.join(legal)}" if legal
+                     else f"{entity.status} is terminal"),
+            )
 
     gates = unmet_gates(entity, status)
     if gates:
-        alternative = None if gates[0].prefer_remedy else _alternative(entity, status)
+        # Under --force the caller has already said where the work goes, so
+        # "move somewhere else instead" is not a fix; only the gate's remedy is.
+        alternative = (None if gates[0].prefer_remedy or overridden
+                       else _alternative(entity, status))
         raise Refused(
             f"{ref}: status {entity.status} → {status} blocked, {gates[0].reason}.",
             fix=(f"szsdlc set {ref} status={alternative}" if alternative
                  else gates[0].remedy),
             see=None if len(gates) == 1 else f"also: {gates[1].reason}",
         )
+    return overridden
 
 
-def move(entity: Entity, status: str) -> Transition:
+def move(entity: Entity, status: str, force: bool = False) -> Transition:
     """Check, then write. The single path a status may change through."""
-    check(entity, status)
+    forced = check(entity, status, force=force)
     before = entity.status
     entity.set_status(status)
-    return Transition(entity=entity.id.text, before=before, after=status)
+    return Transition(entity=entity.id.text, before=before, after=status,
+                      forced=forced)

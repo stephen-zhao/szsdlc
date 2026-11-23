@@ -29,6 +29,12 @@ When a transition is refused, the refusal names either the next legal status or
 the file to write. Both are the actual next action. Do not look for a way
 around a gate; the gate is the specification.
 
+`set <ref> status=<s> --force --reason "..."` makes a move the workflow does
+not list — stepping back, skipping ahead, reopening finished or dropped work.
+It is for **a person's decision**: use it only when the person asked for that
+move, and otherwise follow the refusal's `Fix:`. It never lifts a gate: forcing
+to `done` still needs every box ticked.
+
 ## 3. Author a relation on one side only
 
 `szsdlc link A implements B` writes the edge on A. The inverse

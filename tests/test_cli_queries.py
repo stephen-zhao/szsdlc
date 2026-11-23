@@ -189,7 +189,7 @@ def test_show_json_carries_the_declared_fields(run, world):
     asked for, which is the one copy of the file it should never need to read.
     """
     _, output, _ = run("show", "REQ-0001", "--json")
-    assert json.loads(output)["fields"] == {"opened": "2026-08-01"}
+    assert json.loads(output)["fields"] == {"forced_reason": None, "opened": "2026-08-01"}
 
 
 @pytest.fixture
@@ -215,7 +215,7 @@ def test_json_fields_carry_a_field_the_project_declared(typed, capsys):
 
     main(["-C", str(typed.root), "show", "REQ-0001", "--json"])
     assert json.loads(capsys.readouterr().out)["fields"] == {
-        "opened": "2026-08-01", "test_type": "unit"}
+        "forced_reason": None, "opened": "2026-08-01", "test_type": "unit"}
 
 
 def test_json_fields_hold_a_declared_field_nobody_filled_in(typed, capsys):
@@ -381,8 +381,8 @@ def test_json_is_exempt_from_the_limit(run, bulk):
 def test_list_json_carries_the_declared_fields(run, world):
     _, output, _ = run("list", "--type", "requirement", "--json")
     listed = {e["id"]: e["fields"] for e in json.loads(output)}
-    assert listed == {"REQ-0001": {"opened": "2026-08-01"},
-                      "REQ-0002": {"opened": "2026-08-01"}}
+    assert listed == {"REQ-0001": {"forced_reason": None, "opened": "2026-08-01"},
+                      "REQ-0002": {"forced_reason": None, "opened": "2026-08-01"}}
 
 
 def test_an_unknown_type_filter_lists_the_known_ones(run, world):
