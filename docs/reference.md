@@ -121,7 +121,7 @@ reports it as a gate disagreement until the artifacts are written:
 
 ```
 $ szsdlc new work_item --title "Old work" --status done
-WI-0031  work-items/WI-0031-old-work/entity.md  done; owes: 0/0 tasks complete, no unchecked
+WI-0031  work-items/WI-0031-old-work/entity.md  done; owes: plan.md is missing
 ```
 
 `sync` is not new and is not deprecated. Up to 0.2.4 it rendered *and*, on a

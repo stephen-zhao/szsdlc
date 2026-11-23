@@ -668,19 +668,23 @@ def cmd_new(args: argparse.Namespace) -> int:
 
 def _check_import_status(entity_type: Any, title: str, status: str) -> None:
     """Refuse a `new --status` this type cannot be created at."""
+    # Every value in a fix is quoted, and the title is passed so argparse can
+    # never read it as an option (`--title=…`, `-- text`): the fix is meant to
+    # be run as printed, whatever the caller typed.
+    quoted = shlex.quote(title if title.strip() else "<text>")
+    name = shlex.quote(entity_type.name)
     if entity_type.intake:
         raise BadInput(
             f"new: {entity_type.name} is an intake type; its status is written "
             f"by capture, refine and drop, never by --status.",
-            fix=f"szsdlc capture --type {entity_type.name} {shlex.quote(title)}",
+            fix=f"szsdlc capture --type {name} -- {quoted}",
         )
     workflow = entity_type.workflow
     if status not in workflow.states:
         terminal = workflow.completed_status or workflow.initial
         raise BadInput(
             f"new: {status!r} is not a status of {entity_type.name}.",
-            fix=f"szsdlc new {entity_type.name} --title {shlex.quote(title)} "
-                f"--status {terminal}",
+            fix=f"szsdlc new {name} --title={quoted} --status {shlex.quote(terminal)}",
             see=f"statuses: {', '.join(workflow.states)}",
         )
 

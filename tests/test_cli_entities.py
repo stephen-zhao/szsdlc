@@ -144,8 +144,8 @@ def test_new_with_a_gated_status_creates_and_names_what_is_owed(run, project):
     the line says what is missing, and validate holds it to it until written."""
     code, output, _ = run("new", "work_item", "--title", "Old work", "--status", "done")
     assert code == 0
-    assert output.strip().startswith(
-        "WI-0001  work-items/WI-0001-old-work/entity.md  done; owes: ")
+    assert output.strip() == (
+        "WI-0001  work-items/WI-0001-old-work/entity.md  done; owes: plan.md is missing")
     assert entities(project).by_text("WI-0001").status == "done"
 
     code, output, _ = run("validate")
@@ -167,8 +167,21 @@ def test_new_with_an_unknown_status_lists_the_workflow(run, project):
 def test_new_refuses_a_status_on_an_intake_type(run, project):
     code, _, err = run("new", "idea", "--title", "a thought", "--status", "refined")
     assert code == EXIT_BAD_INPUT
-    assert "szsdlc capture --type idea 'a thought'" in err
+    assert "szsdlc capture --type idea -- 'a thought'" in err
     assert not entities(project).by_text("IDEA-0001")
+
+
+@pytest.mark.parametrize("argv", [
+    ("new", "idea", "--title=-starts with a dash", "--status", "refined"),
+    ("new", "decision", "--title=-starts with a dash", "--status", "nope"),
+])
+def test_a_refusal_fix_runs_even_for_a_dash_prefixed_title(run, argv):
+    import shlex
+
+    _, _, err = run(*argv)
+    fix = err.splitlines()[1][len("Fix: "):]
+    code, _, err = run(*shlex.split(fix)[1:])
+    assert code == 0, err
 
 
 # ---------------------------------------------------------------------------
