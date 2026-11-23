@@ -82,7 +82,7 @@ output = "coverage.xml"
 # agreement with the package is asserted by tests/test_hooks.py, and this
 # block's own current_version.
 [tool.bumpversion]
-current_version = "0.2.11"
+current_version = "0.2.12"
 parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)"
 serialize = ["{major}.{minor}.{patch}"]
 search = "{current_version}"
