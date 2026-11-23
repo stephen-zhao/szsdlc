@@ -268,13 +268,6 @@ def test_dir_refuses_a_file(user, workdir, tmp_path):
         backend.project_root(workdir)
 
 
-def test_dir_shows_where_it_is(user, workdir, tmp_path, capsys):
-    write_settings(user, {"SZSDLC_BACKEND": "dir", f"{DIR}PATH": str(tmp_path / "d")})
-    assert run("backend") == 0
-    out = capsys.readouterr().out
-    assert "backend  dir" in out and "settings.json" in out and "not created yet" in out
-
-
 # ---------------------------------------------------------------------------
 # git: resolution
 # ---------------------------------------------------------------------------
@@ -333,18 +326,6 @@ def test_credentials_in_the_url_are_never_shown(url, shown):
     assert redact(url) == shown
 
 
-def test_backend_show_and_errors_redact_the_url(user, workdir, tmp_path, capsys):
-    url = "https://ghp_secret@127.0.0.1:9/t.git"
-    write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": url})
-    chosen = backend.resolve(workdir)
-    assert "ghp_secret" not in chosen.summary()
-    assert run("backend") == 0
-    assert "ghp_secret" not in capsys.readouterr().out
-    with pytest.raises(ConfigError) as caught:
-        backend.project_root(workdir)
-    assert "ghp_secret" not in caught.value.render()
-
-
 def test_a_restored_store_keeps_its_subdir(user, bare, workdir, capsys):
     write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": str(bare),
                           f"{GIT}SUBDIR": "projects/{project}"})
@@ -394,82 +375,6 @@ def test_a_command_that_changes_files_pushes_them(configured, bare, workdir, cap
     assert last_commit(bare) == "szsdlc: capture"
 
 
-def test_sync_does_what_it_has_always_done(configured, bare, workdir, capsys):
-    """`sync` renders **and** reaches the remote, as the command always did.
-
-    The word has named this since 0.2.4 and is not deprecated: an upgrade must
-    not change what an existing project's `szsdlc sync` does, and this is the
-    test that says so. `render` is the new name, for the local half alone.
-    """
-    run("init")
-    assert run("capture", "a thought the alias should send") == 0
-    idea = next((configured.store / "ideas").rglob("*.md"))
-    idea.write_text(idea.read_text() + "\nmarker-7a1b\n")
-    head = git("--git-dir", str(bare), "rev-parse", "main")
-    capsys.readouterr()
-
-    assert run("sync") == 0
-    captured = capsys.readouterr()
-    # It renders, and it reaches the remote — both, as it always did.
-    relative = idea.relative_to(configured.store).as_posix()
-    assert git("--git-dir", str(bare), "rev-parse", "main") != head
-    assert "marker-7a1b" in git("--git-dir", str(bare), "show", f"main:{relative}")
-    inbox = next(p for p in remote_files(bare) if p.endswith("inbox.md"))
-    assert "a thought the alias should send" in git(
-        "--git-dir", str(bare), "show", f"main:{inbox}")
-    # Silent on success, and in particular not deprecated.
-    assert captured.err == ""
-    assert "deprecated" not in captured.out
-
-
-def test_sync_on_the_workdir_backend_is_just_a_render(user, workdir, capsys):
-    """The other half of "unchanged", and the ordinary case.
-
-    On `workdir` there is nothing to bring into step, so a sync renders and
-    stops — exactly what `szsdlc sync` did in a working-tree project before
-    any of this.
-    """
-    assert run("init") == 0
-    assert run("capture", "a thought in the working tree") == 0
-    for view in Path(workdir).rglob("inbox.md"):
-        view.write_text("stale\n")  # as an interrupted turn leaves it
-    capsys.readouterr()
-
-    # A success, not a refusal: every project has a backend, so `szsdlc sync`
-    # works everywhere, and here the render is the whole of it.
-    assert run("sync", "--verbose") == 0
-    captured = capsys.readouterr()
-    assert captured.err == ""
-    inbox = next(Path(workdir).rglob("inbox.md"))
-    assert "a thought in the working tree" in inbox.read_text()
-
-
-def test_render_never_reaches_the_remote(configured, bare, workdir, capsys):
-    """`render` is the one command documented not to touch the network.
-
-    It writes generated files, so the post-command sync would happily commit
-    and push them — which would make "no network" false for the only command
-    that claims it. The rendered files wait for the next commit or sync.
-    """
-    run("init")
-    assert run("capture", "something to render a view for") == 0
-    # The capture has already been sent; this is the state `render` starts from.
-    head = git("--git-dir", str(bare), "rev-parse", "main")
-    # A source written straight into the store, so a redraw is genuinely owed
-    # and `render` has something of its own to write.
-    idea = next((configured.store / "ideas").rglob("*.md"))
-    idea.write_text(idea.read_text().replace("something to render a view for",
-                                             "a title only render can propagate"))
-
-    assert run("render") == 0
-    assert git("status", "--porcelain", cwd=configured.store) != ""  # written, not sent
-    assert git("--git-dir", str(bare), "rev-parse", "main") == head
-
-    # Not stranded: the next sync sends what render wrote.
-    assert run("sync") == 0
-    assert git("--git-dir", str(bare), "rev-parse", "main") != head
-
-
 def test_a_terminal_command_renders_before_it_sends(configured, bare, workdir, capsys):
     """A terminal command is its own commit boundary, so it renders first.
 
@@ -485,35 +390,11 @@ def test_a_terminal_command_renders_before_it_sends(configured, bare, workdir, c
         "--git-dir", str(bare), "show", f"main:{inbox}")
 
 
-def test_an_explicit_sync_renders_before_it_sends(configured, bare, workdir, capsys):
-    """Sending a stale view records a project as something it is not."""
-    run("init")
-    assert run("capture", "explicit backend sync") == 0
-    for view in configured.root.rglob("inbox.md"):
-        view.write_text("stale\n")
-
-    assert run("sync") == 0
-    inbox = next(p for p in remote_files(bare) if p.endswith("inbox.md"))
-    assert "explicit backend sync" in git("--git-dir", str(bare), "show", f"main:{inbox}")
-
-
 def test_a_read_only_command_makes_no_commit(configured, bare, workdir, capsys):
     run("init")
     head = git("--git-dir", str(bare), "rev-parse", "main")
     assert run("context") == 0
     assert git("--git-dir", str(bare), "rev-parse", "main") == head
-
-
-def test_an_explicit_sync_pulls_first(configured, bare, workdir, tmp_path, capsys):
-    run("init")
-    other = tmp_path / "other"
-    git("clone", "--quiet", str(bare), str(other))
-    (other / "theirs.md").write_text("x")
-    git("add", ".", cwd=other)
-    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "theirs", cwd=other)
-    git("push", "-q", "origin", "HEAD:main", cwd=other)
-    assert run("sync") == 0
-    assert (configured.store / "theirs.md").is_file()
 
 
 def test_a_missing_project_says_init(configured, workdir, capsys):
@@ -798,15 +679,6 @@ def test_a_whole_turn_is_one_commit(configured, bare, workdir, monkeypatch, caps
         assert "marker-9f3c" in git("--git-dir", str(bare), "show", f"main:{relative}")
 
 
-def test_an_explicit_sync_inside_a_turn_still_pushes(configured, bare, workdir,
-                                                     monkeypatch, capsys):
-    run("init")
-    monkeypatch.setenv("CLAUDECODE", "1")
-    (configured.store / "note.md").write_text("x")
-    assert run("sync") == 0
-    assert "note.md" in remote_files(bare)
-
-
 def test_a_sync_outside_a_clone_says_so(configured, workdir):
     report = backend.sync(configured, "x")  # never materialized
     assert not report.ok and "not a git clone" in report.problem
@@ -946,48 +818,6 @@ def test_prompt_hook_reports_a_failed_sync_into_context(configured, bare, workdi
     capsys.readouterr()
     hooks.dispatch("user-prompt-submit", io.StringIO(json.dumps({"cwd": str(workdir)})))
     assert "szsdlc sync" in capsys.readouterr().out
-
-
-def test_backend_show_names_every_source(configured, bare, user, workdir, capsys):
-    write_settings(workdir / ".claude" / "settings.local.json", {f"{GIT}BRANCH": "main"})
-    assert run("backend") == 0
-    rows = {line.split()[0]: line for line in capsys.readouterr().out.splitlines()}
-    assert rows["backend"].endswith(f"({user})")
-    assert rows["url"].endswith(f"{bare}  ({user})")
-    assert rows["branch"].endswith(f"main  ({workdir / '.claude' / 'settings.local.json'})")
-    assert rows["subdir"].endswith(".  (default)")
-
-
-def test_backend_show_defaults_to_workdir(workdir, capsys):
-    assert run("backend", "show") == 0
-    assert capsys.readouterr().out.strip() == "backend  workdir  (default)"
-
-
-def test_backend_show_inside_a_store_with_nothing_selected(configured, workdir,
-                                                           monkeypatch, capsys):
-    run("init")
-    monkeypatch.chdir(configured.store)
-    monkeypatch.setenv("SZSDLC_BACKEND", "workdir")
-    capsys.readouterr()
-    assert run("backend") == 0
-    assert "inside its store" in capsys.readouterr().out
-
-
-def test_an_explicit_sync_runs_on_demand(configured, bare, workdir, capsys):
-    run("init")
-    (configured.store / "note.md").write_text("x")
-    assert run("sync") == 0
-    assert "note.md" in remote_files(bare)
-
-
-def test_an_explicit_sync_reports_a_failure(configured, bare, workdir, capsys):
-    """Asked for directly, so answered honestly: a failure refuses. The same
-    failure under another command is a warning, because that command worked."""
-    run("init")
-    (configured.store / "note.md").write_text("x")
-    bare.rename(bare.parent / "gone.git")
-    assert run("sync") == 3
-    assert "could not reach" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -1138,20 +968,6 @@ def test_local_git_work_fits_inside_the_edit_hook():
     assert git_backend.LOCAL_TIMEOUT * 3 < post
 
 
-def test_an_explicit_sync_reaches_the_remote_once(configured, bare, workdir,
-                                                  monkeypatch, capsys):
-    from szsdlc.backend import git as git_backend
-
-    run("init")
-    run("sync")
-    calls = []
-    real = git_backend.GitBackend.sync
-    monkeypatch.setattr(git_backend.GitBackend, "sync",
-                        lambda self, reason: calls.append(reason) or real(self, reason))
-    assert run("sync") == 0
-    assert calls == ["sync"]
-
-
 def test_dash_c_to_another_project_reads_its_own_settings(isolated_settings, tmp_path,
                                                           monkeypatch):
     here = tmp_path / "here"
@@ -1256,12 +1072,6 @@ def test_credentials_in_git_errors_are_scrubbed_in_any_form():
         "fatal: unable to access 'https://***@host/x/': 403"
 
 
-def test_backend_show_never_prints_control_characters(user, workdir, capsys):
-    write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": "/srv/\x1b[2Jt.git"})
-    assert run("backend") == 0
-    assert "\x1b" not in capsys.readouterr().out
-
-
 def test_without_a_branch_sync_learns_the_remote_default(user, bare, workdir, tmp_path,
                                                          capsys):
     clone = tmp_path / "clone"
@@ -1342,120 +1152,6 @@ def test_a_redraw_that_fails_after_a_pull_is_said(configured, bare, workdir, tmp
 # ---------------------------------------------------------------------------
 # refresh — the latest becomes current, nothing is sent (WI-0047)
 # ---------------------------------------------------------------------------
-
-
-def _push_from_elsewhere(bare: Path, tmp_path: Path, name: str, text: str) -> None:
-    other = tmp_path / f"other-{name}"
-    git("clone", "--quiet", str(bare), str(other))
-    (other / name).write_text(text)
-    git("add", ".", cwd=other)
-    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", name, cwd=other)
-    git("push", "-q", "origin", "HEAD:main", cwd=other)
-
-
-def test_refresh_with_nothing_new_says_so_and_sends_nothing(configured, bare, workdir, capsys):
-    run("init")
-    head = git("--git-dir", str(bare), "rev-parse", "main")
-    capsys.readouterr()
-    assert run("refresh") == 0
-    assert capsys.readouterr().out == "refresh: nothing new\n"
-    assert git("--git-dir", str(bare), "rev-parse", "main") == head
-
-
-def test_refresh_takes_what_arrived_and_redraws(configured, bare, workdir, tmp_path, capsys):
-    run("init")
-    other = tmp_path / "other"
-    git("clone", "--quiet", str(bare), str(other))
-    ideas = other / "ideas"
-    ideas.mkdir(exist_ok=True)
-    (ideas / "index.md").write_text(
-        "## IDEA-0001 — from elsewhere\n\n---\nid: IDEA-0001\nstatus: inbox\n"
-        "captured: 2026-11-23\n---\n\nfrom elsewhere\n")
-    git("add", ".", cwd=other)
-    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "theirs", cwd=other)
-    git("push", "-q", "origin", "HEAD:main", cwd=other)
-    head = git("--git-dir", str(bare), "rev-parse", "main")
-    capsys.readouterr()
-
-    assert run("refresh") == 0
-    assert capsys.readouterr().out == "refresh: changes arrived\n"
-    assert (configured.store / "ideas" / "index.md").is_file()
-    inbox = next((configured.store / "views").glob("inbox.md")).read_text()
-    assert "from elsewhere" in inbox  # rendered after it arrived
-    assert git("--git-dir", str(bare), "rev-parse", "main") == head  # nothing sent
-
-
-@pytest.mark.parametrize("local", ["dirty", "unpushed"])
-def test_refresh_refuses_to_replace_local_state_without_force(configured, bare, workdir,
-                                                              tmp_path, capsys, local):
-    run("init")
-    _push_from_elsewhere(bare, tmp_path, "theirs.md", "theirs")
-    mine = configured.store / "mine.md"
-    mine.write_text("mine")
-    if local == "unpushed":
-        git("add", ".", cwd=configured.store)
-        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "mine",
-            cwd=configured.store)
-    capsys.readouterr()
-
-    assert run("refresh") == 3
-    err = capsys.readouterr().err
-    assert "would replace them" in err and "Fix: szsdlc refresh --force" in err
-    assert mine.read_text() == "mine"
-    assert not (configured.store / "theirs.md").exists()
-
-
-def test_refresh_force_replaces_and_keeps_what_it_replaced(configured, bare, workdir,
-                                                          tmp_path, capsys):
-    run("init")
-    _push_from_elsewhere(bare, tmp_path, "theirs.md", "theirs")
-    store = configured.store
-    (store / "committed.md").write_text("committed, never pushed")
-    git("add", ".", cwd=store)
-    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "local", cwd=store)
-    (store / "dirty.md").write_text("uncommitted")
-    head = git("--git-dir", str(bare), "rev-parse", "main")
-    capsys.readouterr()
-
-    assert run("refresh", "--force") == 0
-    out = capsys.readouterr().out
-    assert out.startswith("refresh: changes arrived; local state replaced (kept at refs/szsdlc/replaced/")
-    ref = out.split("kept at ")[1].rstrip(")\n")
-
-    assert (store / "theirs.md").is_file()
-    assert not (store / "committed.md").exists() and not (store / "dirty.md").exists()
-    assert git("rev-parse", "HEAD", cwd=store) == git("rev-parse", "origin/main", cwd=store)
-    # Kept, and recoverable from the named ref.
-    kept = git("ls-tree", "-r", "--name-only", ref, cwd=store).split()
-    assert "committed.md" in kept and "dirty.md" in kept
-    # Nothing was sent: neither the kept state nor its ref.
-    assert git("--git-dir", str(bare), "rev-parse", "main") == head
-    assert "replaced" not in git("--git-dir", str(bare), "for-each-ref")
-
-
-def test_refresh_from_an_unreachable_remote_replaces_nothing(configured, bare, workdir, capsys):
-    run("init")
-    mine = configured.store / "mine.md"
-    mine.write_text("mine")
-    shutil.rmtree(bare)
-    capsys.readouterr()
-    assert run("refresh", "--force") == 3
-    err = capsys.readouterr().err
-    assert "could not reach" in err and "nothing was replaced" in err
-    assert mine.read_text() == "mine"
-
-
-def test_refresh_on_workdir_and_dir_is_a_no_op(user, workdir, tmp_path, capsys):
-    run("init")
-    capsys.readouterr()
-    assert run("refresh") == 0
-    assert capsys.readouterr().out == "refresh: nothing new\n"
-
-    write_settings(user, {"SZSDLC_BACKEND": "dir", f"{DIR}PATH": str(tmp_path / "kept")})
-    run("init")
-    capsys.readouterr()
-    assert run("refresh") == 0
-    assert capsys.readouterr().out == "refresh: nothing new\n"
 
 
 def test_a_backend_without_refresh_is_a_problem_not_a_crash(tmp_path):

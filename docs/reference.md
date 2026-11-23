@@ -505,6 +505,22 @@ keep one each; `.gitignore` covers `.venv*/`. The Python floor is set by the
 *host* rather than by preference: plugin hooks invoke this CLI through the
 Windows Python, so the floor has to be whatever both sides can run.
 
+### Adding a command
+
+A new command is a module `src/szsdlc/_cli/<command>.py` with `add_parser(subparsers)` and
+`run(args)`, a line in `_cli/__init__.py`'s `COMMAND_MODULES` (registration order is help
+order), and a row in `COMMANDS` in `_cli/_parser.py`, which is the `--help` budget and is
+tested as a whole.
+
+### Where a test goes
+
+The test tree mirrors the source tree: the tests for `src/szsdlc/<path>/<module>.py` live
+in `tests/<path>/test_<module>.py`. A command's tests are in `tests/_cli/test_<command>.py`
+when they assert the command's own behaviour (its output, exit code, flags and refusals, or
+what it adds on top of the module it calls). A test that only uses a command to reach a
+module belongs with that module's tests. Calls used as setup never decide where a test lives.
+Fixtures the CLI's tests share are in `tests/_cli/conftest.py`.
+
 ### The file map
 
 | Path | Responsibility |
@@ -522,7 +538,8 @@ Windows Python, so the floor has to be whatever both sides can run.
 | `skills/roadmap/SKILL.md` | Propose horizon and sequence changes, apply via `schedule` |
 | `skills/trace/SKILL.md` | Answer "what satisfies REQ-x / where did WI-y come from" |
 | `bin/szsdlc`, `bin/szsdlc.cmd` | Cross-platform launchers resolving the interpreter |
-| `src/szsdlc/cli.py` | Argument parsing and dispatch |
+| `src/szsdlc/cli.py` | The public shim: the entry point, `python -m szsdlc.cli`, and the names other code imports |
+| `src/szsdlc/_cli/` | The commands, one module per command (a paired verb shares one: `tag`, `link`, `schedule`); `__init__.py` builds the parser and dispatches; shared helpers live in the `_` modules; `set_`, `next_` and `list_` end in an underscore so they cannot shadow the builtins |
 | `src/szsdlc/errors.py` | The single error channel: C2 shape, exit codes, and the project/model split |
 | `src/szsdlc/config.py` | Load/validate `.szsdlc/config.yml`, apply defaults |
 | `src/szsdlc/ids.py` | Id pattern, prefix/key registry, per-(type,key) counters, tombstone resolution |
@@ -540,7 +557,7 @@ Windows Python, so the floor has to be whatever both sides can run.
 | `src/szsdlc/schemas/*.schema.json` | Config, entity, roadmap, record schemas — **inside the package**, so they survive `pip install` |
 | `src/szsdlc/defaults/config.yml` | The six default entity types, relations, horizons and views, entirely as data |
 | `src/szsdlc/templates/` | Default entity, view, record templates (same packaging reason) |
-| `tests/` | pytest suite with fixture projects |
+| `tests/` | pytest suite with fixture projects, mirroring the source tree (below) |
 | `README.md`, `AGENTS.md` | Landing page (description + install) and agent entry point |
 | `docs/reference.md` | Model, command surface, configuration, hooks, development |
 

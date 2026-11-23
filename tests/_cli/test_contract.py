@@ -511,3 +511,57 @@ def test_output_survives_a_non_utf8_console(tmp_path, monkeypatch):
 
     assert code == 0, stderr.getvalue().decode("utf-8", "replace")
     assert "→" in stdout.getvalue().decode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# The surface itself
+# ---------------------------------------------------------------------------
+def test_help_is_compact(capsys):
+    """The audit budgets --help, and this is the block a mistyped command
+    would otherwise print. The number itself lives in test_contract.py, next
+    to the rest of the audit table it comes from."""
+
+    assert main(["--help"]) == 0
+    output = capsys.readouterr().out
+    assert len(output.splitlines()) <= HELP_BUDGET
+    assert "capture" in output and "refine" in output
+    # Every command reachable from the parser has a line here, except the
+    # hook entry point, which is invoked by hooks.json and never typed.
+    from szsdlc.cli import COMMANDS, HIDDEN_COMMANDS, build_parser
+
+    documented = {verb for invocation, _ in COMMANDS
+                  for verb in invocation.split()[0].split("|")}
+    registered = set(build_parser()._subparsers._group_actions[0].choices)
+    assert registered - HIDDEN_COMMANDS <= documented
+
+
+def test_no_arguments_prints_help_to_stderr_not_stdout(capsys):
+    assert main([]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "usage:" in captured.err
+
+
+def test_an_argparse_error_never_dumps_usage(capsys):
+    assert main(["refine", "IDEA-0001"]) == EXIT_BAD_INPUT
+    err = capsys.readouterr().err
+    assert len(err.strip().splitlines()) <= 3
+    assert "Fix: szsdlc refine --help" in err
+
+
+def test_running_outside_a_project_names_init(tmp_path, capsys):
+    from szsdlc.errors import EXIT_CONFIG
+
+    assert main(["-C", str(tmp_path), "inbox"]) == EXIT_CONFIG
+    assert "Fix: szsdlc init" in capsys.readouterr().err
+
+
+def test_no_traceback_ever_reaches_stderr(run, monkeypatch, capsys):
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("something internal went wrong")
+
+    monkeypatch.setattr("szsdlc._cli._session.Session", explode)
+    code, _, err = run("inbox")
+    assert code == 1
+    assert "Traceback" not in err
+    assert "Fix: " in err

@@ -249,13 +249,6 @@ def broken(project, write_entity):
     return project
 
 
-def test_sync_succeeds_against_a_broken_graph(run, broken):
-    """Views are most needed exactly when something is wrong."""
-    code, output, err = run("sync")
-    assert code == 0 and output == "" and err == ""
-    assert (broken.views_dir / "board.md").is_file()
-
-
 def test_a_dangling_reference_renders_visibly(broken):
     body = view_text(broken, "traceability")
     assert "REQ-0420 (missing)" in body
@@ -345,25 +338,6 @@ def test_completing_work_flips_coverage_without_touching_the_requirement(run, wo
         encoding="utf-8")
     assert "| REQ-0001 | approved | ✓ | ✓ |" in register_after
     assert fingerprint(world.dir_for("requirement")) == requirements_before
-
-
-def test_sync_is_silent_on_success_and_verbose_opts_in(run, world):
-    """C4 — this runs after every write and at every turn end."""
-    code, output, err = run("sync")
-    assert (code, output, err) == (0, "", "")
-
-    entity = load_all(world, IdSpace(world)).by_text("WI-0001")
-    entity.set_tags(["something-new"])
-    entity.save()
-    _, output, _ = run("sync", "--verbose")
-    assert "views/tag-index.md" in output
-
-
-def test_there_is_no_check_flag(run, world):
-    """Staleness is a validate rule; CI asks one question, not two."""
-    code, _, err = run("sync", "--check")
-    assert code != 0
-    assert "usage:" not in err
 
 
 # ---------------------------------------------------------------------------

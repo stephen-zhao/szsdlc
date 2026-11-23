@@ -17,6 +17,7 @@ from szsdlc.cli import main
 from szsdlc.errors import EXIT_BAD_INPUT, EXIT_REFUSED
 from szsdlc.ids import IdSpace
 from szsdlc.model import load_all
+from .conftest import entities
 
 TODAY = dt.date.today().isoformat()
 
@@ -352,3 +353,76 @@ def test_reopening_an_abandoned_entry_with_unrelated_names(lab):
     code, output, _ = run("set", "SPC-0001", "status=received", "--force",
                           "--reason", "vial was fine")
     assert code == 0 and output.startswith("SPC-0001: status discarded → received")
+
+
+def drive_to_done(run, project):
+    entity_dir = next(project.dir_for("work_item").glob("WI-0001-*"))
+    (entity_dir / "design.md").write_text("d\n", encoding="utf-8")
+    (entity_dir / "plan.md").write_text("- [x] one\n", encoding="utf-8")
+    for status in ("designing", "designed", "planning", "planned", "executing", "review"):
+        run("set", "WI-0001", f"status={status}")
+    return run("set", "WI-0001", "status=done")
+
+
+# ---------------------------------------------------------------------------
+# Reaching a terminal status takes an entity off the roadmap
+# ---------------------------------------------------------------------------
+
+
+def test_finishing_work_takes_it_off_the_roadmap(run, ready, project):
+    """Otherwise every close is two commands with a failure between them.
+
+    `validate` errors on a terminal entity still sitting on a roadmap, and the
+    `Stop` hook blocks on errors — so a session that finished a work item would
+    end by refusing to end.
+    """
+    run("schedule", "WI-0001", "--horizon", "now")
+    code, output, _ = drive_to_done(run, project)
+    assert code == 0
+    assert "off roadmap" in output
+
+    _, listing, _ = run("list", "--unscheduled")
+    assert "WI-0001" not in listing
+
+
+def test_the_removal_is_reported_on_the_same_line(run, ready, project):
+    # C1 — one line, the resulting state. Two lines would mean the caller has
+    # to parse which of them is the answer.
+    run("schedule", "WI-0001", "--horizon", "now")
+    _, output, _ = drive_to_done(run, project)
+    assert len(output.strip().splitlines()) == 1
+    assert output.startswith("WI-0001: status review → done; off roadmap")
+
+
+def test_an_unscheduled_entity_reaching_terminal_says_nothing_extra(run, ready,
+                                                                    project):
+    _, output, _ = drive_to_done(run, project)
+    assert output.strip() == "WI-0001: status review → done"
+
+
+def test_a_non_terminal_transition_leaves_placement_alone(run, ready):
+    run("schedule", "WI-0001", "--horizon", "now")
+    _, output, _ = run("set", "WI-0001", "status=designing")
+    assert "off" not in output
+    _, listing, _ = run("next")
+    assert "WI-0001" in listing
+
+
+def test_a_missing_artifact_says_write_it_not_go_backwards(run, seeded, project):
+    """The artifact gate's remedy beats any legal alternative transition.
+
+    A type whose review-ish state can legally return to an earlier one — the
+    shipped `review → executing` is one, and a wet-lab `analysing → running`
+    is another — would otherwise be told "go back" when what it needs is a
+    file written. That is the same bad advice as suggesting the caller abandon
+    the work, wearing a legal transition as a disguise.
+    """
+    entity = entities(project).by_text("WI-0001")
+    for status in ("groomed", "ready", "designing"):
+        run("set", "WI-0001", f"status={status}")
+
+    code, _, err = run("set", "WI-0001", "status=designed")
+    assert code == EXIT_REFUSED
+    assert "design.md is missing or empty" in err
+    assert "Fix: write " in err
+    assert "design.md" in err.split("Fix:", 1)[1]
