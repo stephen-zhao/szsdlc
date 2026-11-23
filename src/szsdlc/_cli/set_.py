@@ -5,8 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from ..ops import entities
-from . import _session
+from ..ops import Project, entities
 from ._output import out
 
 
@@ -29,7 +28,7 @@ def run(args: argparse.Namespace) -> int:
     # as `drop` does, and never defaulted.
     if args.force and args.reason is None and not sys.stdin.isatty():
         args.reason = sys.stdin.read()
-    changed = entities.set_(to_params(args), _session.Session(args.project))
+    changed = entities.set_(to_params(args), Project(args.project))
     reported: list[str] = []
     for change in changed.changes:
         line = f"{change.field} {change.before} → {change.after}"

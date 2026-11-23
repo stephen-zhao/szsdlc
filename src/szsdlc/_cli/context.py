@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import queries
-from . import _session
+from ..ops import Project, queries
 from ._output import emit_json, out
 
 
@@ -20,7 +19,7 @@ def to_params(args: argparse.Namespace) -> queries.ContextParams:
 
 
 def run(args: argparse.Namespace) -> int:
-    built = queries.context(to_params(args), _session.Session(args.project))
+    built = queries.context(to_params(args), Project(args.project))
     if args.as_json:
         emit_json({
             "counters": built.counters,

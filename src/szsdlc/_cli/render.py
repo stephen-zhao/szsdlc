@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import store
-from . import _session
+from ..ops import Project, store
 from ._output import out
 
 
@@ -27,7 +26,7 @@ def run(args: argparse.Namespace) -> int:
     C4 — silent on the happy path. This runs after every file write and at
     every turn end; output there has no consumer and would reach context.
     """
-    rendered = store.render(to_params(args), _session.Session(args.project))
+    rendered = store.render(to_params(args), Project(args.project))
     if args.verbose:
         for path in rendered.changed:
             out(path)

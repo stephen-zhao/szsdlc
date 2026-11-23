@@ -117,11 +117,11 @@ def _session(start: Path | str | None):
 
 def _load(start: Path | str | None):
     """(session, None), or (None, what went wrong as a short message)."""
-    from ._cli._session import Session
+    from .ops import Project
     from .errors import SzsdlcError
 
     try:
-        return Session(str(start) if start else None), None
+        return Project(str(start) if start else None), None
     except SzsdlcError as exc:
         return None, exc.render()
     except Exception as exc:  # pragma: no cover - defensive

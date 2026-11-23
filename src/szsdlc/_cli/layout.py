@@ -5,8 +5,7 @@ from __future__ import annotations
 import argparse
 
 from ..config import LAYOUTS
-from ..ops import entities
-from . import _session
+from ..ops import Project, entities
 from ._output import out
 
 
@@ -22,6 +21,6 @@ def to_params(args: argparse.Namespace) -> entities.LayoutParams:
 
 
 def run(args: argparse.Namespace) -> int:
-    laid = entities.layout(to_params(args), _session.Session(args.project))
+    laid = entities.layout(to_params(args), Project(args.project))
     out(f"{laid.id}  ({laid.before} → {laid.after}) {laid.path}")
     return 0

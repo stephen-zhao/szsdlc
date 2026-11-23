@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import entities
-from . import _session
+from ..ops import Project, entities
 from ._output import out
 
 
@@ -21,7 +20,7 @@ def to_params(args: argparse.Namespace) -> entities.ConvertParams:
 
 
 def run(args: argparse.Namespace) -> int:
-    converted = entities.convert(to_params(args), _session.Session(args.project))
+    converted = entities.convert(to_params(args), Project(args.project))
     out(f"{converted.id}  ({converted.was} → {converted.id}, status {converted.status})")
     out(f"{converted.was} is tombstoned; existing references still resolve.")
     return 0

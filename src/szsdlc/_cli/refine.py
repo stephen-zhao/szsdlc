@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import entities
-from . import _session
+from ..ops import Project, entities
 from ._output import out
 
 
@@ -22,7 +21,7 @@ def to_params(args: argparse.Namespace) -> entities.RefineParams:
 
 
 def run(args: argparse.Namespace) -> int:
-    refined = entities.refine(to_params(args), _session.Session(args.project))
+    refined = entities.refine(to_params(args), Project(args.project))
     # C1 — the resulting state, so no confirming `show` is ever needed.
     out(f"{refined.id}  ({refined.source}: {refined.before} → {refined.after})")
     return 0

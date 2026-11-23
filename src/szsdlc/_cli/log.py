@@ -5,8 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from ..ops import entities
-from . import _session
+from ..ops import Project, entities
 
 
 def add_parser(subparsers) -> None:
@@ -23,6 +22,6 @@ def to_params(args: argparse.Namespace) -> entities.LogParams:
 def run(args: argparse.Namespace) -> int:
     if args.message is None and not sys.stdin.isatty():
         args.message = sys.stdin.read()
-    entities.log(to_params(args), _session.Session(args.project))
+    entities.log(to_params(args), Project(args.project))
     # C4 — the audit budgets this at zero lines. It runs constantly.
     return 0

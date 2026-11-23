@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import entities
-from . import _session
+from ..ops import Project, entities
 from ._output import out
 
 
@@ -24,7 +23,7 @@ def to_params(args: argparse.Namespace) -> entities.NewParams:
 def run(args: argparse.Namespace) -> int:
     """`--status` is the import path for existing history: checked against the
     workflow, not its entry gates, and the line names what is owed (C1)."""
-    made = entities.new(to_params(args), _session.Session(args.project))
+    made = entities.new(to_params(args), Project(args.project))
     line = f"{made.id}  {made.path}"
     if made.imported:
         line += f"  {made.status}" + (f"; owes: {'; '.join(made.owes)}" if made.owes else "")

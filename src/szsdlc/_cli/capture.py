@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import entities
-from . import _session
+from ..ops import Project, entities
 from ._input import read_text_input
 from ._output import out
 
@@ -23,7 +22,7 @@ def to_params(args: argparse.Namespace) -> entities.CaptureParams:
 
 
 def run(args: argparse.Namespace) -> int:
-    session = _session.Session(args.project)
+    session = Project(args.project)
     session.intake_type(args.type_name)  # refused before anything is read
     args.text = read_text_input(args.text)
     captured = entities.capture(to_params(args), session)

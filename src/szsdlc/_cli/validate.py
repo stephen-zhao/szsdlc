@@ -5,8 +5,7 @@ from __future__ import annotations
 import argparse
 
 from ..errors import EXIT_INVALID
-from ..ops import queries
-from . import _session
+from ..ops import Project, queries
 from ._output import bound_note, emit_json, out
 from ._parser import DEFAULT_LIMIT
 
@@ -28,7 +27,7 @@ def run(args: argparse.Namespace) -> int:
     a turn, this runs once at the end and strictly.
     """
     params = to_params(args)
-    found = queries.validate(params, _session.Session(args.project))
+    found = queries.validate(params, Project(args.project))
     if args.as_json:
         emit_json([{"level": f.level, "kind": f.kind, "ref": f.ref,
                     "message": f.message, "fix": f.fix} for f in found.rows])

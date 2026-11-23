@@ -579,7 +579,7 @@ A new command is an operation first:
   - `add_parser(subparsers)`, whose `set_defaults` names the `op` and its
     `to_params`;
   - `to_params(args)`, from the namespace to the params;
-  - `run(args)`, which loads the `Session`, calls the operation and prints
+  - `run(args)`, which loads the `Project`, calls the operation and prints
     the result.
 - **Registration:** a line in `_cli/__init__.py`'s `COMMAND_MODULES`
   (registration order is help order), and a row in `COMMANDS` in

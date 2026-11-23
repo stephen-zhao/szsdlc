@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import queries
+from ..ops import Project, queries
 from ..text import clip
-from . import _session
 from ._output import bound_note, emit_json, id_width, out
 from ._parser import DEFAULT_LIMIT
 
@@ -24,7 +23,7 @@ def to_params(args: argparse.Namespace) -> queries.InboxParams:
 
 def run(args: argparse.Namespace) -> int:
     params = to_params(args)
-    found = queries.inbox(params, _session.Session(args.project))
+    found = queries.inbox(params, Project(args.project))
     if args.as_json:
         emit_json([{"id": r.id, "status": r.status, "age_days": r.age_days,
                     "title": r.title} for r in found.rows])

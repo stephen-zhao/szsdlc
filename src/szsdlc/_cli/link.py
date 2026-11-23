@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import entities
-from . import _session
+from ..ops import Project, entities
 from ._output import out
 
 
@@ -23,7 +22,7 @@ def to_params(args: argparse.Namespace) -> entities.LinkParams:
 
 
 def run_link(args: argparse.Namespace) -> int:
-    linked = entities.link(to_params(args), _session.Session(args.project))
+    linked = entities.link(to_params(args), Project(args.project))
     # C1 — and the generated inverse, so the back-link never has to be looked up.
     out(f"{linked.id} {linked.relation} {linked.target}  "
         f"({linked.target} {linked.inverse} {linked.id})")
@@ -31,6 +30,6 @@ def run_link(args: argparse.Namespace) -> int:
 
 
 def run_unlink(args: argparse.Namespace) -> int:
-    unlinked = entities.unlink(to_params(args), _session.Session(args.project))
+    unlinked = entities.unlink(to_params(args), Project(args.project))
     out(f"{unlinked.id} {unlinked.relation}: {', '.join(unlinked.remaining) or '(none)'}")
     return 0

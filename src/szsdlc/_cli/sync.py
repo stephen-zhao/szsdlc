@@ -6,8 +6,8 @@ import argparse
 
 from .. import backend as backend_module
 from ..errors import Refused, SzsdlcError
-from ..ops import store
-from . import _session, _sync
+from ..ops import Project, store
+from . import _sync
 from ._output import out
 
 
@@ -33,7 +33,7 @@ def run(args: argparse.Namespace) -> int:
     refuses: it was asked for by name.
     """
     backend_module.project_root(args.project)  # create the store if needed
-    rendered = store.render(store.RenderParams(), _session.Session(args.project))
+    rendered = store.render(store.RenderParams(), Project(args.project))
     if args.verbose:
         for path in rendered.changed:
             out(path)

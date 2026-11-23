@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import entities
-from . import _session
+from ..ops import Project, entities
 from ._output import out
 
 
@@ -22,7 +21,7 @@ def to_params(args: argparse.Namespace) -> entities.TagParams:
 
 
 def _apply(args: argparse.Namespace, operation) -> int:
-    tagged = operation(to_params(args), _session.Session(args.project))
+    tagged = operation(to_params(args), Project(args.project))
     out(f"{tagged.id}: {', '.join(tagged.tags) or '(no tags)'}")
     return 0
 

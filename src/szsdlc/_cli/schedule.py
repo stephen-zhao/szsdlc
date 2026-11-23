@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import entities
+from ..ops import Project, entities
 from ..roadmap import Placement
-from . import _session
 from ._output import out
 
 
@@ -37,13 +36,13 @@ def to_unschedule_params(args: argparse.Namespace) -> entities.UnscheduleParams:
 
 
 def run_schedule(args: argparse.Namespace) -> int:
-    placed = entities.schedule(to_schedule_params(args), _session.Session(args.project))
+    placed = entities.schedule(to_schedule_params(args), Project(args.project))
     out(str(Placement(placed.entity, placed.roadmap, placed.horizon, placed.index,
                       placed.after, placed.before)))
     return 0
 
 
 def run_unschedule(args: argparse.Namespace) -> int:
-    off = entities.unschedule(to_unschedule_params(args), _session.Session(args.project))
+    off = entities.unschedule(to_unschedule_params(args), Project(args.project))
     out(f"{off.id}: off {off.roadmap}")
     return 0

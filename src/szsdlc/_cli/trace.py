@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import queries
-from . import _session
+from ..ops import Project, queries
 from ._output import bound_note, emit_json, out
 from ._parser import DEFAULT_LIMIT
 
@@ -26,7 +25,7 @@ def to_params(args: argparse.Namespace) -> queries.TraceParams:
 
 def run(args: argparse.Namespace) -> int:
     params = to_params(args)
-    traced = queries.trace(params, _session.Session(args.project))
+    traced = queries.trace(params, Project(args.project))
     if args.as_json:
         emit_json([{"source": r.source, "relation": r.relation, "target": r.target}
                    for r in traced.rows])

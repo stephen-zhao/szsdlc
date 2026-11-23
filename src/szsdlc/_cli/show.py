@@ -5,8 +5,7 @@ from __future__ import annotations
 import argparse
 
 from ..frontmatter import jsonify
-from ..ops import queries
-from . import _session
+from ..ops import Project, queries
 from ._output import emit_json, out
 
 
@@ -23,7 +22,7 @@ def to_params(args: argparse.Namespace) -> queries.ShowParams:
 
 
 def run(args: argparse.Namespace) -> int:
-    shown = queries.show(to_params(args), _session.Session(args.project))
+    shown = queries.show(to_params(args), Project(args.project))
     if args.with_context:
         out(shown.bundle)
         return 0

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import queries
+from ..ops import Project, queries
 from ..text import clip
-from . import _session
 from ._output import bound_note, emit_json, id_width, out
 from ._parser import NEXT_LIMIT
 
@@ -28,7 +27,7 @@ def to_params(args: argparse.Namespace) -> queries.NextParams:
 
 def run(args: argparse.Namespace) -> int:
     params = to_params(args)
-    found = queries.next_(params, _session.Session(args.project))
+    found = queries.next_(params, Project(args.project))
     if args.as_json:
         emit_json([{"id": r.id, "status": r.status, "title": r.title,
                     "scheduled": r.scheduled} for r in found.rows])
