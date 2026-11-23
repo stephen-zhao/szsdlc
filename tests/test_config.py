@@ -117,7 +117,9 @@ def test_workflow_helpers():
     # it must answer, not raise.
     assert not wf.is_terminal("banana")
     assert wf.states["done"].requires_tasks_complete
-    assert wf.states["planned"].requires_artifact == ("design.md",)
+    assert wf.states["designed"].requires_artifact == ("design.md",)
+    assert wf.states["planned"].requires_artifact == ("plan.md",)
+    assert wf.can_move("ready", "planning")  # design is optional
 
 
 # ---------------------------------------------------------------------------

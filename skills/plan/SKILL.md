@@ -40,11 +40,9 @@ parent, rather than planning a month in one file.
 
 ## Finishing
 
-```bash
-szsdlc set WI-0042 status=executing
-```
+Start with `status=planning`, from `ready` when no design is needed.
 
-Refused until the plan artifact exists. The progress reported everywhere
-else is counted from these boxes, so the plan is now a live document: work
-it with `/szsdlc:execute`, and edit it when reality disagrees rather than
-ticking a box that did not happen.
+`szsdlc set WI-0042 status=planned` is refused until `plan.md` exists; then
+`executing`. Progress everywhere is counted from these boxes, so the plan is a
+live document: work it with `/szsdlc:execute`, and edit it when reality
+disagrees rather than ticking a box that did not happen.

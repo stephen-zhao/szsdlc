@@ -251,7 +251,7 @@ def test_an_accepted_decision_is_superseded_rather_than_rejected(run, project):
 def test_the_artifact_gate_names_the_file_to_write(run, seeded):
     for status in ("groomed", "ready", "designing"):
         run("set", "WI-0001", f"status={status}")
-    code, _, err = run("set", "WI-0001", "status=planned")
+    code, _, err = run("set", "WI-0001", "status=designed")
     assert code == EXIT_REFUSED
     assert "design.md is missing or empty" in err
     # The only forward move from `designing` is the blocked one, so the fix is
@@ -266,7 +266,7 @@ def test_the_task_gate_offers_the_move_that_is_available(run, seeded, project):
     entity = entities(project).by_text("WI-0001")
     (entity.home / "design.md").write_text("a design\n", encoding="utf-8")
     (entity.home / "plan.md").write_text("- [x] one\n- [ ] two\n", encoding="utf-8")
-    for status in ("groomed", "ready", "designing", "planned", "executing", "review"):
+    for status in ("groomed", "ready", "designing", "designed", "planning", "planned", "executing", "review"):
         run("set", "WI-0001", f"status={status}")
 
     code, _, err = run("set", "WI-0001", "status=done")
@@ -280,7 +280,7 @@ def test_the_gate_passes_once_every_box_is_ticked(run, seeded, project):
     entity = entities(project).by_text("WI-0001")
     (entity.home / "design.md").write_text("a design\n", encoding="utf-8")
     (entity.home / "plan.md").write_text("- [x] one\n- [x] two\n", encoding="utf-8")
-    for status in ("groomed", "ready", "designing", "planned", "executing", "review"):
+    for status in ("groomed", "ready", "designing", "designed", "planning", "planned", "executing", "review"):
         run("set", "WI-0001", f"status={status}")
     assert run("set", "WI-0001", "status=done")[0] == 0
 
@@ -290,7 +290,7 @@ def test_an_empty_artifact_does_not_satisfy_a_gate(run, seeded, project):
     (entity.home / "design.md").write_text("", encoding="utf-8")
     for status in ("groomed", "ready", "designing"):
         run("set", "WI-0001", f"status={status}")
-    assert run("set", "WI-0001", "status=planned")[0] == EXIT_REFUSED
+    assert run("set", "WI-0001", "status=designed")[0] == EXIT_REFUSED
 
 
 @pytest.mark.parametrize("field,fix", [
@@ -682,7 +682,7 @@ def drive_to_done(run, project):
     entity_dir = next(project.dir_for("work_item").glob("WI-0001-*"))
     (entity_dir / "design.md").write_text("d\n", encoding="utf-8")
     (entity_dir / "plan.md").write_text("- [x] one\n", encoding="utf-8")
-    for status in ("designing", "planned", "executing", "review"):
+    for status in ("designing", "designed", "planning", "planned", "executing", "review"):
         run("set", "WI-0001", f"status={status}")
     return run("set", "WI-0001", "status=done")
 
@@ -739,7 +739,7 @@ def test_a_missing_artifact_says_write_it_not_go_backwards(run, seeded, project)
     for status in ("groomed", "ready", "designing"):
         run("set", "WI-0001", f"status={status}")
 
-    code, _, err = run("set", "WI-0001", "status=planned")
+    code, _, err = run("set", "WI-0001", "status=designed")
     assert code == EXIT_REFUSED
     assert "design.md is missing or empty" in err
     assert "Fix: write " in err

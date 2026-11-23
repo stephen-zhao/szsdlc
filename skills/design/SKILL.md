@@ -43,5 +43,5 @@ buried in one work item's design. Use `/szsdlc:decide`, then
 
 ## Finishing
 
-`szsdlc set WI-0042 status=planned`, refused until the design artifact
-exists. Then `/szsdlc:plan`.
+`szsdlc set WI-0042 status=designed`, refused until the design artifact
+exists. Then `/szsdlc:plan`. Work that needs no design skips this skill.

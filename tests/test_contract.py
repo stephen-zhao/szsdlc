@@ -109,7 +109,7 @@ def gate_ready(config, invoke):
     entity_dir = next(config.dir_for("work_item").glob("WI-0002-*"))
     (entity_dir / "design.md").write_text("a design\n", encoding="utf-8")
     (entity_dir / "plan.md").write_text("- [x] one\n- [ ] two\n", encoding="utf-8")
-    for status in ("designing", "planned", "executing", "review"):
+    for status in ("designing", "designed", "planning", "planned", "executing", "review"):
         invoke(root, "set", "WI-0002", f"status={status}")
 
 
@@ -130,7 +130,7 @@ ERROR_CASES = [
     ("illegal-transition", None, ("set", "WI-0001", "status=done"), EXIT_REFUSED),
     ("unknown-status", None, ("set", "WI-0001", "status=marinating"), EXIT_REFUSED),
     ("already-in-status", None, ("set", "WI-0001", "status=idea"), EXIT_REFUSED),
-    ("gate-artifact", gate_designing, ("set", "WI-0002", "status=planned"), EXIT_REFUSED),
+    ("gate-artifact", gate_designing, ("set", "WI-0002", "status=designed"), EXIT_REFUSED),
     ("gate-tasks", gate_ready, ("set", "WI-0002", "status=done"), EXIT_REFUSED),
     ("set-relations", None, ("set", "WI-0001", "relations=x"), EXIT_BAD_INPUT),
     ("set-tags", None, ("set", "WI-0001", "tags=x"), EXIT_BAD_INPUT),
