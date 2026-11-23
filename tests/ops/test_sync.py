@@ -34,3 +34,15 @@ def test_sync_redraws_what_arrived(root, monkeypatch):
                         lambda start, reason, **k: reasons.append(reason) or next(reports))
     assert ops.call("sync", {}, root).incoming
     assert reasons == ["sync", "redraw after sync"]
+
+
+def test_a_filesystem_failure_refuses_and_keeps_the_changes(root, monkeypatch):
+    from szsdlc.errors import Refused
+
+    def broken(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("szsdlc.sync.backend_module.sync_at", broken)
+    with pytest.raises(Refused, match="disk full; changes are kept locally") as refused:
+        ops.call("sync", {}, root)
+    assert ops.refusal_to_data(refused.value)["fix"] == {"op": "sync", "params": {}}

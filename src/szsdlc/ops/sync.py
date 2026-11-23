@@ -26,13 +26,12 @@ class SyncResult(Data):
     outgoing: bool = False
 
 
-def send(where: str | None, reason: str = "sync"):
+def _send(where: str | None, reason: str = "sync"):
     """The legs of a sync that reach the backend, after the render.
 
     What arrives is drawn by a second pass, because views cannot be rendered
     from entities that have not arrived yet. Returns the backend's report, or
-    None when there was nothing to do. The CLI's `sync` calls this after its
-    own render, so it can report the draw before anything is sent.
+    None when there was nothing to do.
     """
     from .. import sync as sync_module
 
@@ -52,7 +51,8 @@ def sync(params: SyncParams, where: str | None) -> SyncResult:
     """Render, then bring the project into step with where it is kept.
 
     Explicitly asked for, so a failure refuses, where the sync after another
-    command only warns. `sync` stays explicit: a turn is the caller's to
+    command only warns: a backend that reports a problem, and one that fails
+    on the filesystem. Either way the changes stay local, to send next time. `sync` stays explicit: a turn is the caller's to
     define, and REQ-0014's one record per turn holds by the caller syncing
     once per turn.
     """
@@ -60,7 +60,10 @@ def sync(params: SyncParams, where: str | None) -> SyncResult:
 
     backend_module.project_root(where)  # create the store if needed
     rendered = render(RenderParams(), Project(where))
-    report = send(where)
+    try:
+        report = _send(where)
+    except OSError as exc:
+        raise Refused(f"sync: {exc}; changes are kept locally.", fix="szsdlc sync") from exc
     if report is not None and not report.ok:
         raise Refused(report.problem, fix=report.fix)
     return SyncResult(rendered.changed, bool(report and report.incoming),
