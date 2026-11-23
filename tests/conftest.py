@@ -38,6 +38,10 @@ def clean_environment(tmp_path_factory):
     """
     with pytest.MonkeyPatch.context() as patch:
         _isolate(patch, tmp_path_factory.mktemp("claude-config-session"))
+        # Out of the checkout: its own `.claude/settings.json` selects the git
+        # backend for szsdlc's tracking, and project settings are found by
+        # walking up from the working directory.
+        patch.chdir(tmp_path_factory.mktemp("cwd"))
         yield
 
 
