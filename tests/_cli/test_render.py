@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from szsdlc.cli import main
 
-from test_backend import GIT, bare, configured, git, run, user, workdir, write_settings
+from backend.conftest import GIT, bare, configured, git, run, user, workdir, write_settings
 from test_hooks import seeded
 
 

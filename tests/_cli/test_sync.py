@@ -8,7 +8,7 @@ from szsdlc import backend
 from szsdlc.ids import IdSpace
 from szsdlc.model import load_all
 
-from test_backend import GIT, bare, configured, git, remote_files, run, user, workdir, write_settings
+from backend.conftest import GIT, bare, configured, git, remote_files, run, user, workdir, write_settings
 from test_render import broken, world
 
 

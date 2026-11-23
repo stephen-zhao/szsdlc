@@ -7,7 +7,7 @@ import pytest
 from szsdlc import backend
 from szsdlc.errors import ConfigError
 
-from test_backend import DIR, GIT, bare, configured, git, run, user, workdir, write_settings
+from backend.conftest import DIR, GIT, bare, configured, git, run, user, workdir, write_settings
 
 
 # ---------------------------------------------------------------------------
