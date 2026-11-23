@@ -405,6 +405,70 @@ class GitBackend:
             self._deadline = None
         return report
 
+    def refresh(self) -> SyncReport:
+        """Fetch, then make `origin/<branch>` the current state exactly.
+
+        Nothing is committed for sending, rebased or pushed. Whatever differed
+        from the remote — uncommitted changes and commits never pushed — is
+        kept first: committed in the clone and pointed at by
+        `refs/szsdlc/replaced/<UTC time>-<commit>`, a ref outside `refs/heads` and
+        `refs/tags`, so no push sends it and no branch list shows it. The
+        report's `note` names it, so recovering is one `git log` away.
+        """
+        report = SyncReport()
+        if not (self.store / ".git").exists():
+            report.problem = f"{self.store} is not a git clone."
+            report.fix = "remove it; the next szsdlc command clones it again"
+            return report
+        self._deadline = time.monotonic() + SYNC_BUDGET
+        try:
+            if not self.branch and not self._remote_default():
+                self._git("remote", "set-head", "origin", "--auto", check=False)
+            self._verify_clone()
+            branch = self._branch()
+            try:
+                self._git("fetch", "--quiet", "origin")
+            except GitError as exc:
+                report.problem = (f"could not reach {redact(self.url)} ({self._redacted(exc)}); "
+                                  "nothing was replaced.")
+                report.fix = f"git -C {self.store} fetch origin"
+                return report
+            upstream = f"refs/remotes/origin/{branch}"
+            if not self._ok("rev-parse", "--verify", "--quiet", upstream):
+                return report  # the remote has no such branch: nothing to refresh to
+
+            dirty = bool(self._git("status", "--porcelain", check=False,
+                                   timeout=LOCAL_TIMEOUT).stdout.strip())
+            ahead = self._ahead(branch)
+            before = self._git("rev-parse", "--verify", "--quiet", "HEAD", check=False,
+                               timeout=LOCAL_TIMEOUT).stdout.strip()
+            if dirty or ahead:
+                if dirty:
+                    self._git("add", "--all", timeout=LOCAL_TIMEOUT)
+                    self._git("commit", "--quiet", "--no-verify", "-m",
+                              "szsdlc: kept by refresh", identity=True, timeout=LOCAL_TIMEOUT)
+                kept = self._git("rev-parse", "--short=8", "HEAD",
+                                 timeout=LOCAL_TIMEOUT).stdout.strip()
+                ref = ("refs/szsdlc/replaced/"
+                       + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()) + f"-{kept}")
+                self._git("update-ref", ref, "HEAD", timeout=LOCAL_TIMEOUT)
+                report.replaced = True
+                report.note = f"kept at {ref}"
+            self._git("checkout", "--quiet", "-B", branch, upstream, timeout=LOCAL_TIMEOUT)
+            self._git("reset", "--quiet", "--hard", upstream, timeout=LOCAL_TIMEOUT)
+            after = self._git("rev-parse", "HEAD", timeout=LOCAL_TIMEOUT).stdout.strip()
+            report.incoming = dirty or before != after
+            if report.incoming:
+                self._refuse_escape()
+        except ConfigError as exc:
+            report.problem, report.fix = exc.problem, exc.fix
+        except GitError as exc:
+            report.problem = self._redacted(exc)
+            report.fix = f"git -C {self.store} status"
+        finally:
+            self._deadline = None
+        return report
+
     def _abort_rebase(self) -> None:
         git_dir = self.store / ".git"
         if (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists():

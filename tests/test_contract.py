@@ -311,7 +311,10 @@ def test_a_mutation_reports_its_result_within_budget(tmp_path, invoke, argv, bud
 #: `sync` was split into `render`, `commit` and `sync`: three operations that
 #: differ in whether they touch the network cannot share one line, and two
 #: lines of help are cheaper than an agent guessing which one reaches a remote.
-HELP_BUDGET = 29
+#: Back to 29 when `commit` was withdrawn. Raised to 30 for `refresh` (WI-0047):
+#: the one operation that takes the latest without sending anything is the
+#: opposite of `sync` in the way that matters, so it cannot share its line.
+HELP_BUDGET = 30
 
 #: (argv, max lines). The audit table in REQ-0012 (szsdlc-szsdlc) is the specification;
 #: a command that outgrows its budget fails here.
