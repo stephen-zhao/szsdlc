@@ -800,7 +800,7 @@ def _reopen_notes(session: Session, entity: Entity) -> list[str]:
                      f"--horizon {spec.horizons[0]}{named}")
 
     graph = _graph(session)
-    blocked = [d.id.text for d in graph.sources(entity, "depends_on")
+    blocked = [d.id.text for d in graph.sources(entity, DEPENDENCY_RELATION)
                if not d.is_terminal]
     if blocked:
         notes.append(f"blocks again: {', '.join(blocked)}")
@@ -1226,6 +1226,11 @@ def _roadmap_order(roadmaps: dict, horizon: str | None) -> dict[str, int]:
     return order
 
 
+#: The relation whose targets must be terminal before work is actionable.
+#: Named once, so `next` and the reopen report cannot disagree about it.
+DEPENDENCY_RELATION = "depends_on"
+
+
 def _blocked(session: Session, graph, entity: Entity) -> bool:
     """True while any dependency has not reached a terminal status.
 
@@ -1233,7 +1238,7 @@ def _blocked(session: Session, graph, entity: Entity) -> bool:
     out. An unresolvable dependency does not block — it is a validate finding,
     and treating a typo as a blocker would hide the queue rather than the typo.
     """
-    for target in graph.targets(entity.id, "depends_on"):
+    for target in graph.targets(entity.id, DEPENDENCY_RELATION):
         if not target.resolved:
             continue
         dependency = session.store.get(target.entity_id)

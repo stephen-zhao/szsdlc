@@ -226,7 +226,10 @@ def check(entity: Entity, status: str, force: bool = False) -> bool:
 
     gates = unmet_gates(entity, status)
     if gates:
-        alternative = None if gates[0].prefer_remedy else _alternative(entity, status)
+        # Under --force the caller has already said where the work goes, so
+        # "move somewhere else instead" is not a fix; only the gate's remedy is.
+        alternative = (None if gates[0].prefer_remedy or overridden
+                       else _alternative(entity, status))
         raise Refused(
             f"{ref}: status {entity.status} → {status} blocked, {gates[0].reason}.",
             fix=(f"szsdlc set {ref} status={alternative}" if alternative

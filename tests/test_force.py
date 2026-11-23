@@ -164,6 +164,9 @@ def test_forcing_to_done_still_needs_every_task_ticked(run, item):
     (home / "plan.md").write_text("- [x] one\n- [ ] two\n", encoding="utf-8")
     code, _, err = run("set", "WI-0001", "status=done", "--force", "--reason", "x")
     assert code == EXIT_REFUSED and "1 unchecked" in err
+    # The caller already chose where the work goes: the fix is the gate's
+    # remedy, never "move somewhere else instead".
+    assert "Fix: tick the remaining boxes in plan.md" in err
 
 
 def test_an_unknown_target_and_the_current_status_are_still_refused(run, item):
