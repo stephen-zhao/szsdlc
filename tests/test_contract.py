@@ -166,6 +166,10 @@ ERROR_CASES = [
      EXIT_BAD_INPUT),
     ("standards-no-paths", None, ("standards", "match"), EXIT_BAD_INPUT),
     ("unknown-type", None, ("new", "ticket", "--title", "T"), EXIT_CONFIG),
+    ("new-unknown-status", None,
+     ("new", "decision", "--title", "Use TLS", "--status", "nope"), EXIT_BAD_INPUT),
+    ("new-intake-status", None,
+     ("new", "idea", "--title", "a thought", "--status", "refined"), EXIT_BAD_INPUT),
     ("set-force-no-reason", None, ("set", "WI-0002", "status=groomed", "--force"),
      EXIT_BAD_INPUT),
     ("set-force-no-status", None,
@@ -263,6 +267,7 @@ def test_a_model_invariant_breach_is_a_bug_not_a_finding(tmp_path, invoke, monke
 MUTATIONS = [
     (("capture", "a thought"), 1),
     (("new", "spike", "--title", "Investigate"), 1),
+    (("new", "work_item", "--title", "Imported", "--status", "done"), 1),
     (("set", "WI-0001", "status=groomed"), 1),
     (("set", "WI-0002", "status=groomed", "--force", "--reason", "not next"), 1),
     (("tag", "WI-0001", "dns"), 1),

@@ -86,7 +86,7 @@ capture [text]          capture an idea from an argument, stdin or $EDITOR
 refine <ref> --into T   spawn a typed entity from an idea
 inbox                   unrefined ideas, oldest first
 drop <ref> --reason ..  close an idea that went nowhere, with a reason
-new <TYPE> --title ..   create a typed entity directly
+new <TYPE> --title ..   create a typed entity directly; --status to import
 set <ref> field=value   set scalar fields; enforces the workflow; --force for exceptions
 tag|untag <ref> <tag>   add or remove tags, normalized on write
 link|unlink a <r> b     author or remove one edge; inverses are generated
@@ -105,6 +105,23 @@ render                  regenerate every view and record; silent, never validate
 validate                every consistency rule; silent when clean
 sync                    render, then put the project in step with where it is kept
 backend                 where the project is kept, and why
+```
+
+### Importing existing history
+
+`new <TYPE> --title "..." --status <S>` creates an entity already at `S`, so
+finished work can be imported without walking every transition and without
+writing `status:` by hand. `S` must be a status of the type's workflow, and
+intake types are refused: an idea's status is written by `capture`, `refine`
+and `drop`.
+
+Entry gates are not checked at creation, because a new entity has no artifacts
+yet. The success line names whatever the status still owes, and `validate`
+reports it as a gate disagreement until the artifacts are written:
+
+```
+$ szsdlc new work_item --title "Old work" --status done
+WI-0031  work-items/WI-0031-old-work/entity.md  done; owes: plan.md is missing
 ```
 
 ### Exceptions to the workflow

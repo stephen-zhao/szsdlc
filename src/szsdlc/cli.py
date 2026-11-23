@@ -156,6 +156,7 @@ def build_parser() -> Parser:
     new = subparsers.add_parser("new", prog="szsdlc new")
     new.add_argument("type_name", metavar="TYPE")
     new.add_argument("--title", required=True)
+    new.add_argument("--status", default=None)
     new.set_defaults(run=cmd_new)
 
     setter = subparsers.add_parser("set", prog="szsdlc set")
@@ -638,11 +639,56 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_new(args: argparse.Namespace) -> int:
+    """Create one entity, at the workflow's initial status or at `--status`.
+
+    `--status` is the import path for existing history. Reaching a terminal
+    status through `set` means walking every transition, which leaves
+    hand-written frontmatter as the only way to import finished work — the one
+    thing rule 2 forbids. So the status is checked against the workflow, but
+    its entry gates are not: a new entity has no artifacts, and gating on them
+    would refuse exactly the case this exists for. `validate` still reports
+    every unmet gate until the artifacts are written, and the success line
+    names them so no follow-up read is needed (C1).
+    """
+    from .workflow import unmet_gates
+
     session = Session(args.project)
     entity_type = session.config.type_for(args.type_name)
-    entity = create_entity(session.config, session.ids, entity_type, title=args.title)
-    out(f"{entity.id.text}  {_relative(session, entity.path)}")
+    status = args.status
+    if status is not None:
+        _check_import_status(entity_type, args.title, status)
+
+    entity = create_entity(session.config, session.ids, entity_type,
+                           title=args.title, status=status)
+    line = f"{entity.id.text}  {_relative(session, entity.path)}"
+    if status is not None:
+        owed = [gate.reason for gate in unmet_gates(entity, status)]
+        line += f"  {status}" + (f"; owes: {'; '.join(owed)}" if owed else "")
+    out(line)
     return 0
+
+
+def _check_import_status(entity_type: Any, title: str, status: str) -> None:
+    """Refuse a `new --status` this type cannot be created at."""
+    # Every value in a fix is quoted, and the title is passed so argparse can
+    # never read it as an option (`--title=…`, `-- text`): the fix is meant to
+    # be run as printed, whatever the caller typed.
+    quoted = shlex.quote(title if title.strip() else "<text>")
+    name = shlex.quote(entity_type.name)
+    if entity_type.intake:
+        raise BadInput(
+            f"new: {entity_type.name} is an intake type; its status is written "
+            f"by capture, refine and drop, never by --status.",
+            fix=f"szsdlc capture --type {name} -- {quoted}",
+        )
+    workflow = entity_type.workflow
+    if status not in workflow.states:
+        terminal = workflow.completed_status or workflow.initial
+        raise BadInput(
+            f"new: {status!r} is not a status of {entity_type.name}.",
+            fix=f"szsdlc new {name} --title={quoted} --status {shlex.quote(terminal)}",
+            see=f"statuses: {', '.join(workflow.states)}",
+        )
 
 
 def _relative(session: Session, path: Path) -> str:

@@ -129,6 +129,61 @@ def test_new_with_an_unknown_type_lists_the_known_ones(run):
     assert "work_item" in err
 
 
+def test_new_with_a_status_imports_finished_history(run, project):
+    """WI-0033 — no walk through every transition, and no hand-written status."""
+    code, output, _ = run("new", "requirement", "--title", "Reachable over TLS",
+                          "--status", "approved")
+    assert code == 0
+    assert output.strip() == ("REQ-0001  requirements/REQ-0001-reachable-over-tls.md"
+                              "  approved")
+    assert entities(project).by_text("REQ-0001").status == "approved"
+
+
+def test_new_with_a_gated_status_creates_and_names_what_is_owed(run, project):
+    """Gates are not checked at creation — a new entity has no artifacts — but
+    the line says what is missing, and validate holds it to it until written."""
+    code, output, _ = run("new", "work_item", "--title", "Old work", "--status", "done")
+    assert code == 0
+    assert output.strip() == (
+        "WI-0001  work-items/WI-0001-old-work/entity.md  done; owes: plan.md is missing")
+    assert entities(project).by_text("WI-0001").status == "done"
+
+    code, output, _ = run("validate")
+    assert code == 4 and "WI-0001" in output and "is done but" in output
+
+    plan = project.root / "work-items" / "WI-0001-old-work" / "plan.md"
+    plan.write_text("- [x] **Step 1:** it was done\n", encoding="utf-8")
+    code, output, _ = run("validate")
+    assert "WI-0001" not in output
+
+
+def test_new_with_an_unknown_status_lists_the_workflow(run, project):
+    code, _, err = run("new", "decision", "--title", "Use TLS", "--status", "done")
+    assert code == EXIT_BAD_INPUT
+    assert "proposed, accepted, rejected, superseded" in err
+    assert not list((project.root / "decisions").glob("ADR-*"))
+
+
+def test_new_refuses_a_status_on_an_intake_type(run, project):
+    code, _, err = run("new", "idea", "--title", "a thought", "--status", "refined")
+    assert code == EXIT_BAD_INPUT
+    assert "szsdlc capture --type idea -- 'a thought'" in err
+    assert not entities(project).by_text("IDEA-0001")
+
+
+@pytest.mark.parametrize("argv", [
+    ("new", "idea", "--title=-starts with a dash", "--status", "refined"),
+    ("new", "decision", "--title=-starts with a dash", "--status", "nope"),
+])
+def test_a_refusal_fix_runs_even_for_a_dash_prefixed_title(run, argv):
+    import shlex
+
+    _, _, err = run(*argv)
+    fix = err.splitlines()[1][len("Fix: "):]
+    code, _, err = run(*shlex.split(fix)[1:])
+    assert code == 0, err
+
+
 # ---------------------------------------------------------------------------
 # set
 # ---------------------------------------------------------------------------

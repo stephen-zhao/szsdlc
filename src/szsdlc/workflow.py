@@ -90,10 +90,20 @@ def unmet_gates(entity: Entity, status: str) -> list[Gate]:
                 remedy=f"set entity_types.{entity.type.name}.progress_artifact",
                 prefer_remedy=True,
             ))
-        elif not progress.complete:
-            unchecked = progress.remaining if progress.total else "no"
+        elif not progress.total:
+            # "0/0 tasks complete, no unchecked" reads as nothing left to do.
+            # An artifact with no tasks is unwritten, so say that instead.
+            artifact = entity.type.progress_artifact
+            written = entity.has_artifact(artifact)
             gates.append(Gate(
-                reason=f"{progress} tasks complete, {unchecked} unchecked",
+                reason=(f"{artifact} has no tasks" if written
+                        else f"{artifact} is missing"),
+                remedy=f"write at least one ticked task in "
+                       f"{entity.artifact_path(artifact) or artifact}, then rerun",
+            ))
+        elif not progress.complete:
+            gates.append(Gate(
+                reason=f"{progress} tasks complete, {progress.remaining} unchecked",
                 remedy=f"tick the remaining boxes in "
                        f"{entity.type.progress_artifact}, then rerun",
             ))
