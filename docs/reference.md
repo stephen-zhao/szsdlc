@@ -104,6 +104,7 @@ standards match <path>  conventions governing these paths
 render                  regenerate every view and record; silent, never validates
 validate                every consistency rule; silent when clean
 sync                    render, then put the project in step with where it is kept
+refresh [--force]       make the latest where it is kept current; sends nothing
 backend                 where the project is kept, and why
 ```
 
@@ -338,6 +339,7 @@ A backend is reached at turn boundaries, not per change:
 ```
 session start, each prompt, turn end     sync
 szsdlc sync                              sync, on demand
+szsdlc refresh                           take the latest; never sends
 szsdlc render                            render only — local by definition
 szsdlc backend                           nothing; it only reports
 after each edit                          render only
@@ -359,6 +361,28 @@ mid-turn leaves its work unsent; the next session's start syncs it.
 
 Work arriving from elsewhere costs a second pass, for the redraw, because a
 view cannot be drawn from an entity that has not arrived yet.
+
+### Taking the latest without sending: `refresh`
+
+`sync` always runs both ways. `szsdlc refresh` runs one way: afterwards the
+current state is the latest where the project is kept, nothing has been sent,
+and nothing has been integrated, so nothing can conflict. It renders afterwards,
+which is its only local write.
+
+- On `workdir` and `dir` it does nothing, because the directory *is* where the
+  project is kept.
+- When the store holds something that differs from the latest (unsent changes,
+  or local commits), refreshing would replace it. So the command refuses, with
+  `szsdlc refresh --force` as the fix. Replace only when you mean to; otherwise
+  `szsdlc sync` sends that work instead.
+- The backend operation itself never asks. A caller such as a viewer's Refresh
+  decides for itself.
+
+On `git`, a forced refresh first keeps what it replaces: uncommitted changes
+are committed in the clone, and `refs/szsdlc/replaced/<time>-<commit>` points
+at the result, local commits included. That ref is outside branches and tags,
+so nothing sends it. The command prints its name, and `git -C <clone> log <ref>`
+recovers it.
 
 ### What `git` does, and only `git`
 

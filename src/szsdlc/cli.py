@@ -96,6 +96,7 @@ COMMANDS: list[tuple[str, str]] = [
     ("render", "regenerate every view and record; silent, never validates"),
     ("validate", "every consistency rule; silent when clean"),
     ("sync", "render, then put the project in step with where it is kept"),
+    ("refresh [--force]", "make the latest where it is kept current; sends nothing"),
     ("backend", "where the project is kept, and why"),
 ]
 
@@ -260,6 +261,11 @@ def build_parser() -> Parser:
     sync = subparsers.add_parser("sync", prog="szsdlc sync")
     sync.add_argument("--verbose", action="store_true")
     sync.set_defaults(run=cmd_render)
+
+    refresh = subparsers.add_parser("refresh", prog="szsdlc refresh")
+    refresh.add_argument("--force", action="store_true",
+                         help="replace local state that differs from the latest")
+    refresh.set_defaults(run=cmd_refresh)
 
     validate = subparsers.add_parser("validate", prog="szsdlc validate")
     validate.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
@@ -1568,6 +1574,50 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# refresh
+# ---------------------------------------------------------------------------
+
+
+def cmd_refresh(args: argparse.Namespace) -> int:
+    """Make the latest state where the project is kept the current one.
+
+    Sends nothing and integrates nothing. Replacing local state that differs is
+    the case that can lose something, so at the command line it needs
+    `--force`; the backend operation itself does not ask. Renders afterwards,
+    as `sync` does, so views match what arrived — the only local write.
+    """
+    from . import backend as backend_module
+    from . import sync as sync_module
+
+    backend_module.project_root(args.project)  # make the store ready, as any command does
+    backend = backend_module.locate(args.project)
+    if backend is None:  # pragma: no cover - project_root just made it
+        raise BadInput("refresh: no project here.", fix="szsdlc init")
+    if not args.force and backend.has_local_changes():
+        raise Refused(
+            "refresh: local changes differ from where the project is kept, and "
+            "refreshing would replace them.",
+            fix="szsdlc refresh --force",
+            see="szsdlc sync sends them instead",
+        )
+
+    report = backend_module.refresh(backend)
+    if not report.ok:
+        raise Refused(f"refresh: {report.problem}", fix=report.fix or "szsdlc backend")
+
+    try:
+        sync_module.render(Session(args.project))
+    except SzsdlcError:
+        pass  # a project that will not load after refreshing is validate's to report
+
+    line = "refresh: changes arrived" if report.incoming else "refresh: nothing new"
+    if report.replaced:
+        line += "; local state replaced" + (f" ({report.note})" if report.note else "")
+    out(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # backend
 # ---------------------------------------------------------------------------
 
@@ -1740,9 +1790,10 @@ def _warn_backend(exc: OSError) -> None:
 
 
 #: Commands that sync for themselves, or not at all: `hook` because each
-#: handler decides when, and `backend` because it only inspects — wrapping the
-#: inspector in the operation it reports on is how the two got confused.
-BACKEND_EXEMPT = {"hook", "backend"}
+#: handler decides when, `backend` because it only inspects — wrapping the
+#: inspector in the operation it reports on is how the two got confused — and
+#: `refresh` because its whole promise is that nothing is sent.
+BACKEND_EXEMPT = {"hook", "backend", "refresh"}
 
 
 def _force_utf8_streams() -> None:

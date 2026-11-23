@@ -24,13 +24,16 @@ ordinary behaviour with `SZSDLC_BACKEND=workdir`. An unknown key in the
 selected backend's namespace is refused, because an ignored setting is one
 that does not do what it says.
 
-This package has **one** operation: :meth:`Backend.sync`, which brings a
-store into step with wherever that backend keeps it, and reports what moved
-in which direction. How it does that is the implementation's own
-business, and deliberately not describable here — `workdir` has nothing to do,
-`dir` has nothing to do, and what `git` does is in :mod:`szsdlc.backend.git`
-and nowhere else. Nothing outside this package branches on the type, and no
-caller may assume a commit, a remote or a network.
+This package has two operations. :meth:`Backend.sync` brings a store into
+step with wherever that backend keeps it, in both directions, and reports what
+moved which way. :meth:`Backend.refresh` makes the latest state where the
+project is kept the current one and sends nothing; it integrates nothing
+either, so it cannot conflict, and it may replace local state that differed.
+How either is done is the implementation's own business, and deliberately not
+describable here — `workdir` has nothing to do, `dir` has nothing to do, and
+what `git` does is in :mod:`szsdlc.backend.git` and nowhere else. Nothing
+outside this package branches on the type, and no caller may assume a commit,
+a remote or a network.
 
 **render is not an operation of this package.** Deriving the generated views
 from the entities (:mod:`szsdlc.render`) is local, one-way, and knows about
@@ -105,6 +108,10 @@ class SyncReport:
     incoming: bool = False
     #: Local state was sent there.
     outgoing: bool = False
+    #: Local state that differed from the latest was replaced (refresh only).
+    replaced: bool = False
+    #: The backend's own detail, such as where replaced state was kept.
+    note: str | None = None
     problem: str | None = None
     fix: str | None = None
 
@@ -188,6 +195,20 @@ class Backend(Protocol):
         entirely the implementation's business — whether anything is copied,
         committed, or reached over a network is not asked here and must not be
         inferred by anything that calls this.
+        """
+
+    def refresh(self) -> SyncReport:
+        """Make the latest state where the project is kept the current one.
+
+        The contract, for every backend: afterwards the current state is the
+        latest; nothing is sent; nothing is integrated, so nothing can
+        conflict. Local state that differed is replaced, and the report says
+        so (`replaced`), with whatever detail the backend can give (`note`).
+        Whether replaced state is kept anywhere is the backend's decision.
+        `incoming` means what it means for :meth:`sync`: reload before reading.
+
+        Never raises; a problem goes in the report. Asking before replacing
+        is the caller's business, not this method's.
         """
 
 
@@ -495,6 +516,21 @@ def sync(backend: Backend, reason: str, *, only_if_changed: bool = False) -> Syn
         if only_if_changed and not backend.has_local_changes():
             return None
         return backend.sync(reason)
+
+
+def refresh(backend: Backend) -> SyncReport:
+    """Refresh one store, one writer at a time.
+
+    A backend registered before `refresh` existed gets a problem report naming
+    its type rather than an AttributeError: a plug-in that cannot refresh is a
+    fact to report, not a crash.
+    """
+    method = getattr(backend, "refresh", None)
+    if method is None:
+        return SyncReport(problem=f"the {backend.type} backend cannot refresh.",
+                          fix="szsdlc sync")
+    with _locked(backend.store):
+        return method()
 
 
 def in_claude_turn() -> bool:

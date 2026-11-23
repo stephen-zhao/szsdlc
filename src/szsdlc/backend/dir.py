@@ -56,3 +56,7 @@ class DirBackend:
 
     def sync(self, reason: str) -> SyncReport:
         return SyncReport()
+
+    def refresh(self) -> SyncReport:
+        """Nothing: the directory is where the project is kept, not a copy of it."""
+        return SyncReport()
