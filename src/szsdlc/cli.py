@@ -567,12 +567,18 @@ def cmd_drop(args: argparse.Namespace) -> int:
             fix=f"szsdlc show {entity.id.text}",
         )
 
+    from . import workflow as workflow_module
+
+    # Through the same checked move as `set`: the workflow's edges and the
+    # target's gates apply, and so do the effects of reaching a terminal state.
+    was_terminal = entity.is_terminal
+    workflow_module.move(entity, status)
     if "dropped_reason" in entity.type.fields:
         entity.set_field("dropped_reason", reason)
-    entity.set_status(status)
+    reported = [f"{before} → {status}", *_after_status_change(session, entity, was_terminal)]
     entity.save()
 
-    out(f"{entity.id.text}: {before} → {status}")
+    out(f"{entity.id.text}: " + "; ".join(reported))
     return 0
 
 
@@ -752,6 +758,20 @@ def _coerce(session: Session, entity: Entity, field: str, raw: str) -> Any:
     return raw
 
 
+def _after_status_change(session: "Session", entity: Entity, was_terminal: bool) -> list[str]:
+    """What a status change implies beyond the status, for every command that makes one.
+
+    Reaching a terminal state retires the item from every roadmap; leaving one
+    is reported. `set` and `drop` both come through here, so a command that
+    changes status cannot skip it, which is how `drop` used to leave dropped
+    items scheduled (WI-0053).
+    """
+    notes = _retire_from_roadmaps(session, entity)
+    if was_terminal and not entity.is_terminal:
+        notes += _reopen_notes(session, entity)
+    return notes
+
+
 def _retire_from_roadmaps(session: "Session", entity: Entity) -> list[str]:
     """Take a newly-terminal entity off every roadmap it sits on.
 
@@ -910,9 +930,7 @@ def cmd_set(args: argparse.Namespace) -> int:
                                 f"(forced: {reason})")
             else:
                 reported.append(f"status {transition.before} → {transition.after}")
-            reported += _retire_from_roadmaps(session, entity)
-            if was_terminal and not entity.is_terminal:
-                reported += _reopen_notes(session, entity)
+            reported += _after_status_change(session, entity, was_terminal)
         else:
             before = entity.field(field)
             entity.set_field(field, _coerce(session, entity, field, raw))
