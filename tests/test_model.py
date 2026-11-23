@@ -13,16 +13,22 @@ import textwrap
 
 import pytest
 
+from szsdlc import config as C
+from szsdlc.errors import ConfigError
+from szsdlc.graph import Graph
 from szsdlc.ids import IdSpace
 from szsdlc.model import (
     Entity,
     Progress,
     UnparseableEntity,
+    create_entity,
     frontmatter_schema,
     load_all,
     parse_progress,
+    relayout,
     schema_findings,
 )
+from szsdlc.validate import run as validate_run
 
 
 def load(project):
@@ -393,3 +399,184 @@ def test_the_store_selects_by_flag_rather_than_by_type_name(project, write_entit
 def test_an_empty_project_loads_to_an_empty_store(project):
     store = load(project)
     assert len(store) == 0 and not store.unparseable and not store.duplicates
+
+
+SHAPES = ("section", "file", "directory")
+
+
+def capture(project, body: str = "a loose thought"):
+    return create_entity(project, IdSpace(project), project.type_for("idea"),
+                         body=body + "\n")
+
+
+def lay_out(project, id_text: str, layout: str):
+    entity = reload(project, id_text)
+    return relayout(project, IdSpace(project), entity, layout)
+
+
+def reload(project, id_text: str):
+    return load_all(project).by_text(id_text)
+
+
+# ---------------------------------------------------------------------------
+# The type
+# ---------------------------------------------------------------------------
+def test_a_dynamic_type_accepts_all_three_layouts(project):
+    idea = project.type_for("idea")
+    assert idea.is_dynamic_layout
+    assert set(idea.layouts) == set(SHAPES)
+    # …and still arrives in the cheapest one.
+    assert idea.new_entry_layout == "section"
+
+
+def test_a_declared_layout_accepts_only_itself(make_project):
+    project = make_project({"entity_types": {"idea": {"layout": "file"}}})
+    assert project.type_for("idea").layouts == ("file",)
+    assert not project.type_for("idea").is_dynamic_layout
+
+
+def test_initial_layout_is_refused_on_a_type_with_one_layout(make_project):
+    """A key that does nothing is a key someone is relying on."""
+    with pytest.raises(C.ConfigError) as excinfo:
+        make_project({"entity_types": {"idea": {"layout": "file",
+                                                "initial_layout": "file"}}})
+    assert "only one layout to arrive in" in excinfo.value.problem
+
+
+def test_the_arrival_layout_is_configurable(make_project):
+    project = make_project({"entity_types": {"idea": {"initial_layout": "file"}}})
+    entity = capture(project)
+    assert entity.layout == "file"
+    assert entity.path.name.startswith("IDEA-0001")
+
+
+# ---------------------------------------------------------------------------
+# Laying an entry out again
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("target", ["file", "directory"])
+def test_an_entry_moves_out_of_the_shared_file(project, target):
+    capture(project, "drafts are lost on refresh")
+    before = reload(project, "IDEA-0001")
+
+    moved = lay_out(project, "IDEA-0001", target)
+
+    assert moved.layout == target
+    assert moved.id == before.id
+    assert moved.render() == before.render()
+    assert "IDEA-0001" not in project.section_path("idea").read_text(encoding="utf-8")
+    assert reload(project, "IDEA-0001").layout == target
+
+
+@pytest.mark.parametrize("start", ["file", "directory"])
+def test_an_entry_moves_back_into_the_shared_file(project, start):
+    capture(project, "drafts are lost on refresh")
+    lay_out(project, "IDEA-0001", start)
+    before = reload(project, "IDEA-0001")
+
+    moved = lay_out(project, "IDEA-0001", "section")
+
+    assert moved.layout == "section"
+    assert moved.render() == before.render()
+    assert moved.path == project.section_path("idea")
+
+
+def test_a_relayout_leaves_the_other_entries_alone(project):
+    for body in ("first", "second", "third"):
+        capture(project, body)
+    path = project.section_path("idea")
+    before = path.read_text(encoding="utf-8")
+
+    lay_out(project, "IDEA-0002", "file")
+
+    after = path.read_text(encoding="utf-8")
+    # Byte-for-byte what was there, minus the one entry that left.
+    head, rest = before.split("## IDEA-0002", 1)
+    assert after == head + "## IDEA-0003" + rest.split("## IDEA-0003", 1)[1]
+
+
+def test_a_relayout_never_renumbers(project):
+    """Every relation names an id. A relayout that reissued one would silently
+    repoint every reference to it."""
+    capture(project, "drafts are lost on refresh")
+    for target in ("file", "directory", "section"):
+        assert lay_out(project, "IDEA-0001", target).id.text == "IDEA-0001"
+    assert IdSpace(project).next_id("idea").text == "IDEA-0002"
+
+
+def test_relations_survive_a_relayout(project):
+    idea = capture(project, "drafts are lost on refresh")
+    work = create_entity(project, IdSpace(project), project.type_for("work_item"),
+                         title="Autosave", relations={"refined_from": idea.id.text})
+
+    lay_out(project, "IDEA-0001", "directory")
+
+    store = load_all(project)
+    graph = Graph(project, store, IdSpace(project))
+    assert store.by_text(work.id.text).targets("refined_from") == ["IDEA-0001"]
+    assert [e.id.text for e in graph.sources(idea.id, "refined_from")] == [work.id.text]
+
+
+# ---------------------------------------------------------------------------
+# Wanting an artifact is how an entry earns a directory
+# ---------------------------------------------------------------------------
+
+
+def test_a_gate_on_a_missing_artifact_names_the_move(make_project):
+    """The refusal has to end in something runnable. For a dynamic entry with
+    nowhere to write yet, that is a directory."""
+    from szsdlc.workflow import unmet_gates
+
+    project = make_project({"entity_types": {"idea": {
+        "artifacts": ["findings.md"],
+        "workflow": {"states": {"refined": {"requires_artifact": ["findings.md"]}}},
+    }}})
+    entity = capture(project)
+    entity.set_status("refining")
+    entity.save()
+
+    gates = unmet_gates(reload(project, "IDEA-0001"), "refined")
+    assert gates
+    assert "szsdlc layout IDEA-0001 directory" in gates[0].remedy
+
+
+# ---------------------------------------------------------------------------
+# A half-finished relayout
+# ---------------------------------------------------------------------------
+def test_one_id_in_two_shapes_is_reported_with_both_places(project):
+    """A relayout writes the new layout before removing the old, deliberately:
+    an interruption claims the id twice, which is reportable, rather than
+    losing it, which is not."""
+    capture(project, "drafts are lost on refresh")
+    entity = reload(project, "IDEA-0001")
+    stray = project.dir_for("idea") / "IDEA-0001-drafts-are-lost-on-refresh.md"
+    stray.write_bytes(entity.render().encode("utf-8"))
+
+    store = load_all(project)
+    findings = validate_run(project, store, Graph(project, store, IdSpace(project)))
+    duplicates = [f for f in findings if f.kind == "duplicate-id"]
+    assert len(duplicates) == 1
+    assert "index.md" in duplicates[0].message
+    assert stray.name in duplicates[0].message
+
+
+def test_an_attached_file_is_not_reported_as_an_orphan(project):
+    """A dynamic type that declares no artifacts has said the opposite of a
+    fixed artifact set: whatever turned up is why the directory exists."""
+    capture(project, "drafts are lost on refresh")
+    home = lay_out(project, "IDEA-0001", "directory").home
+    (home / "screenshot.txt").write_text("evidence\n", encoding="utf-8")
+
+    store = load_all(project)
+    findings = validate_run(project, store, Graph(project, store, IdSpace(project)))
+    assert [f for f in findings if f.kind == "orphan-file"] == []
+
+
+def test_a_declared_artifact_set_is_still_enforced(make_project):
+    project = make_project({"entity_types": {"idea": {"artifacts": ["findings.md"]}}})
+    capture(project, "drafts are lost on refresh")
+    home = lay_out(project, "IDEA-0001", "directory").home
+    (home / "stray.txt").write_text("x\n", encoding="utf-8")
+
+    store = load_all(project)
+    findings = validate_run(project, store, Graph(project, store, IdSpace(project)))
+    assert [f.kind for f in findings if f.kind == "orphan-file"] == ["orphan-file"]

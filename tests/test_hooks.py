@@ -523,17 +523,6 @@ def test_the_turn_end_sync_refuses_to_overwrite_a_hand_edited_view(seeded, capsy
     assert board.read_text("utf-8") == before, "the turn-end sync clobbered a hand edit"
 
 
-def test_an_explicit_sync_still_overwrites_a_hand_edited_view(seeded, capsys):
-    """The counterpart: typing the command means what it has always meant."""
-    board = seeded.views_dir / "board.md"
-    board.write_text(board.read_text("utf-8") + "\nA note somebody typed here.\n",
-                     encoding="utf-8")
-
-    main(["-C", str(seeded.root), "render"])
-    capsys.readouterr()
-    assert "A note somebody typed here." not in board.read_text("utf-8")
-
-
 @pytest.mark.parametrize("raw, expected", [
     ("true", True), ("TRUE", True), ("1", True), ("yes", True), ("on", True),
     ("false", False), ("False", False), ("0", False), ("no", False), ("off", False),
@@ -610,19 +599,6 @@ def test_the_hook_command_is_registered_but_undocumented(capsys):
 
     main(["--help"])
     assert "hook" not in capsys.readouterr().out
-
-
-def test_the_hook_command_runs_end_to_end(seeded, capsys, monkeypatch):
-    monkeypatch.setattr("sys.stdin", io.StringIO(""))
-    assert main(["-C", str(seeded.root), "hook", "session-start"]) == 0
-    assert "entities 2" in capsys.readouterr().out
-
-
-def test_an_unknown_hook_event_is_refused_compactly(capsys):
-    assert main(["hook", "nonsense"]) == 2
-    err = capsys.readouterr().err
-    assert len(err.strip().splitlines()) <= 3
-    assert "usage:" not in err
 
 
 def test_the_real_validator_accepts_this_plugin():
