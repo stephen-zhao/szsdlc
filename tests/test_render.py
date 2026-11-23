@@ -483,3 +483,93 @@ def test_sync_on_an_empty_project_produces_readable_views(run, project):
     inbox = (project.views_dir / "inbox.md").read_text(encoding="utf-8")
     assert "Nothing waiting." in inbox
     assert "## Not loaded" not in inbox
+
+
+# ---------------------------------------------------------------------------
+# A broken project template is a project finding, never an internal error
+# ---------------------------------------------------------------------------
+
+
+def _hosts_template(project, text):
+    (project.templates_dir / "records" / "hosts.md.j2").write_text(text, encoding="utf-8")
+
+
+@pytest.mark.parametrize("text, needle", [
+    ("{% for row in data %}{{ row.name }\n", "hosts.md.j2:1"),                  # syntax
+    ("# Hosts\n\n{{ no_such_thing }}\n", "hosts.md.j2:3: 'no_such_thing' is undefined"),
+    ("# Hosts\n{% for row in data %}{{ row.name + 1 }}{% endfor %}\n", "hosts.md.j2:2"),  # TypeError
+])
+def test_a_broken_record_template_is_a_project_finding(with_record, capsys, text, needle):
+    """WI-0032: it was `internal error: … report this`, sending the author to
+    file a framework bug over their own template."""
+    _hosts_template(with_record, text)
+
+    assert main(["-C", str(with_record.root), "sync"]) == 0
+    assert capsys.readouterr().out == ""
+    assert (with_record.views_dir / "inbox.md").is_file()  # the rest still renders
+    assert main(["-C", str(with_record.root), "context"]) == 0
+    capsys.readouterr()
+
+    code = main(["-C", str(with_record.root), "validate"])
+    out, err = capsys.readouterr()
+    assert code == 4, err
+    assert "internal error" not in out + err
+    assert needle in out, out
+    assert "correct .szsdlc/templates/records/hosts.md.j2" in out
+
+
+def test_a_missing_record_template_names_the_file_to_create(with_record, capsys):
+    (with_record.templates_dir / "records" / "hosts.md.j2").unlink()
+    assert main(["-C", str(with_record.root), "sync"]) == 0
+    capsys.readouterr()
+    assert main(["-C", str(with_record.root), "validate"]) == 4
+    out = capsys.readouterr().out
+    assert "records/hosts.md.j2 does not exist" in out
+    assert "create .szsdlc/templates/records/hosts.md.j2" in out
+
+
+@pytest.mark.parametrize("schema, needle", [
+    (None, "records/hosts.schema.json does not exist"),
+    ("{not json", "records/hosts.schema.json:1: not valid JSON"),
+])
+def test_a_missing_or_malformed_schema_is_a_project_finding(with_record, capsys, schema, needle):
+    path = with_record.root / "records" / "hosts.schema.json"
+    if schema is None:
+        path.unlink()
+    else:
+        path.write_text(schema, encoding="utf-8")
+    assert main(["-C", str(with_record.root), "sync"]) == 0
+    capsys.readouterr()
+    assert main(["-C", str(with_record.root), "validate"]) == 4
+    out, err = capsys.readouterr()
+    assert needle in out and "internal error" not in err
+
+
+def test_a_broken_view_override_is_a_project_finding(project, capsys):
+    """The same defect one level up: a project may override any view template."""
+    override = project.templates_dir / "views" / "board.md.j2"
+    override.parent.mkdir(parents=True, exist_ok=True)
+    override.write_text("# Board\n{{ entities | no_such_filter }}\n", encoding="utf-8")
+
+    assert main(["-C", str(project.root), "sync"]) == 0
+    assert capsys.readouterr().out == ""
+    assert (project.views_dir / "inbox.md").is_file()
+    assert not (project.views_dir / "board.md").exists()
+
+    assert main(["-C", str(project.root), "validate"]) == 4
+    out, err = capsys.readouterr()
+    assert "board" in out and "views/board.md.j2" in out and "internal error" not in err
+    assert "board.md has never been generated" not in out  # one finding, not two
+
+
+def test_a_fault_in_a_bundled_template_is_still_a_framework_bug(project, capsys, monkeypatch):
+    """Ownership follows where the fault happened. A bundled template failing is
+    szsdlc's bug, and the internal-error path is the right one for it."""
+    import jinja2
+
+    def explode(self, *args, **kwargs):
+        raise RuntimeError("bundled template broke")
+
+    monkeypatch.setattr(jinja2.Template, "render", explode)
+    assert main(["-C", str(project.root), "render"]) == 1
+    assert "internal error" in capsys.readouterr().err
