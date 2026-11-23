@@ -11,6 +11,11 @@ is one interface on top; anything else is another.
     ops.call("set", {"ref": "WI-0042", "assignments": ["status=ready"],
                      "expect": shown.hash}, "path/to/project")
 
+One module per operation, as in `szsdlc._cli` (a paired verb shares one:
+`tag`, `link`, `schedule`), each holding its params and result types. A
+mutation checks everything before it writes, honours `expect` when given,
+returns its post-state, and ends by redrawing the views.
+
 `OPERATIONS` names every operation with its params and result types, its
 kind (query or mutation) and the interfaces it belongs to. A refusal is one
 of `szsdlc.errors`' classes; `refusal_to_data` gives it as
@@ -25,11 +30,14 @@ from ._project import Project
 from ._refusal import Call, fix_call, refusal_to_data
 from ._registry import OPERATIONS, Operation, call
 # Imported for their registrations, in the CLI's order.
-from . import entities, queries, store  # noqa: F401  isort: skip
+from . import (  # noqa: F401  isort: skip
+    capture, refine, inbox, drop, init, new, set_, tag, link, convert, layout, log,
+    schedule, next_, show, context, list_, trace, standards, render, sync, refresh,
+    validate, backend,
+)
 
 __all__ = [
     "OPERATIONS", "Operation", "Project", "call", "Call", "fix_call", "refusal_to_data",
     "SzsdlcError", "BadInput", "UnknownReference", "Refused", "StalePrecondition",
     "ValidationFailed", "ConfigError", "InternalError",
-    "entities", "queries", "store",
 ]

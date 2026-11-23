@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ..errors import StalePrecondition
 from ..model import Entity
+from ._project import Project
 
 
 def check(entity: Entity, expect: str | None) -> None:
@@ -18,3 +19,10 @@ def check(entity: Entity, expect: str | None) -> None:
             f"{entity.id.text} changed since it was read.",
             fix=f"szsdlc show {entity.id.text}",
         )
+
+
+def entity_for(project: Project, ref: str, expect: str | None) -> Entity:
+    """The entity `ref` names, refused as stale if `expect` no longer matches it."""
+    entity = project.entity(ref)
+    check(entity, expect)
+    return entity

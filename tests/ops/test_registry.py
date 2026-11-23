@@ -51,13 +51,13 @@ def test_every_listing_takes_a_limit():
 
 def test_call_takes_a_mapping_and_a_path(root):
     shown = ops.call("show", {"ref": "WI-0001"}, root)
-    assert isinstance(shown, ops.queries.ShowResult)
+    assert isinstance(shown, ops.show.ShowResult)
     assert (shown.id, shown.status, shown.title) == ("WI-0001", "idea", "Work item one")
 
 
 def test_call_takes_the_params_type_and_a_loaded_project(root):
     project = ops.Project(root)
-    listed = ops.call("list", ops.queries.ListParams(type="work_item"), project)
+    listed = ops.call("list", ops.list_.ListParams(type="work_item"), project)
     assert [r.id for r in listed.rows] == ["WI-0001", "WI-0002"]
 
 

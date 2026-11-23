@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 
 from ..errors import EXIT_INVALID
-from ..ops import Project, queries
+from ..ops import Project, validate
 from ._output import bound_note, emit_json, out
 from ._parser import DEFAULT_LIMIT
 
@@ -18,8 +18,8 @@ def add_parser(subparsers) -> None:
     validate.set_defaults(run=run, op="validate", to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> queries.ValidateParams:
-    return queries.ValidateParams(limit=0 if args.as_json else args.limit)
+def to_params(args: argparse.Namespace) -> validate.ValidateParams:
+    return validate.ValidateParams(limit=0 if args.as_json else args.limit)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -27,7 +27,7 @@ def run(args: argparse.Namespace) -> int:
     a turn, this runs once at the end and strictly.
     """
     params = to_params(args)
-    found = queries.validate(params, Project(args.project))
+    found = validate.validate(params, Project(args.project))
     if args.as_json:
         emit_json([{"level": f.level, "kind": f.kind, "ref": f.ref,
                     "message": f.message, "fix": f.fix} for f in found.rows])

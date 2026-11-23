@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import Project, entities
+from ..ops import Project, tag
 from ._output import out
 
 
@@ -16,8 +16,8 @@ def add_parser(subparsers) -> None:
         tagger.set_defaults(run=runner, adding=(verb == "tag"), op=verb, to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> entities.TagParams:
-    return entities.TagParams(ref=args.ref, tags=tuple(args.tags))
+def to_params(args: argparse.Namespace) -> tag.TagParams:
+    return tag.TagParams(ref=args.ref, tags=tuple(args.tags))
 
 
 def _apply(args: argparse.Namespace, operation) -> int:
@@ -27,8 +27,8 @@ def _apply(args: argparse.Namespace, operation) -> int:
 
 
 def run_tag(args: argparse.Namespace) -> int:
-    return _apply(args, entities.tag)
+    return _apply(args, tag.tag)
 
 
 def run_untag(args: argparse.Namespace) -> int:
-    return _apply(args, entities.untag)
+    return _apply(args, tag.untag)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import Project, queries
+from ..ops import Project, inbox
 from ..text import clip
 from ._output import bound_note, emit_json, id_width, out
 from ._parser import DEFAULT_LIMIT
@@ -17,13 +17,13 @@ def add_parser(subparsers) -> None:
     inbox.set_defaults(run=run, op="inbox", to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> queries.InboxParams:
-    return queries.InboxParams(limit=0 if args.as_json else args.limit)
+def to_params(args: argparse.Namespace) -> inbox.InboxParams:
+    return inbox.InboxParams(limit=0 if args.as_json else args.limit)
 
 
 def run(args: argparse.Namespace) -> int:
     params = to_params(args)
-    found = queries.inbox(params, Project(args.project))
+    found = inbox.inbox(params, Project(args.project))
     if args.as_json:
         emit_json([{"id": r.id, "status": r.status, "age_days": r.age_days,
                     "title": r.title} for r in found.rows])

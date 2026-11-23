@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import Project, store
+from ..ops import Project, render
 from ._output import out
 
 
@@ -14,8 +14,8 @@ def add_parser(subparsers) -> None:
     render.set_defaults(run=run, op="render", to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> store.RenderParams:
-    return store.RenderParams()
+def to_params(args: argparse.Namespace) -> render.RenderParams:
+    return render.RenderParams()
 
 
 def run(args: argparse.Namespace) -> int:
@@ -26,7 +26,7 @@ def run(args: argparse.Namespace) -> int:
     C4 — silent on the happy path. This runs after every file write and at
     every turn end; output there has no consumer and would reach context.
     """
-    rendered = store.render(to_params(args), Project(args.project))
+    rendered = render.render(to_params(args), Project(args.project))
     if args.verbose:
         for path in rendered.changed:
             out(path)

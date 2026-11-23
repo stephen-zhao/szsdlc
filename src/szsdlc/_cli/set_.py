@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from ..ops import Project, entities
+from ..ops import Project, set_
 from ._output import out
 
 
@@ -18,8 +18,8 @@ def add_parser(subparsers) -> None:
     setter.set_defaults(run=run, op="set", to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> entities.SetParams:
-    return entities.SetParams(ref=args.ref, assignments=tuple(args.assignments),
+def to_params(args: argparse.Namespace) -> set_.SetParams:
+    return set_.SetParams(ref=args.ref, assignments=tuple(args.assignments),
                               force=args.force, reason=args.reason)
 
 
@@ -28,7 +28,7 @@ def run(args: argparse.Namespace) -> int:
     # as `drop` does, and never defaulted.
     if args.force and args.reason is None and not sys.stdin.isatty():
         args.reason = sys.stdin.read()
-    changed = entities.set_(to_params(args), Project(args.project))
+    changed = set_.set_(to_params(args), Project(args.project))
     reported: list[str] = []
     for change in changed.changes:
         line = f"{change.field} {change.before} → {change.after}"

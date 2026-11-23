@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 
 from ..config import LAYOUTS
-from ..ops import Project, entities
+from ..ops import Project, layout
 from ._output import out
 
 
@@ -16,11 +16,11 @@ def add_parser(subparsers) -> None:
     layout.set_defaults(run=run, op="layout", to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> entities.LayoutParams:
-    return entities.LayoutParams(ref=args.ref, layout=args.layout)
+def to_params(args: argparse.Namespace) -> layout.LayoutParams:
+    return layout.LayoutParams(ref=args.ref, layout=args.layout)
 
 
 def run(args: argparse.Namespace) -> int:
-    laid = entities.layout(to_params(args), Project(args.project))
+    laid = layout.layout(to_params(args), Project(args.project))
     out(f"{laid.id}  ({laid.before} → {laid.after}) {laid.path}")
     return 0

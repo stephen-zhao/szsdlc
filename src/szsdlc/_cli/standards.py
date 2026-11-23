@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import Project, queries
+from ..ops import Project, standards
 from ._output import bound_note, emit_json, out
 from ._parser import STANDARDS_LIMIT
 
@@ -18,14 +18,14 @@ def add_parser(subparsers) -> None:
     standards.set_defaults(run=run, op="standards", to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> queries.StandardsParams:
-    return queries.StandardsParams(mode=args.subcommand, paths=tuple(args.paths),
+def to_params(args: argparse.Namespace) -> standards.StandardsParams:
+    return standards.StandardsParams(mode=args.subcommand, paths=tuple(args.paths),
                                    limit=0 if args.as_json else args.limit)
 
 
 def run(args: argparse.Namespace) -> int:
     params = to_params(args)
-    found = queries.standards(params, Project(args.project))
+    found = standards.standards(params, Project(args.project))
     if args.as_json:
         emit_json([{"name": r.name, "path": r.path, "applies_to": list(r.applies_to),
                     "body": r.body} for r in found.rows])

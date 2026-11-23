@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import Project, entities
+from ..ops import Project, link
 from ._output import out
 
 
@@ -17,12 +17,12 @@ def add_parser(subparsers) -> None:
         linker.set_defaults(run=runner, op=verb, to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> entities.LinkParams:
-    return entities.LinkParams(ref=args.ref, relation=args.relation, target=args.target)
+def to_params(args: argparse.Namespace) -> link.LinkParams:
+    return link.LinkParams(ref=args.ref, relation=args.relation, target=args.target)
 
 
 def run_link(args: argparse.Namespace) -> int:
-    linked = entities.link(to_params(args), Project(args.project))
+    linked = link.link(to_params(args), Project(args.project))
     # C1 — and the generated inverse, so the back-link never has to be looked up.
     out(f"{linked.id} {linked.relation} {linked.target}  "
         f"({linked.target} {linked.inverse} {linked.id})")
@@ -30,6 +30,6 @@ def run_link(args: argparse.Namespace) -> int:
 
 
 def run_unlink(args: argparse.Namespace) -> int:
-    unlinked = entities.unlink(to_params(args), Project(args.project))
+    unlinked = link.unlink(to_params(args), Project(args.project))
     out(f"{unlinked.id} {unlinked.relation}: {', '.join(unlinked.remaining) or '(none)'}")
     return 0

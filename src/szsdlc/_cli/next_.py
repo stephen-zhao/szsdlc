@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import Project, queries
+from ..ops import Project, next_
 from ..text import clip
 from ._output import bound_note, emit_json, id_width, out
 from ._parser import NEXT_LIMIT
@@ -20,14 +20,14 @@ def add_parser(subparsers) -> None:
     nxt.set_defaults(run=run, op="next", to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> queries.NextParams:
-    return queries.NextParams(horizon=args.horizon, parent=args.parent, roadmap=args.roadmap,
+def to_params(args: argparse.Namespace) -> next_.NextParams:
+    return next_.NextParams(horizon=args.horizon, parent=args.parent, roadmap=args.roadmap,
                               limit=0 if args.as_json else args.limit)
 
 
 def run(args: argparse.Namespace) -> int:
     params = to_params(args)
-    found = queries.next_(params, Project(args.project))
+    found = next_.next_(params, Project(args.project))
     if args.as_json:
         emit_json([{"id": r.id, "status": r.status, "title": r.title,
                     "scheduled": r.scheduled} for r in found.rows])

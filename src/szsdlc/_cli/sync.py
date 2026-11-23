@@ -6,7 +6,7 @@ import argparse
 
 from .. import backend as backend_module
 from ..errors import Refused, SzsdlcError
-from ..ops import Project, store
+from ..ops import Project, render, sync
 from . import _sync
 from ._output import out
 
@@ -17,8 +17,8 @@ def add_parser(subparsers) -> None:
     sync.set_defaults(run=run, op="sync", to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> store.SyncParams:
-    return store.SyncParams()
+def to_params(args: argparse.Namespace) -> sync.SyncParams:
+    return sync.SyncParams()
 
 
 def run(args: argparse.Namespace) -> int:
@@ -33,12 +33,12 @@ def run(args: argparse.Namespace) -> int:
     refuses: it was asked for by name.
     """
     backend_module.project_root(args.project)  # create the store if needed
-    rendered = store.render(store.RenderParams(), Project(args.project))
+    rendered = render.render(render.RenderParams(), Project(args.project))
     if args.verbose:
         for path in rendered.changed:
             out(path)
     try:
-        report = store.send(args.project)
+        report = sync.send(args.project)
     except SzsdlcError:  # pragma: no cover - the render just loaded it
         return 0
     except OSError as exc:

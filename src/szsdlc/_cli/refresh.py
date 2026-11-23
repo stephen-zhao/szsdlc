@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import store
+from ..ops import refresh
 from ._output import out
 
 
@@ -15,12 +15,12 @@ def add_parser(subparsers) -> None:
     refresh.set_defaults(run=run, op="refresh", to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> store.RefreshParams:
-    return store.RefreshParams(force=args.force)
+def to_params(args: argparse.Namespace) -> refresh.RefreshParams:
+    return refresh.RefreshParams(force=args.force)
 
 
 def run(args: argparse.Namespace) -> int:
-    refreshed = store.refresh(to_params(args), args.project)
+    refreshed = refresh.refresh(to_params(args), args.project)
     line = "refresh: changes arrived" if refreshed.incoming else "refresh: nothing new"
     if refreshed.replaced:
         line += "; local state replaced" + (f" ({refreshed.note})" if refreshed.note else "")

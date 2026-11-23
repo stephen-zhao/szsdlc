@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 
 from ..frontmatter import jsonify
-from ..ops import Project, queries
+from ..ops import Project, show
 from ._output import emit_json, out
 
 
@@ -17,12 +17,12 @@ def add_parser(subparsers) -> None:
     show.set_defaults(run=run, op="show", to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> queries.ShowParams:
-    return queries.ShowParams(ref=args.ref, context=args.with_context)
+def to_params(args: argparse.Namespace) -> show.ShowParams:
+    return show.ShowParams(ref=args.ref, context=args.with_context)
 
 
 def run(args: argparse.Namespace) -> int:
-    shown = queries.show(to_params(args), Project(args.project))
+    shown = show.show(to_params(args), Project(args.project))
     if args.with_context:
         out(shown.bundle)
         return 0

@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 
 from ..frontmatter import jsonify
-from ..ops import Project, queries
+from ..ops import Project, list_
 from ..text import clip
 from ._output import bound_note, emit_json, id_width, out
 from ._parser import DEFAULT_LIMIT
@@ -24,10 +24,10 @@ def add_parser(subparsers) -> None:
     listing.set_defaults(run=run, op="list", to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> queries.ListParams:
+def to_params(args: argparse.Namespace) -> list_.ListParams:
     # --json is exempt from the limit: it has a programmatic consumer that is
     # not paying context for it.
-    return queries.ListParams(
+    return list_.ListParams(
         type=args.type_name, status=args.status, tags=tuple(args.tag or ()),
         parent=args.parent, uncovered=args.uncovered, unscheduled=args.unscheduled,
         limit=0 if args.as_json else args.limit,
@@ -36,7 +36,7 @@ def to_params(args: argparse.Namespace) -> queries.ListParams:
 
 def run(args: argparse.Namespace) -> int:
     params = to_params(args)
-    listed = queries.list_(params, Project(args.project))
+    listed = list_.list_(params, Project(args.project))
     if args.as_json:
         emit_json([{"id": r.id, "type": r.type, "status": r.status, "tags": list(r.tags),
                     "title": r.title, "fields": jsonify(r.fields)} for r in listed.rows])

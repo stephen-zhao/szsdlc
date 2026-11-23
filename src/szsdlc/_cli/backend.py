@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import store
+from ..ops import backend
 from ._output import out
 
 
@@ -14,8 +14,8 @@ def add_parser(subparsers) -> None:
     backend.set_defaults(run=run, op="backend", to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> store.BackendParams:
-    return store.BackendParams()
+def to_params(args: argparse.Namespace) -> backend.BackendParams:
+    return backend.BackendParams()
 
 
 def run(args: argparse.Namespace) -> int:
@@ -24,7 +24,7 @@ def run(args: argparse.Namespace) -> int:
     that operation. Settings are not edited here: they live in Claude Code's
     settings files, beside everything else a user configures there.
     """
-    shown = store.backend(to_params(args), args.project)
+    shown = backend.backend(to_params(args), args.project)
     out(f"backend  {shown.type}  ({shown.source})")
     # `workdir` outside a project has neither settings nor a root to report:
     # one line is the whole truth.

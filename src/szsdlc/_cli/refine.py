@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import Project, entities
+from ..ops import Project, refine
 from ._output import out
 
 
@@ -16,12 +16,12 @@ def add_parser(subparsers) -> None:
     refine.set_defaults(run=run, op="refine", to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> entities.RefineParams:
-    return entities.RefineParams(ref=args.ref, into=args.into, title=args.title)
+def to_params(args: argparse.Namespace) -> refine.RefineParams:
+    return refine.RefineParams(ref=args.ref, into=args.into, title=args.title)
 
 
 def run(args: argparse.Namespace) -> int:
-    refined = entities.refine(to_params(args), Project(args.project))
+    refined = refine.refine(to_params(args), Project(args.project))
     # C1 — the resulting state, so no confirming `show` is ever needed.
     out(f"{refined.id}  ({refined.source}: {refined.before} → {refined.after})")
     return 0

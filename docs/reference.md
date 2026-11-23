@@ -571,10 +571,10 @@ Windows Python, so the floor has to be whatever both sides can run.
 
 A new command is an operation first:
 
-- **The operation** goes in `src/szsdlc/ops/` (`entities.py` for a change to
-  entities, `queries.py` for a read, `store.py` for the project as a whole).
-  It is a function `(params, project) -> result` with frozen dataclasses for
-  both, registered with `@operation(...)`.
+- **The operation** is a module `src/szsdlc/ops/<command>.py`, named as the
+  command's is. It holds a function `(params, project) -> result`, registered
+  with `@operation(...)`, and the frozen dataclasses for both. Import it in
+  `ops/__init__.py`.
 - **The command** is a module `src/szsdlc/_cli/<command>.py` with:
   - `add_parser(subparsers)`, whose `set_defaults` names the `op` and its
     `to_params`;
@@ -614,7 +614,7 @@ Fixtures the CLI's tests share are in `tests/_cli/conftest.py`.
 | `skills/trace/SKILL.md` | Answer "what satisfies REQ-x / where did WI-y come from" |
 | `bin/szsdlc`, `bin/szsdlc.cmd` | Cross-platform launchers resolving the interpreter |
 | `src/szsdlc/cli.py` | The public shim: the entry point, `python -m szsdlc.cli`, and the names other code imports |
-| `src/szsdlc/ops/` | The operations, szsdlc's in-process API: `entities.py`, `queries.py` and `store.py` hold them; `_registry.py` names them; `_project.py` loads a project; `_refusal.py` gives refusals as data; `_status`, `_journal` and `_queries` are the domain helpers several share |
+| `src/szsdlc/ops/` | The operations, szsdlc's in-process API: one module per operation, named and paired as `_cli`'s are, each with its params and result types; `_registry.py` names them; `_project.py` loads a project; `_refusal.py` gives refusals as data; `_precondition`, `_views`, `_listing` and `_paths` are what mutations and listings share; `_status`, `_journal` and `_queries` are the domain helpers |
 | `src/szsdlc/_cli/` | The commands, one module per command (a paired verb shares one: `tag`, `link`, `schedule`): argv in, an operation called, its result printed; `__init__.py` builds the parser, dispatches and parses a `Fix:` back into a call; `set_`, `next_` and `list_` end in an underscore so they cannot shadow the builtins |
 | `src/szsdlc/errors.py` | The single error channel: C2 shape, exit codes, and the project/model split |
 | `src/szsdlc/config.py` | Load/validate `.szsdlc/config.yml`, apply defaults |

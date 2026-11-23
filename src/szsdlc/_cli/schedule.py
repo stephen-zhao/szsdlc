@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import Project, entities
+from ..ops import Project, schedule
 from ..roadmap import Placement
 from ._output import out
 
@@ -26,23 +26,23 @@ def add_parser(subparsers) -> None:
                             to_params=to_unschedule_params)
 
 
-def to_schedule_params(args: argparse.Namespace) -> entities.ScheduleParams:
-    return entities.ScheduleParams(ref=args.ref, horizon=args.horizon, after=args.after,
+def to_schedule_params(args: argparse.Namespace) -> schedule.ScheduleParams:
+    return schedule.ScheduleParams(ref=args.ref, horizon=args.horizon, after=args.after,
                                    before=args.before, top=args.top, roadmap=args.roadmap)
 
 
-def to_unschedule_params(args: argparse.Namespace) -> entities.UnscheduleParams:
-    return entities.UnscheduleParams(ref=args.ref, roadmap=args.roadmap)
+def to_unschedule_params(args: argparse.Namespace) -> schedule.UnscheduleParams:
+    return schedule.UnscheduleParams(ref=args.ref, roadmap=args.roadmap)
 
 
 def run_schedule(args: argparse.Namespace) -> int:
-    placed = entities.schedule(to_schedule_params(args), Project(args.project))
+    placed = schedule.schedule(to_schedule_params(args), Project(args.project))
     out(str(Placement(placed.entity, placed.roadmap, placed.horizon, placed.index,
                       placed.after, placed.before)))
     return 0
 
 
 def run_unschedule(args: argparse.Namespace) -> int:
-    off = entities.unschedule(to_unschedule_params(args), Project(args.project))
+    off = schedule.unschedule(to_unschedule_params(args), Project(args.project))
     out(f"{off.id}: off {off.roadmap}")
     return 0

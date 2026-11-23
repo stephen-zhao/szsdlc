@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import Project, entities
+from ..ops import Project, capture
 from ._input import read_text_input
 from ._output import out
 
@@ -17,14 +17,14 @@ def add_parser(subparsers) -> None:
     capture.set_defaults(run=run, op="capture", to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> entities.CaptureParams:
-    return entities.CaptureParams(text=args.text or "", type=args.type_name)
+def to_params(args: argparse.Namespace) -> capture.CaptureParams:
+    return capture.CaptureParams(text=args.text or "", type=args.type_name)
 
 
 def run(args: argparse.Namespace) -> int:
     session = Project(args.project)
     session.intake_type(args.type_name)  # refused before anything is read
     args.text = read_text_input(args.text)
-    captured = entities.capture(to_params(args), session)
+    captured = capture.capture(to_params(args), session)
     out(captured.id)
     return 0

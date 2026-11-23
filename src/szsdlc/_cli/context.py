@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from ..ops import Project, queries
+from ..ops import Project, context
 from ._output import emit_json, out
 
 
@@ -14,12 +14,12 @@ def add_parser(subparsers) -> None:
     ctx.set_defaults(run=run, op="context", to_params=to_params)
 
 
-def to_params(args: argparse.Namespace) -> queries.ContextParams:
-    return queries.ContextParams()
+def to_params(args: argparse.Namespace) -> context.ContextParams:
+    return context.ContextParams()
 
 
 def run(args: argparse.Namespace) -> int:
-    built = queries.context(to_params(args), Project(args.project))
+    built = context.context(to_params(args), Project(args.project))
     if args.as_json:
         emit_json({
             "counters": built.counters,
