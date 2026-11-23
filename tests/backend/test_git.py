@@ -1,278 +1,33 @@
-"""Backends: settings layering, where a project is kept, and git sync.
-
-The git remote here is a bare repository on disk, which exercises the real
-backend end to end without a network.
-"""
+"""szsdlc.backend.git: resolution, and the backend end to end against a bare remote on disk."""
 
 from __future__ import annotations
 
 import io
 import json
+import pytest
 import shutil
-import subprocess
 from pathlib import Path
 
-import pytest
-
-from szsdlc import backend, cli, hooks, settings
+from szsdlc import backend, hooks
 from szsdlc.errors import ConfigError
 
-GIT = "SZSDLC_BACKEND_GIT_"
-DIR = "SZSDLC_BACKEND_DIR_"
+from .conftest import DIR, GIT
 
+from .conftest import DIR, GIT, git, last_commit, remote_files, run, write_settings
 
-def git(*args: str, cwd: Path | None = None) -> str:
-    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True,
-                          text=True).stdout
 
-
-def write_settings(path: Path, env: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"env": env}), encoding="utf-8")
-
-
-@pytest.fixture
-def bare(tmp_path) -> Path:
-    path = tmp_path / "remote.git"
-    git("init", "--bare", "--quiet", "--initial-branch=main", str(path))
-    return path
-
-
-@pytest.fixture
-def workdir(tmp_path, monkeypatch) -> Path:
-    path = tmp_path / "work" / "myproj"
-    path.mkdir(parents=True)
-    monkeypatch.chdir(path)
-    return path
-
-
-@pytest.fixture
-def user(isolated_settings) -> Path:
-    return isolated_settings / "settings.json"
-
-
-def remote_files(bare: Path, branch: str = "main") -> list[str]:
-    return git("--git-dir", str(bare), "ls-tree", "-r", "--name-only", branch).split()
-
-
-def last_commit(bare: Path, branch: str = "main") -> str:
-    return git("--git-dir", str(bare), "log", "-1", "--format=%s", branch).strip()
-
-
-def run(*argv: str) -> int:
-    return cli.main(list(argv))
-
-
-# ---------------------------------------------------------------------------
-# Settings
-# ---------------------------------------------------------------------------
-
-
-def test_layers_override_key_by_key(user, workdir):
-    write_settings(user, {f"{GIT}URL": "u-user", f"{GIT}CLONE_ROOT": "/tmp/all",
-                          "OTHER": "ignored"})
-    write_settings(workdir / ".claude" / "settings.json", {f"{GIT}URL": "u-project"})
-    write_settings(workdir / ".claude" / "settings.local.json", {f"{GIT}SUBDIR": "x"})
-
-    found = settings.load(workdir / "deeper")
-    assert found[f"{GIT}URL"].value == "u-project"
-    assert found[f"{GIT}CLONE_ROOT"].value == "/tmp/all"
-    assert found[f"{GIT}SUBDIR"].source.endswith("settings.local.json")
-    assert "OTHER" not in found
-
-
-def test_the_process_environment_wins(user, workdir, monkeypatch):
-    write_settings(user, {"SZSDLC_BACKEND": "git"})
-    monkeypatch.setenv("SZSDLC_BACKEND", "dir")
-    assert settings.load(workdir)["SZSDLC_BACKEND"].source == settings.ENVIRONMENT
-
-
-def test_claude_project_dir_names_the_project_layer(isolated_settings, tmp_path, monkeypatch):
-    project = tmp_path / "elsewhere"
-    write_settings(project / ".claude" / "settings.json", {"SZSDLC_BACKEND": "dir"})
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(project))
-    assert settings.load()["SZSDLC_BACKEND"].value == "dir"
-    assert settings.load(project / "deep" / "er")["SZSDLC_BACKEND"].value == "dir"
-    # Outside it, with no settings of its own: another project, with none.
-    assert "SZSDLC_BACKEND" not in settings.load(tmp_path / "unrelated")
-
-
-def test_the_user_directory_is_not_a_project_layer(isolated_settings, user, monkeypatch):
-    write_settings(user, {"SZSDLC_BACKEND": "dir"})
-    assert settings.project_dir(isolated_settings / "sub") is None
-
-
-def test_malformed_settings_are_a_config_error(user, workdir):
-    user.write_text("{nope", encoding="utf-8")
-    with pytest.raises(ConfigError):
-        settings.load(workdir)
-
-
-def test_booleans_parse_in_every_spelling():
-    make = lambda v: settings.Setting("K", v, "here", Path("."))  # noqa: E731
-    assert make("Yes").as_bool() and not make("off").as_bool()
-    with pytest.raises(ConfigError):
-        make("maybe").as_bool()
-
-
-# ---------------------------------------------------------------------------
-# Selecting a backend
-# ---------------------------------------------------------------------------
-
-
-def test_workdir_is_the_default(workdir):
-    """There is always a backend. The plain case is one of them, not the lack
-    of one — so every caller gets an object and none branches on None."""
-    assert backend.resolve(workdir).type == backend.WORKDIR
-    assert backend.select(workdir).type == backend.WORKDIR
-
-
-def test_the_workdir_backend_has_nothing_to_say_and_nothing_to_do(workdir):
-    """The degenerate implementation, pinned.
-
-    Every one of these is a protocol obligation with no work behind it, and
-    two are reached by nothing today — `restore` because this backend is never
-    recorded, `summary` because it is only said when the project is elsewhere.
-    They are asserted so that the next backend, written by copying this one,
-    does not inherit an answer nobody ever read.
-    """
-    assert run("init") == 0
-    chosen = backend.resolve(workdir)
-    assert chosen.describe() == []            # no settings, and you are here
-    assert chosen.summary() == "in the working directory"
-    assert chosen.materialize() is None       # the tree already exists
-    assert backend.sync(chosen, "x").ok  # nothing to bring into agreement
-
-    restored = backend.backend_class("workdir").restore(workdir, {})
-    assert restored.root == workdir  # the project, not an empty directory
-
-
-def test_only_the_selected_backends_keys_are_read(user, workdir, tmp_path):
-    write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": "u",
-                          f"{DIR}PATH": str(tmp_path / "d")})
-    assert backend.resolve(workdir).type == "git"
-    write_settings(workdir / ".claude" / "settings.json", {"SZSDLC_BACKEND": "dir"})
-    chosen = backend.resolve(workdir)
-    assert chosen.type == "dir" and chosen.root == tmp_path / "d"
-
-
-def test_a_project_can_return_to_workdir(user, workdir):
-    write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": "u"})
-    write_settings(workdir / ".claude" / "settings.json", {"SZSDLC_BACKEND": "workdir"})
-    assert backend.resolve(workdir).type == backend.WORKDIR
-
-
-def test_settings_without_a_selector_do_nothing(user, workdir):
-    write_settings(user, {f"{GIT}URL": "u"})
-    assert backend.resolve(workdir).type == backend.WORKDIR
-
-
-def test_an_unknown_backend_is_refused(user, workdir):
-    write_settings(user, {"SZSDLC_BACKEND": "carrier-pigeon"})
-    with pytest.raises(ConfigError, match="not a known backend"):
-        backend.resolve(workdir)
-
-
-def test_an_unknown_key_of_the_selected_backend_is_refused(user, workdir):
-    write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": "u", f"{GIT}COLOUR": "blue"})
-    with pytest.raises(ConfigError, match="COLOUR"):
-        backend.resolve(workdir)
-
-
-@pytest.mark.parametrize("selected, missing", [("git", f"{GIT}URL"), ("dir", f"{DIR}PATH")])
-def test_a_required_key_is_named_when_missing(user, workdir, selected, missing):
-    write_settings(user, {"SZSDLC_BACKEND": selected})
-    with pytest.raises(ConfigError, match=missing):
-        backend.resolve(workdir)
-
-
-def test_backends_are_pluggable(user, workdir, monkeypatch):
-    calls = []
-
-    class Fake:
-        type = "fake"
-        keys = frozenset({"WHERE"})
-
-        def __init__(self, store):
-            self.store = self.root = store
-
-        @classmethod
-        def from_settings(cls, found, context):
-            return cls(Path(found["WHERE"].value))
-
-        @classmethod
-        def restore(cls, store, state):
-            return cls(store)
-
-        def state(self):
-            return {}
-
-        def describe(self):
-            return [("where", str(self.store), ("WHERE",))]
-
-        def summary(self):
-            return "somewhere fake"
-
-        def materialize(self):
-            self.store.mkdir(parents=True, exist_ok=True)
-            calls.append("materialize")
-
-        def has_local_changes(self):
-            return True
-
-        def commit(self, reason):
-            return backend.SyncReport()
-
-        def sync(self, reason):
-            calls.append(reason)
-            return backend.SyncReport(outgoing=True)
-
-    backend.backend_class("git")  # populate the registry first
-    monkeypatch.setitem(backend.BACKENDS, "fake", Fake)
-    write_settings(user, {"SZSDLC_BACKEND": "fake",
-                          "SZSDLC_BACKEND_FAKE_WHERE": str(workdir.parent / "f")})
-
-    assert run("init") == 0
-    assert calls[0] == "materialize" and calls[-1] == "init"
-    assert not (workdir / ".szsdlc").exists()
-
-
-# ---------------------------------------------------------------------------
-# dir
-# ---------------------------------------------------------------------------
-
-
-def test_dir_writes_straight_into_another_directory(user, workdir, tmp_path, capsys):
-    store = tmp_path / "trackers"
-    write_settings(user, {"SZSDLC_BACKEND": "dir", f"{DIR}PATH": str(store / "{project}")})
-    assert run("init") == 0
-    assert run("capture", "kept elsewhere") == 0
-    assert list(workdir.iterdir()) == []
-    assert (store / "myproj" / ".szsdlc" / "config.yml").is_file()
-    # Nothing to sync, ever: the files are already where they are kept.
-    assert backend.sync_at(workdir, "x", only_if_changed=True) is None
-    report = backend.sync_at(workdir, "x")
-    assert report.ok and not report.incoming and not report.outgoing
-
-
-def test_a_relative_dir_path_resolves_against_the_project(workdir):
-    write_settings(workdir / ".claude" / "settings.json",
-                   {"SZSDLC_BACKEND": "dir", f"{DIR}PATH": "../tracking"})
-    assert backend.resolve(workdir).root == workdir.parent / "tracking"
-
-
-def test_dir_refuses_a_file(user, workdir, tmp_path):
-    (tmp_path / "f").write_text("x")
-    write_settings(user, {"SZSDLC_BACKEND": "dir", f"{DIR}PATH": str(tmp_path / "f")})
-    with pytest.raises(ConfigError, match="not a directory"):
-        backend.project_root(workdir)
+def push_from_other(bare: Path, tmp_path: Path, change, message: str = "theirs") -> None:
+    other = tmp_path / f"other-{message}"
+    git("clone", "--quiet", str(bare), str(other))
+    change(other)
+    git("add", "-A", cwd=other)
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", message, cwd=other)
+    git("push", "-q", "origin", "HEAD:main", cwd=other)
 
 
 # ---------------------------------------------------------------------------
 # git: resolution
 # ---------------------------------------------------------------------------
-
-
 def test_the_clone_is_hidden_beside_claude_by_default(isolated_settings, user, workdir):
     write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": "git@h:me/track.git"})
     chosen = backend.resolve(workdir)
@@ -334,30 +89,9 @@ def test_a_restored_store_keeps_its_subdir(user, bare, workdir, capsys):
     assert backend.managed(chosen.store).root == chosen.store / "projects" / "myproj"
 
 
-def test_concurrent_registrations_keep_every_store(user, tmp_path):
-    import threading
-
-    from szsdlc.backend.dir import DirBackend
-
-    stores = [DirBackend(tmp_path / f"s{i}") for i in range(12)]
-    threads = [threading.Thread(target=backend._register, args=(s,)) for s in stores]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-    assert set(backend._read_registry()) == {str(s.store) for s in stores}
-    assert not list(backend._registry_path().parent.glob("*.tmp"))
-
-
 # ---------------------------------------------------------------------------
 # git: end to end
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def configured(user, bare, workdir):
-    write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": str(bare)})
-    return backend.resolve(workdir)
 
 
 def test_init_writes_to_the_clone_and_pushes(configured, bare, workdir, capsys):
@@ -613,8 +347,6 @@ def test_working_inside_the_clone_still_syncs(configured, bare, workdir, monkeyp
 # ---------------------------------------------------------------------------
 # Hooks and the backend command
 # ---------------------------------------------------------------------------
-
-
 def test_session_start_says_where_the_files_are(configured, workdir, capsys):
     run("init")
     capsys.readouterr()
@@ -764,19 +496,6 @@ def test_the_edit_hook_never_reaches_the_backend(configured, workdir, monkeypatc
     assert git("status", "--porcelain", cwd=configured.store) != ""
 
 
-def test_an_unexpected_sync_failure_is_still_reported(configured, workdir, monkeypatch, capsys):
-    run("init")
-
-    def explode(*args, **kwargs):
-        raise PermissionError("locks directory is read-only")
-
-    monkeypatch.setattr(backend, "sync_at", explode)
-    capsys.readouterr()
-    assert hooks.user_prompt_submit({"cwd": str(workdir)}) == 0
-    out = capsys.readouterr().out
-    assert "szsdlc sync: PermissionError: locks directory is read-only" in out
-
-
 def test_session_start_describes_the_state_after_the_pull(configured, bare, workdir,
                                                           tmp_path, monkeypatch, capsys):
     run("init")
@@ -825,15 +544,6 @@ def test_prompt_hook_reports_a_failed_sync_into_context(configured, bare, workdi
 # ---------------------------------------------------------------------------
 
 
-def push_from_other(bare: Path, tmp_path: Path, change, message: str = "theirs") -> None:
-    other = tmp_path / f"other-{message}"
-    git("clone", "--quiet", str(bare), str(other))
-    change(other)
-    git("add", "-A", cwd=other)
-    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", message, cwd=other)
-    git("push", "-q", "origin", "HEAD:main", cwd=other)
-
-
 def test_a_remote_helper_url_never_runs_the_helper(user, workdir, tmp_path, monkeypatch):
     helpers = tmp_path / "bin"
     helpers.mkdir()
@@ -864,28 +574,10 @@ def test_credentials_in_a_query_are_never_shown():
     assert redact("https://host/t.git?access_token=s3cret") == "https://host/t.git?***"
 
 
-def test_aliases_of_one_store_share_a_lock(isolated_settings, tmp_path):
-    real = tmp_path / "real"
-    real.mkdir()
-    alias = tmp_path / "alias"
-    alias.symlink_to(real)
-    with backend._locked(real):
-        pass
-    with backend._locked(alias):
-        pass
-    assert len(list((isolated_settings / "szsdlc" / "locks").iterdir())) == 1
-
-
 def test_a_first_clone_that_fails_is_said_at_session_start(user, workdir, tmp_path, capsys):
     write_settings(user, {"SZSDLC_BACKEND": "git", f"{GIT}URL": str(tmp_path / "nowhere")})
     assert hooks.session_start({"cwd": str(workdir)}) == 0
     assert "szsdlc backend: " in capsys.readouterr().out
-
-
-def test_no_project_and_no_backend_stays_silent(workdir, capsys):
-    assert hooks.session_start({"cwd": str(workdir)}) == 0
-    assert hooks.user_prompt_submit({"cwd": str(workdir)}) == 0
-    assert capsys.readouterr().out == ""
 
 
 def test_a_clone_killed_part_way_is_cleared_for_the_next_try(user, bare, workdir, tmp_path,
@@ -936,48 +628,13 @@ def test_without_a_branch_the_clone_must_be_on_the_remote_default(user, bare, wo
         backend.project_root(workdir)
 
 
-def test_an_unreadable_registry_is_never_overwritten(user, workdir, tmp_path):
-    from szsdlc.backend.dir import DirBackend
-
-    path = backend._registry_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("{broken", encoding="utf-8")
-    with pytest.raises(ConfigError, match="cannot be read"):
-        backend._register(DirBackend(tmp_path / "d"))
-    assert path.read_text(encoding="utf-8") == "{broken"
-
-
-def test_a_filesystem_failure_in_the_backend_never_fails_the_command(configured, workdir,
-                                                                     monkeypatch, capsys):
-    run("init")
-
-    def explode(*args, **kwargs):
-        raise PermissionError("locks directory is read-only")
-
-    monkeypatch.setattr(backend, "sync_at", explode)
-    assert run("capture", "still works") == 0
-    assert "read-only" in capsys.readouterr().err
-
-
 def test_local_git_work_fits_inside_the_edit_hook():
     from szsdlc.backend import git as git_backend
 
-    hooks_json = json.loads((Path(__file__).parent.parent / "hooks" / "hooks.json").read_text())
+    hooks_json = json.loads((Path(__file__).parents[2] / "hooks" / "hooks.json").read_text())
     post = hooks_json["hooks"]["PostToolUse"][0]["hooks"][0]["timeout"]
     # add, diff, commit, plus the origin and branch checks before them.
     assert git_backend.LOCAL_TIMEOUT * 3 < post
-
-
-def test_dash_c_to_another_project_reads_its_own_settings(isolated_settings, tmp_path,
-                                                          monkeypatch):
-    here = tmp_path / "here"
-    write_settings(here / ".claude" / "settings.json", {"SZSDLC_BACKEND": "workdir"})
-    there = tmp_path / "there"
-    write_settings(there / ".claude" / "settings.json", {"SZSDLC_BACKEND": "dir"})
-    monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(here))
-    assert settings.load(there)["SZSDLC_BACKEND"].value == "dir"
-    assert settings.load(here / "sub")["SZSDLC_BACKEND"].value == "workdir"
-    assert settings.load()["SZSDLC_BACKEND"].value == "workdir"
 
 
 def test_the_turn_end_redraws_what_it_pulled(configured, bare, workdir, tmp_path, capsys):
@@ -1028,8 +685,6 @@ def test_a_pulled_symlink_out_of_the_clone_stops_the_sync(user, bare, workdir, t
 # ---------------------------------------------------------------------------
 # Third review round
 # ---------------------------------------------------------------------------
-
-
 def test_a_clone_that_pushes_elsewhere_is_refused(configured, bare, workdir, tmp_path, capsys):
     run("init")
     elsewhere = tmp_path / "elsewhere.git"
@@ -1086,13 +741,6 @@ def test_without_a_branch_sync_learns_the_remote_default(user, bare, workdir, tm
     assert "side" not in git("--git-dir", str(bare), "branch", "--list")
 
 
-def test_extensions_never_hide_the_builtin_backends(monkeypatch):
-    monkeypatch.setattr(backend, "BACKENDS", {"custom": object})
-    monkeypatch.setattr(backend, "_builtins_loaded", False)
-    assert backend.backend_class("git").type == "git"
-    assert "custom" in backend.BACKENDS
-
-
 def test_a_sync_never_outlasts_its_budget(configured, workdir, monkeypatch, capsys):
     from szsdlc.backend import git as git_backend
 
@@ -1147,17 +795,3 @@ def test_a_redraw_that_fails_after_a_pull_is_said(configured, bare, workdir, tmp
     hooks.stop({"cwd": str(workdir)})
     assert "redrawing after the sync failed: RuntimeError: template missing" in \
         capsys.readouterr().err
-
-
-# ---------------------------------------------------------------------------
-# refresh — the latest becomes current, nothing is sent (WI-0047)
-# ---------------------------------------------------------------------------
-
-
-def test_a_backend_without_refresh_is_a_problem_not_a_crash(tmp_path):
-    class Old:
-        type = "old"
-        store = tmp_path
-
-    report = backend.refresh(Old())
-    assert not report.ok and "the old backend cannot refresh" in report.problem

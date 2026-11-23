@@ -6,7 +6,7 @@ import pytest
 import shutil
 from pathlib import Path
 
-from test_backend import DIR, GIT, bare, configured, git, run, user, workdir, write_settings
+from backend.conftest import DIR, GIT, bare, configured, git, run, user, workdir, write_settings
 
 
 def _push_from_elsewhere(bare: Path, tmp_path: Path, name: str, text: str) -> None:
