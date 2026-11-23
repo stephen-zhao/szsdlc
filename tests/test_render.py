@@ -176,7 +176,11 @@ def test_board_separates_every_group_from_the_list_above_it(world, write_entity)
 
     starts = [i for i, line in enumerate(lines)
               if line.startswith("#") or (line.startswith("**") and line.endswith("**"))]
-    assert len(starts) >= 6  # type and status headings, and parent labels
+    # Name the groups, so a section that vanished cannot pass by omission.
+    started = {lines[i] for i in starts}
+    for expected in ("## Spike", "### answered (1)", "## Work item", "### executing (3)",
+                     "**Sentinel quorum**", "**(no parent)**"):
+        assert expected in started, f"{expected!r} missing from the board"
     for i in starts:
         assert lines[i - 1] == "", f"{lines[i]!r} follows {lines[i - 1]!r}"
     # Bullets within one group stay a tight list.
