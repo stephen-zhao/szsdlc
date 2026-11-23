@@ -239,7 +239,7 @@ def test_the_suggested_fix_actually_works(tmp_path, invoke, name, setup, argv, e
 
 def test_an_internal_exception_is_converted_not_raised(tmp_path, invoke, monkeypatch):
     config = build_project(tmp_path)
-    monkeypatch.setattr("szsdlc.cli.Session",
+    monkeypatch.setattr("szsdlc._cli._session.Session",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
     code, output, err = invoke(config.root, "list")
     assert code == 1
@@ -252,7 +252,7 @@ def test_a_model_invariant_breach_is_a_bug_not_a_finding(tmp_path, invoke, monke
     from szsdlc.errors import InternalError
 
     config = build_project(tmp_path)
-    monkeypatch.setattr("szsdlc.cli.Session",
+    monkeypatch.setattr("szsdlc._cli._session.Session",
                         lambda *a, **k: (_ for _ in ()).throw(InternalError("bad state")))
     code, _, err = invoke(config.root, "list")
     assert code == 1

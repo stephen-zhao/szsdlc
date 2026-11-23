@@ -370,7 +370,7 @@ def test_no_traceback_ever_reaches_stderr(run, monkeypatch, capsys):
     def explode(*_args, **_kwargs):
         raise RuntimeError("something internal went wrong")
 
-    monkeypatch.setattr("szsdlc.cli.Session", explode)
+    monkeypatch.setattr("szsdlc._cli._session.Session", explode)
     code, _, err = run("inbox")
     assert code == 1
     assert "Traceback" not in err

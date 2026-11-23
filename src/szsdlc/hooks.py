@@ -117,7 +117,7 @@ def _session(start: Path | str | None):
 
 def _load(start: Path | str | None):
     """(session, None), or (None, what went wrong as a short message)."""
-    from .cli import Session
+    from ._cli._session import Session
     from .errors import SzsdlcError
 
     try:
