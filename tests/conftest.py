@@ -14,20 +14,41 @@ from szsdlc import sections
 from szsdlc.ids import IdSpace
 
 
-@pytest.fixture(autouse=True)
-def isolated_settings(tmp_path_factory, monkeypatch):
-    """Keep the developer's own Claude settings — and any backend they select —
-    out of every test. A test that wants a backend configures one itself."""
+def _isolate(patch: pytest.MonkeyPatch, claude_dir: Path) -> None:
+    """Point every settings source szsdlc reads at nothing."""
     import os
 
-    claude_dir = tmp_path_factory.mktemp("claude-config")
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
-    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    patch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+    patch.delenv("CLAUDE_PROJECT_DIR", raising=False)
     # The suite may itself run inside Claude Code; tests opt into a turn.
-    monkeypatch.delenv("CLAUDECODE", raising=False)
+    patch.delenv("CLAUDECODE", raising=False)
     for key in list(os.environ):
-        if key.startswith("SZSDLC_BACKEND"):
-            monkeypatch.delenv(key)
+        if key.startswith("SZSDLC_"):
+            patch.delenv(key)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def clean_environment(tmp_path_factory):
+    """The same isolation, once, before any fixture of any scope.
+
+    The function-scoped fixture below is not enough on its own: pytest builds
+    wider-scoped fixtures first, so a module-scoped one (the example project in
+    `test_example.py`) used to load with the developer's backend still selected
+    and resolve through it (WI-0052).
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        _isolate(patch, tmp_path_factory.mktemp("claude-config-session"))
+        yield
+
+
+@pytest.fixture(autouse=True)
+def isolated_settings(clean_environment, tmp_path_factory, monkeypatch):
+    """Keep the developer's own Claude settings — and any backend they select —
+    out of every test, with a fresh, empty settings directory per test so no
+    test's settings reach another. A test that wants a backend configures one
+    itself."""
+    claude_dir = tmp_path_factory.mktemp("claude-config")
+    _isolate(monkeypatch, claude_dir)
     return claude_dir
 
 
