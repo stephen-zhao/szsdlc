@@ -164,6 +164,26 @@ def test_board_covers_work_only_and_groups_by_parent(world):
     assert "**Sentinel quorum**" in body
 
 
+def test_board_separates_every_group_from_the_list_above_it(world, write_entity):
+    """WI-0034: `### answered (2)` followed the last bullet with no blank line,
+    so Markdown swallowed the heading into the list. The same happened to the
+    next parent label and the next type heading."""
+    write_entity("work_item", 3, "title: Loose end\nstatus: executing\nopened: 2026-08-03\n",
+                 slug="loose-end")
+    write_entity("work_item", 4, "title: Another loose end\nstatus: executing\nopened: 2026-08-03\n",
+                 slug="another-loose-end")
+    lines = view_text(world, "board").splitlines()
+
+    starts = [i for i, line in enumerate(lines)
+              if line.startswith("#") or (line.startswith("**") and line.endswith("**"))]
+    assert len(starts) >= 6  # type and status headings, and parent labels
+    for i in starts:
+        assert lines[i - 1] == "", f"{lines[i]!r} follows {lines[i - 1]!r}"
+    # Bullets within one group stay a tight list.
+    loose = next(i for i, line in enumerate(lines) if line.startswith("- WI-0003 "))
+    assert lines[loose + 1].startswith("- WI-0004 ")
+
+
 def test_tag_index_answers_what_touches_this(world):
     body = view_text(world, "tag-index")
     assert "## valkey (3)" in body
