@@ -1,12 +1,11 @@
-"""szsdlc schedule: place on a roadmap; --after/--before/--top.
-szsdlc unschedule: take off the roadmap."""
+"""szsdlc schedule / unschedule: place an entity on a roadmap, or take it off."""
 
 from __future__ import annotations
 
 import argparse
 
-from ..errors import BadInput
-from . import _session
+from ..ops import Project, schedule
+from ..roadmap import Placement
 from ._output import out
 
 
@@ -18,36 +17,32 @@ def add_parser(subparsers) -> None:
     schedule.add_argument("--before", default=None)
     schedule.add_argument("--top", action="store_true")
     schedule.add_argument("--roadmap", default=None)
-    schedule.set_defaults(run=run_schedule)
+    schedule.set_defaults(run=run_schedule, op="schedule", to_params=to_schedule_params)
 
     unschedule = subparsers.add_parser("unschedule", prog="szsdlc unschedule")
     unschedule.add_argument("ref")
     unschedule.add_argument("--roadmap", default=None)
-    unschedule.set_defaults(run=run_unschedule)
+    unschedule.set_defaults(run=run_unschedule, op="unschedule",
+                            to_params=to_unschedule_params)
+
+
+def to_schedule_params(args: argparse.Namespace) -> schedule.ScheduleParams:
+    return schedule.ScheduleParams(ref=args.ref, horizon=args.horizon, after=args.after,
+                                   before=args.before, top=args.top, roadmap=args.roadmap)
+
+
+def to_unschedule_params(args: argparse.Namespace) -> schedule.UnscheduleParams:
+    return schedule.UnscheduleParams(ref=args.ref, roadmap=args.roadmap)
 
 
 def run_schedule(args: argparse.Namespace) -> int:
-    from ..roadmap import Scheduler
-
-    session = _session.Session(args.project)
-    scheduler = Scheduler(session.config, session.store, args.roadmap, session.ids)
-    placement = scheduler.schedule(args.ref, args.horizon, after=args.after,
-                                   before=args.before, top=args.top)
-    out(str(placement))
+    placed = schedule.schedule(to_schedule_params(args), Project(args.project))
+    out(str(Placement(placed.entity, placed.roadmap, placed.horizon, placed.index,
+                      placed.after, placed.before)))
     return 0
 
 
 def run_unschedule(args: argparse.Namespace) -> int:
-    from ..roadmap import Scheduler
-
-    session = _session.Session(args.project)
-    scheduler = Scheduler(session.config, session.store, args.roadmap, session.ids)
-    entity_id = session.ids.resolve(args.ref)
-    if not scheduler.unschedule(entity_id):
-        raise BadInput(
-            f"{entity_id.text} is not on roadmap {scheduler.roadmap.name!r}.",
-            fix=f"szsdlc schedule {entity_id.text} --horizon "
-                f"{scheduler.roadmap.spec.horizons[-1]}",
-        )
-    out(f"{entity_id.text}: off {scheduler.roadmap.name}")
+    off = schedule.unschedule(to_unschedule_params(args), Project(args.project))
+    out(f"{off.id}: off {off.roadmap}")
     return 0

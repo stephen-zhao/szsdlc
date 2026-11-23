@@ -1,13 +1,26 @@
-"""szsdlc sync: render, then put the project in step with where it is kept."""
+"""szsdlc sync: render, then bring the project into step with where it is kept."""
 
 from __future__ import annotations
 
-from . import render
+import argparse
+
+from ..ops import sync
+from ._output import out
 
 
 def add_parser(subparsers) -> None:
-    # Same runner as `render`: rendering is all a sync does locally, and the
-    # legs that reach the backend are the wrapper's, keyed off the name.
-    sync = subparsers.add_parser("sync", prog="szsdlc sync")
-    sync.add_argument("--verbose", action="store_true")
-    sync.set_defaults(run=render.run)
+    parser = subparsers.add_parser("sync", prog="szsdlc sync")
+    parser.add_argument("--verbose", action="store_true")
+    parser.set_defaults(run=run, op="sync", to_params=to_params)
+
+
+def to_params(args: argparse.Namespace) -> sync.SyncParams:
+    return sync.SyncParams()
+
+
+def run(args: argparse.Namespace) -> int:
+    synced = sync.sync(to_params(args), args.project)
+    if args.verbose:
+        for path in synced.changed:
+            out(path)
+    return 0

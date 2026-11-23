@@ -24,6 +24,7 @@ loading, and you cannot report a problem you refused to represent.
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -314,6 +315,14 @@ class Entity:
 
     def render(self) -> str:
         return self.doc.render()
+
+    def content_hash(self) -> str:
+        """The sha256 of this entity's own text as loaded: what a precondition compares.
+
+        Its own text, not its file's: a `section` entity shares the file with
+        its neighbours, and an edit to one of them must not make this one stale.
+        """
+        return hashlib.sha256(self.render().encode("utf-8")).hexdigest()
 
     def save(self) -> None:
         """Write bytes, not text: line endings are part of what stays untouched.

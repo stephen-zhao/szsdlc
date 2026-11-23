@@ -6,18 +6,8 @@ import argparse
 from typing import Any
 
 from ..errors import BadInput
-
-
-#: C6 — every listing is bounded, and the bound is the same everywhere.
-DEFAULT_LIMIT = 20
-
-
-#: `next` is tighter still: it answers "what now", and an answer of twenty
-#: things is not an answer.
-NEXT_LIMIT = 10
-
-
-STANDARDS_LIMIT = 10
+#: C6 — every listing is bounded; the bounds are the operations' own defaults.
+from ..ops._listing import DEFAULT_LIMIT, NEXT_LIMIT, STANDARDS_LIMIT  # noqa: F401
 
 
 class Parser(argparse.ArgumentParser):

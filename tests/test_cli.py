@@ -24,7 +24,7 @@ def test_the_shim_exports_exactly_its_public_surface():
     import szsdlc.cli as cli
     from szsdlc import _cli
 
-    assert sorted(cli.__all__) == ["COMMANDS", "HIDDEN_COMMANDS", "Session", "build_parser",
+    assert sorted(cli.__all__) == ["COMMANDS", "HIDDEN_COMMANDS", "build_parser",
                                    "compact_help", "main", "run"]
     public = {n for n in vars(cli) if not n.startswith("_") and n not in ("annotations", "sys")}
     assert public == set(cli.__all__)

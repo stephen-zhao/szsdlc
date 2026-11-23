@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-import argparse
 import datetime as dt
 import shlex
-import sys
+from collections.abc import Sequence
 from typing import Any
 
 from ..errors import BadInput, SzsdlcError
-from ..model import Entity, load_all
-from . import _journal, _queries, _session
+from ..model import Entity
+from . import _journal, _queries
+from ._project import Project
 
 
-def after_status_change(session: "Session", entity: Entity, was_terminal: bool) -> list[str]:
+def after_status_change(session: Project, entity: Entity, was_terminal: bool) -> list[str]:
     """What a status change implies beyond the status, for every command that makes one.
 
     Reaching a terminal state retires the item from every roadmap; leaving one
@@ -27,7 +27,7 @@ def after_status_change(session: "Session", entity: Entity, was_terminal: bool) 
     return notes
 
 
-def retire_from_roadmaps(session: "Session", entity: Entity) -> list[str]:
+def retire_from_roadmaps(session: Project, entity: Entity) -> list[str]:
     """Take a newly-terminal entity off every roadmap it sits on.
 
     A roadmap states what is *going to be done*, so a finished entity on one
@@ -55,21 +55,22 @@ def retire_from_roadmaps(session: "Session", entity: Entity) -> list[str]:
     return removed
 
 
-def force_reason(args: argparse.Namespace, entity: Entity) -> str | None:
-    """The reason a `set --force` gives, or a refusal; None without `--force`.
+def force_reason(entity: Entity, assignments: Sequence[str], force: bool,
+                 reason: str | None) -> str | None:
+    """The reason a forced `set` gives, or a refusal; None without `force`.
 
-    Read before anything is written, so a refusal never leaves half a change.
-    `--force` is a person overriding the workflow, and the reason is what
-    makes the override legible later — so it is required, read from stdin
-    when not given (as `drop` does), and never defaulted.
+    Checked before anything is written, so a refusal never leaves half a
+    change. Forcing is a person overriding the workflow, and the reason is
+    what makes the override legible later — so it is required and never
+    defaulted. (The CLI reads it from stdin when `--reason` is not given.)
     """
     ref = entity.id.text
-    statuses = [a for a in args.assignments if a.partition("=")[0].strip() == "status"]
-    if not args.force:
-        if args.reason is not None:
+    statuses = [a for a in assignments if a.partition("=")[0].strip() == "status"]
+    if not force:
+        if reason is not None:
             raise BadInput(
                 f"set: --reason explains a forced move, and there is no --force.",
-                fix=f"szsdlc set {ref} {' '.join(map(shlex.quote, args.assignments))}",
+                fix=f"szsdlc set {ref} {' '.join(map(shlex.quote, assignments))}",
             )
         return None
     if not statuses:
@@ -77,16 +78,12 @@ def force_reason(args: argparse.Namespace, entity: Entity) -> str | None:
             f"set: --force applies only to a status= assignment, and there is none.",
             fix=f'szsdlc set {ref} status=<status> --force --reason "why"',
         )
-
-    reason = args.reason
-    if reason is None and not sys.stdin.isatty():
-        reason = sys.stdin.read()
     reason = " ".join((reason or "").split())
     if not reason:
         raise BadInput(
             f"{ref}: a forced status change needs a reason, so the exception "
             f"is legible later.",
-            fix=f"szsdlc set {ref} {' '.join(map(shlex.quote, args.assignments))} "
+            fix=f"szsdlc set {ref} {' '.join(map(shlex.quote, assignments))} "
                 f'--force --reason "why this move"',
         )
     return reason
@@ -109,7 +106,7 @@ def record_forced_move(entity: Entity, transition: Any, reason: str) -> None:
         _journal.append_journal(entity, artifact, f"forced {move}")
 
 
-def reopen_notes(session: _session.Session, entity: Entity) -> list[str]:
+def reopen_notes(session: Project, entity: Entity) -> list[str]:
     """What reaching a terminal status had done, now that it is undone.
 
     Only reported, never reversed. Scheduling is a judgment about the whole

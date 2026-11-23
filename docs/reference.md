@@ -487,6 +487,68 @@ at install time, `uv tool` builds one venv per tool, and `py` is a separate
 binary. The package's only say is `requires-python`, which the test suite
 holds the launchers to.
 
+## In-process API: `szsdlc.ops`
+
+Every command is an operation first, and `szsdlc.ops` is the supported way to
+run one from Python. `szsdlc._cli` is one interface on top of it, and is not
+an import surface.
+
+```python
+from szsdlc import ops
+
+shown = ops.call("show", {"ref": "WI-0042"}, "path/to/project")
+ops.call("set", {"ref": "WI-0042", "assignments": ["status=ready"],
+                 "expect": shown.hash}, "path/to/project")
+```
+
+- **`ops.call(name, params, project)`** runs one operation.
+  - `params` is a mapping or the operation's params dataclass.
+  - `project` is a loaded `ops.Project`, a path to start from, or `None` for
+    the current directory.
+- **What comes back** is a typed result: a frozen dataclass whose `to_dict()`
+  is JSON-safe. An operation never prints, never reads argv or stdin, and
+  knows nothing of HTTP.
+- **A mutation's result is its post-state:** what the CLI prints in its one
+  line, as data. Every mutation ends by redrawing the views (tolerantly, and
+  keeping a hand-edited view), so a caller never needs a hook to keep them
+  current.
+- **A query that lists** takes `limit` (`0` for all) and always returns
+  `total`.
+- **`ops.OPERATIONS`** names every operation with its `params` and `result`
+  types, its `kind` (`query` or `mutation`), and the `interfaces` it belongs
+  to. `init` is the CLI's alone.
+
+### Refusals
+
+A refusal is raised as one of `szsdlc.errors`' classes, and
+`ops.refusal_to_data(exc)` gives it as `{class, problem, fix, see}`. `fix` is
+the call that corrects it, as `{op, params}`, or `None` when the remedy is not
+a command, or is a form with a `<placeholder>` to fill in.
+
+| `class` | Raised as | CLI exit |
+|---|---|---|
+| `bad_input` | `BadInput` | 2 |
+| `unknown_reference` | `UnknownReference` (a `BadInput`); its fix names the nearest id | 2 |
+| `refused` | `Refused`: a gate or workflow rule declined | 3 |
+| `validation_failed` | `ValidationFailed` | 4 |
+| `stale_precondition` | `StalePrecondition` (a `Refused`) | 3; the CLI never sends a precondition |
+| `config_error` | `ConfigError` | 5 |
+| `internal` | `InternalError`, or anything unexpected | 1 |
+
+Fixes are written as CLI command text, which REQ-0012 holds byte for byte. The
+structured `fix` is parsed from that text through the CLI's own parser, so the
+two cannot disagree. IDEA-0023 is to reverse this: author fixes as calls and
+render the text from them.
+
+### Preconditions
+
+`show` returns `hash`, the sha256 of the entity's own text as stored. Every
+mutation of an existing entity takes an optional `expect`. Given `expect`, the
+mutation refuses with `stale_precondition`, writing nothing, if the entity no
+longer hashes to it. A caller that reads, then writes, can't silently
+overwrite a change made in between, such as an agent running the CLI on the
+same tree. The CLI never passes one.
+
 ## Development
 
 ```bash
@@ -507,15 +569,28 @@ Windows Python, so the floor has to be whatever both sides can run.
 
 ### Adding a command
 
-A new command is a module `src/szsdlc/_cli/<command>.py` with `add_parser(subparsers)` and
-`run(args)`, a line in `_cli/__init__.py`'s `COMMAND_MODULES` (registration order is help
-order), and a row in `COMMANDS` in `_cli/_parser.py`, which is the `--help` budget and is
-tested as a whole.
+A new command is an operation first:
+
+- **The operation** is a module `src/szsdlc/ops/<command>.py`, named as the
+  command's is. It holds a function `(params, project) -> result`, registered
+  with `@operation(...)`, and the frozen dataclasses for both. Import it in
+  `ops/__init__.py`.
+- **The command** is a module `src/szsdlc/_cli/<command>.py` with:
+  - `add_parser(subparsers)`, whose `set_defaults` names the `op` and its
+    `to_params`;
+  - `to_params(args)`, from the namespace to the params;
+  - `run(args)`, which loads the `Project`, calls the operation and prints
+    the result.
+- **Registration:** a line in `_cli/__init__.py`'s `COMMAND_MODULES`
+  (registration order is help order), and a row in `COMMANDS` in
+  `_cli/_parser.py`, which is the `--help` budget and is tested as a whole.
+
+`tests/_cli/test_parity.py` fails until the command and the operation agree.
 
 ### Where a test goes
 
 The test tree mirrors the source tree: the tests for `src/szsdlc/<path>/<module>.py` live
-in `tests/<path>/test_<module>.py`. A command's tests are in `tests/_cli/test_<command>.py`
+in `tests/<path>/test_<module>.py`. An operation's tests are in `tests/ops/`. A command's tests are in `tests/_cli/test_<command>.py`
 when they assert the command's own behaviour (its output, exit code, flags and refusals, or
 what it adds on top of the module it calls). A test that only uses a command to reach a
 module belongs with that module's tests. Calls used as setup never decide where a test lives.
@@ -539,7 +614,8 @@ Fixtures the CLI's tests share are in `tests/_cli/conftest.py`.
 | `skills/trace/SKILL.md` | Answer "what satisfies REQ-x / where did WI-y come from" |
 | `bin/szsdlc`, `bin/szsdlc.cmd` | Cross-platform launchers resolving the interpreter |
 | `src/szsdlc/cli.py` | The public shim: the entry point, `python -m szsdlc.cli`, and the names other code imports |
-| `src/szsdlc/_cli/` | The commands, one module per command (a paired verb shares one: `tag`, `link`, `schedule`); `__init__.py` builds the parser and dispatches; shared helpers live in the `_` modules; `set_`, `next_` and `list_` end in an underscore so they cannot shadow the builtins |
+| `src/szsdlc/ops/` | The operations, szsdlc's in-process API: one module per operation, named and paired as `_cli`'s are, each with its params and result types; `_registry.py` names them; `_project.py` loads a project; `_refusal.py` gives refusals as data; `_precondition`, `_views`, `_listing` and `_paths` are what mutations and listings share; `_status`, `_journal` and `_queries` are the domain helpers |
+| `src/szsdlc/_cli/` | The commands, one module per command (a paired verb shares one: `tag`, `link`, `schedule`): argv in, an operation called, its result printed; `__init__.py` builds the parser, dispatches and parses a `Fix:` back into a call; `set_`, `next_` and `list_` end in an underscore so they cannot shadow the builtins |
 | `src/szsdlc/errors.py` | The single error channel: C2 shape, exit codes, and the project/model split |
 | `src/szsdlc/config.py` | Load/validate `.szsdlc/config.yml`, apply defaults |
 | `src/szsdlc/ids.py` | Id pattern, prefix/key registry, per-(type,key) counters, tombstone resolution |

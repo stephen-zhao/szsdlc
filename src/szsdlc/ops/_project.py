@@ -1,4 +1,8 @@
-"""Config, ids and entities, loaded once per invocation."""
+"""A project: config, ids and entities, loaded once per call.
+
+Every operation takes one. The CLI builds it from `-C`; an in-process caller
+builds it from a path, or lets `ops.call` do so.
+"""
 
 from __future__ import annotations
 
@@ -8,8 +12,12 @@ from ..ids import IdSpace
 from ..model import Entity, EntityStore, load_all
 
 
-class Session:
-    """Config, ids and entities, loaded once per invocation."""
+class Project:
+    """Config, ids and entities, loaded once per call.
+
+    Loaded whole, every time (ADR-0002): nothing is cached between calls, so
+    the files stay the only copy of the truth.
+    """
 
     def __init__(self, start: str | None = None):
         self.config = config_module.load(start)

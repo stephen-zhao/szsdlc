@@ -1,12 +1,11 @@
-"""szsdlc standards: conventions governing these paths."""
+"""szsdlc standards: the standards that apply, by path or all of them."""
 
 from __future__ import annotations
 
 import argparse
 
-from ..errors import BadInput
-from . import _session
-from ._output import emit_json, out, relative, truncate
+from ..ops import Project, standards
+from ._output import bound_note, emit_json, out
 from ._parser import STANDARDS_LIMIT
 
 
@@ -16,34 +15,24 @@ def add_parser(subparsers) -> None:
     standards.add_argument("paths", nargs="*")
     standards.add_argument("--limit", type=int, default=STANDARDS_LIMIT)
     standards.add_argument("--json", action="store_true", dest="as_json")
-    standards.set_defaults(run=run)
+    standards.set_defaults(run=run, op="standards", to_params=to_params)
+
+
+def to_params(args: argparse.Namespace) -> standards.StandardsParams:
+    return standards.StandardsParams(mode=args.subcommand, paths=tuple(args.paths),
+                                   limit=0 if args.as_json else args.limit)
 
 
 def run(args: argparse.Namespace) -> int:
-    from .. import standards as standards_module
-
-    session = _session.Session(args.project)
-    loaded = standards_module.load(session.config)
-
-    if args.subcommand == "list":
-        found = loaded
-    else:
-        if not args.paths:
-            raise BadInput(
-                "standards match: no paths given.",
-                fix="szsdlc standards match <path>",
-            )
-        found = standards_module.matching(session.config, args.paths, loaded)
-
+    params = to_params(args)
+    found = standards.standards(params, Project(args.project))
     if args.as_json:
-        emit_json([{"name": s.name, "path": relative(session, s.path),
-                    "applies_to": list(s.applies_to), "body": s.body}
-                   for s in found])
+        emit_json([{"name": r.name, "path": r.path, "applies_to": list(r.applies_to),
+                    "body": r.body} for r in found.rows])
         return 0
-
-    rows, note = truncate(found, args.limit)
-    for standard in rows:
-        out(standard.name)
+    for row in found.rows:
+        out(row.name)
+    note = bound_note(found.total, params.limit)
     if note:
         out(note)
     return 0
