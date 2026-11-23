@@ -19,6 +19,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import traceback
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -167,10 +168,54 @@ class Renderer:
 
     # -- views --------------------------------------------------------------
 
+    def _owned(self, filename: str | None) -> Path | None:
+        """`filename` as a path inside the project's templates, or None."""
+        if not filename:
+            return None
+        try:
+            path = Path(filename).resolve()
+            path.relative_to(self.config.templates_dir.resolve())
+        except (OSError, ValueError):
+            return None
+        return path
+
+    def _render(self, template_name: str, **context: Any) -> str:
+        """Render one template; a fault in the project's own template is a finding.
+
+        Ownership is decided by where the fault happened, not by what it is. A
+        traceback that passes through a file under the project's templates
+        directory is the project's to fix, so it becomes `BadInput` naming that
+        file and line. The same exception raised inside a bundled template is
+        a framework bug, and is re-raised so it is reported as one.
+        """
+        try:
+            template = self.environment.get_template(template_name)
+            return template.render(**context)
+        except jinja2.TemplateNotFound as exc:
+            missing = exc.name or template_name
+            target = self._relative(self.config.templates_dir / missing)
+            raise BadInput(f"template {missing} does not exist.",
+                           fix=f"create {target}") from None
+        except jinja2.TemplateSyntaxError as exc:
+            path = self._owned(exc.filename)
+            if path is None:
+                raise
+            raise self._fault(path, exc.lineno, exc.message or str(exc)) from None
+        except Exception as exc:  # noqa: BLE001 — re-raised unless the project owns it
+            for frame, line in reversed(list(traceback.walk_tb(exc.__traceback__))):
+                path = self._owned(frame.f_code.co_filename)
+                if path is not None:
+                    raise self._fault(path, line, str(exc) or type(exc).__name__) from None
+            raise
+
+    def _fault(self, path: Path, line: int | None, message: str) -> BadInput:
+        where = self._relative(path) + (f":{line}" if line else "")
+        return BadInput(f"template {where}: {message.rstrip('.')}.",
+                        fix=f"correct {self._relative(path)}")
+
     def view(self, name: str) -> Rendered:
         spec = self.config.views[name]
-        template = self.environment.get_template(spec.template)
-        body = template.render(view=spec, name=name)
+        body = self._render(spec.template, view=spec, name=name)
         return Rendered(name=name, path=self.config.view_path(name), body=body)
 
     def record(self, name: str) -> Rendered:
@@ -201,7 +246,19 @@ class Renderer:
 
         if spec.schema:
             schema_path = self.config.root / spec.schema
-            schema = json.loads(schema_path.read_text(encoding="utf-8"))
+            try:
+                schema = json.loads(schema_path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                raise BadInput(
+                    f"record {name!r}: {self._relative(schema_path)} does not exist.",
+                    fix=f"create {self._relative(schema_path)}, or remove records.{name}.schema",
+                ) from None
+            except json.JSONDecodeError as exc:
+                raise BadInput(
+                    f"record {name!r}: {self._relative(schema_path)}:{exc.lineno}: "
+                    f"not valid JSON ({exc.msg}).",
+                    fix=f"correct {self._relative(schema_path)}",
+                ) from None
             errors = sorted(Draft202012Validator(schema).iter_errors(data),
                             key=lambda e: list(e.absolute_path))
             if errors:
@@ -211,8 +268,7 @@ class Renderer:
                     fix=f"correct {self._relative(data_path)}",
                 )
 
-        template = self.environment.get_template(spec.template)
-        body = template.render(record=spec, name=name, data=data)
+        body = self._render(spec.template, record=spec, name=name, data=data)
         return Rendered(name=name, path=self.config.record_path(name), body=body)
 
     def all(self) -> list[Rendered]:
@@ -224,13 +280,28 @@ class Renderer:
         SessionStart payload, so a stray colon in a hand-authored dataset would
         silently cost the model everything it knows about the work.
         """
-        rendered = [self.view(name) for name in self.config.views]
+        rendered = []
+        for name in self.config.views:
+            try:
+                rendered.append(self.view(name))
+            except BadInput:
+                continue
         for name in self.config.records:
             try:
                 rendered.append(self.record(name))
             except BadInput:
                 continue
         return rendered
+
+    def view_problems(self) -> list[tuple[str, BadInput]]:
+        """Each view whose project template cannot be rendered, and why."""
+        problems = []
+        for name in self.config.views:
+            try:
+                self.view(name)
+            except BadInput as exc:
+                problems.append((name, exc))
+        return problems
 
     def record_problems(self) -> list[BadInput]:
         """Why each unbuildable record could not be built. Used by `validate`,

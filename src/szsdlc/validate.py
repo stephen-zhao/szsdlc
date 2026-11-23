@@ -413,6 +413,15 @@ def stale_generated(config: Config, store: EntityStore, graph: Graph,
             fix=problem.fix or "szsdlc validate --verbose",
         ))
 
+    # A view whose project-supplied template cannot render is skipped by
+    # `render` for the same reason, and is the project's to fix.
+    for name, problem in renderer.view_problems():
+        findings.append(Finding(
+            kind="broken-view", ref=name,
+            message=problem.problem.rstrip("."),
+            fix=problem.fix or "szsdlc validate --verbose",
+        ))
+
     for item in renderer.all():
         if not item.path.is_file():
             findings.append(Finding(
