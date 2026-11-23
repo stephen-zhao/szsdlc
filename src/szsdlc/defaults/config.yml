@@ -221,15 +221,21 @@ entity_types:
         groomed:
           to: [ready, dropped]
         ready:
-          to: [designing, dropped]
+          to: [designing, planning, dropped]
         designing:
+          to: [designed, dropped]
+          description: Writing design.md. Skipped, from ready to planning, when the work needs no design.
+        designed:
+          to: [planning, dropped]
+          requires_artifact: [design.md]
+        planning:
           to: [planned, dropped]
+          description: Writing plan.md. Every work item has a plan; its boxes are its progress.
         planned:
           to: [executing, dropped]
-          requires_artifact: [design.md]
-        executing:
-          to: [review, dropped]
           requires_artifact: [plan.md]
+        executing:
+          to: [review, designing, planning, dropped]
         review:
           to: [done, executing, dropped]
         done:

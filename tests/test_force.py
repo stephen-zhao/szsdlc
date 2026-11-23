@@ -148,8 +148,8 @@ def test_a_reason_without_force_is_refused(run, item):
 
 
 @pytest.mark.parametrize("target,missing", [
-    ("planned", "design.md"),
-    ("executing", "plan.md"),
+    ("designed", "design.md"),
+    ("planned", "plan.md"),
 ])
 def test_forcing_to_a_gated_state_still_needs_its_artifact(run, item, target, missing):
     code, _, err = run("set", "WI-0001", f"status={target}", "--force", "--reason", "x")

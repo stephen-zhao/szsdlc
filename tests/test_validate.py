@@ -165,7 +165,7 @@ def test_a_reference_to_a_tombstoned_id_is_a_warning_with_the_rewrite(clean,
 
 def test_a_status_whose_gate_is_unmet_is_reported(clean, write_entity):
     """Only reachable by hand-editing, which is exactly why it is checked."""
-    write_entity("work_item", 9, "title: T\nstatus: planned\nopened: 2026-08-01\n"
+    write_entity("work_item", 9, "title: T\nstatus: designed\nopened: 2026-08-01\n"
                                  "relations:\n  parent: EPIC-0001\n", slug="ungated")
     found = findings(clean, "gate-disagreement")
     assert found and "design.md" in found[0].message

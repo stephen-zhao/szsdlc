@@ -168,6 +168,45 @@ encoding and must never be what a caller falls into by accident.
 Exit codes distinguish the cases a caller would branch on: `2` bad input, `3`
 refused, `4` validation failed, `5` configuration error.
 
+### The work item stages
+
+The shipped `work_item` workflow:
+
+```
+idea → groomed → ready → designing → designed → planning → planned → executing → review → done
+                       ↘ planning   (when the work needs no design)
+dropped from any state that is not terminal
+```
+
+| Stage | Means | Entry gate |
+|---|---|---|
+| `designing` | writing `design.md` | |
+| `designed` | the design is written | `design.md` |
+| `planning` | writing `plan.md` | |
+| `planned` | the plan is written | `plan.md` |
+| `done` | finished | every task in `plan.md` ticked |
+
+- **Design is optional.** `ready → planning` skips it, for work too small to
+  need one.
+- **The plan is not optional.** Its boxes are the item's progress, and `done`
+  checks them.
+- **Moving back without `--force`:** `executing → designing` when building
+  shows the design was wrong, `executing → planning` when the design holds but
+  the plan does not, and `review → executing`.
+
+**Upgrading from an earlier release.** `planned` used to mean "designed": it
+gated `design.md`, and `executing` gated `plan.md`. An item left in `planned`
+without a `plan.md` is now reported by `validate` (`is planned but plan.md is
+missing or empty`). If its plan is being written, write `plan.md`. Otherwise
+move it to the stage it is really in:
+
+```bash
+szsdlc set WI-0042 status=designed --force --reason "stages renamed"
+```
+
+Items in `designing` keep their meaning. A project that declares its own
+`work_item` workflow is unaffected.
+
 ## Configuration
 
 `.szsdlc/config.yml` is deep-merged over the shipped defaults, so a project can
