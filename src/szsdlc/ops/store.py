@@ -76,8 +76,8 @@ def send(where: str | None, reason: str = "sync"):
 
     What arrives is drawn by a second pass, because views cannot be rendered
     from entities that have not arrived yet. Returns the backend's report, or
-    None when there was nothing to do. The CLI's `sync` runs the same legs in
-    its after-command wrapper, where their warnings read as every command's.
+    None when there was nothing to do. The CLI's `sync` calls this after its
+    own render, so it can report the draw before anything is sent.
     """
     from .. import sync as sync_module
 

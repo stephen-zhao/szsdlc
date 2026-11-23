@@ -38,11 +38,12 @@ def warn_backend(exc: OSError) -> None:
           "Fix: szsdlc sync", file=sys.stderr)
 
 
-#: Commands that sync for themselves, or not at all: `hook` because each
-#: handler decides when, `backend` because it only inspects — wrapping the
-#: inspector in the operation it reports on is how the two got confused — and
-#: `refresh` because its whole promise is that nothing is sent.
-BACKEND_EXEMPT = {"hook", "backend", "refresh"}
+#: Commands that sync for themselves, or not at all: `sync` because syncing
+#: is the whole of it, `hook` because each handler decides when, `backend`
+#: because it only inspects — wrapping the inspector in the operation it
+#: reports on is how the two got confused — and `refresh` because its whole
+#: promise is that nothing is sent.
+BACKEND_EXEMPT = {"sync", "hook", "backend", "refresh"}
 
 
 def force_utf8_streams() -> None:
