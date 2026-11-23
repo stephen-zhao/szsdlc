@@ -375,3 +375,54 @@ def test_no_traceback_ever_reaches_stderr(run, monkeypatch, capsys):
     assert code == 1
     assert "Traceback" not in err
     assert "Fix: " in err
+
+
+# ---------------------------------------------------------------------------
+# drop changes status through the same path as set (WI-0053)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def scheduled(make_project, capsys):
+    """A ready work item placed on two roadmaps, and a CLI to drive it."""
+    config = make_project({"roadmaps": {"release-1": {
+        "title": "Release 1", "horizons": ["in", "out"],
+        "requires_scheduling": {}}}})
+
+    def invoke(*argv: str):
+        code = main(["-C", str(config.root), *argv])
+        captured = capsys.readouterr()
+        return code, captured.out, captured.err
+
+    invoke("new", "work_item", "--title", "Doomed")
+    for status in ("groomed", "ready"):
+        invoke("set", "WI-0001", f"status={status}")
+    assert invoke("schedule", "WI-0001", "--horizon", "now", "--roadmap", "roadmap")[0] == 0
+    assert invoke("schedule", "WI-0001", "--horizon", "in", "--roadmap", "release-1")[0] == 0
+    return invoke
+
+
+def test_dropping_a_scheduled_item_takes_it_off_every_roadmap(scheduled, no_stdin):
+    code, output, err = scheduled("drop", "WI-0001", "--reason", "not needed after all")
+    assert code == 0, err
+    assert output == "WI-0001: ready → dropped; off roadmap; off release-1\n"
+    # The validate error this used to leave behind, until a manual unschedule.
+    code, output, _ = scheduled("validate")
+    assert code == 0 and "still on roadmap" not in output
+
+
+def test_dropping_an_unscheduled_item_reports_only_the_move(run, no_stdin):
+    run("capture", "a thought")
+    code, output, _ = run("drop", "IDEA-0001", "--reason", "no")
+    assert code == 0 and output == "IDEA-0001: inbox → dropped\n"
+
+
+def test_drop_follows_the_workflow_from_a_terminal_state(run, project, no_stdin):
+    """A finished item has no edge to `dropped`. `drop` used to override the
+    workflow there silently; that exception is `set --force` now."""
+    run("capture", "a thought")
+    run("refine", "IDEA-0001", "--into", "work_item", "--title", "W")
+    code, _, err = run("drop", "IDEA-0001", "--reason", "changed my mind")
+    assert code == 3, err
+    assert "not a legal transition" in err
+    assert entities(project).by_text("IDEA-0001").status == "refined"
