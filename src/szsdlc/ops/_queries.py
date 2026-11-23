@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from ..errors import BadInput
-from ..model import Entity, load_all
-from . import _session
+from ..model import Entity
+from ._project import Project
 
 
 # ---------------------------------------------------------------------------
@@ -14,13 +14,13 @@ from . import _session
 # bounded by default and every truncation is printed, because a silently capped
 # list reads as "nothing more to see".
 # ---------------------------------------------------------------------------
-def graph(session: _session.Session):
+def graph(session: Project):
     from ..graph import Graph
 
     return Graph(session.config, session.store, session.ids)
 
 
-def roadmaps(session: _session.Session, name: str | None = None):
+def roadmaps(session: Project, name: str | None = None):
     from ..roadmap import Roadmap, load_all as load_roadmaps
 
     if name:
@@ -56,7 +56,7 @@ def roadmap_order(roadmaps: dict, horizon: str | None) -> dict[str, int]:
 DEPENDENCY_RELATION = "depends_on"
 
 
-def blocked(session: _session.Session, graph, entity: Entity) -> bool:
+def blocked(session: Project, graph, entity: Entity) -> bool:
     """True while any dependency has not reached a terminal status.
 
     Saying so here is cheaper than letting somebody start the work and find

@@ -31,9 +31,15 @@ EXIT_CONFIG = 5
 
 
 class SzsdlcError(Exception):
-    """A refusal aimed at whoever made the call. Rendered in the C2 shape."""
+    """A refusal aimed at whoever made the call. Rendered in the C2 shape.
+
+    Each class is also a refusal class of the operation layer (`szsdlc.ops`),
+    named by ``refusal_class``: interface-neutral, so the CLI maps it to an
+    exit code and another interface maps it its own way.
+    """
 
     exit_code = EXIT_BAD_INPUT
+    refusal_class = "bad_input"
 
     def __init__(self, problem: str, fix: str | None = None, see: str | None = None):
         self.problem = problem
@@ -55,18 +61,37 @@ class BadInput(SzsdlcError):
     """A malformed argument, an unknown reference, an unparseable value."""
 
     exit_code = EXIT_BAD_INPUT
+    refusal_class = "bad_input"
+
+
+class UnknownReference(BadInput):
+    """A reference that names no entity. Its fix is the nearest match, when one exists."""
+
+    refusal_class = "unknown_reference"
 
 
 class Refused(SzsdlcError):
     """A well-formed request a gate or workflow rule declines to perform."""
 
     exit_code = EXIT_REFUSED
+    refusal_class = "refused"
+
+
+class StalePrecondition(Refused):
+    """A mutation's ``expect`` hash no longer matches the file it would change.
+
+    The CLI never sends a precondition, so it never sees this; a caller that
+    read, then wrote, learns that someone else wrote in between.
+    """
+
+    refusal_class = "stale_precondition"
 
 
 class ValidationFailed(SzsdlcError):
     """`validate` found errors. Reserved for that command's own exit path."""
 
     exit_code = EXIT_INVALID
+    refusal_class = "validation_failed"
 
 
 class ConfigError(SzsdlcError):
@@ -77,6 +102,7 @@ class ConfigError(SzsdlcError):
     """
 
     exit_code = EXIT_CONFIG
+    refusal_class = "config_error"
 
 
 class InternalError(Exception):
@@ -86,3 +112,5 @@ class InternalError(Exception):
     that these two never be conflated in output, and inheritance is exactly how
     they would get conflated.
     """
+
+    refusal_class = "internal"

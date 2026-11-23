@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Iterable
 
 import yaml
 
-from .errors import BadInput, InternalError
+from .errors import BadInput, InternalError, UnknownReference
 from .text import nearest, slugify
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -386,11 +386,11 @@ class IdSpace:
             max_distance=SUGGESTION_DISTANCE,
         )
         if suggestion:
-            raise BadInput(
+            raise UnknownReference(
                 f"no such entity {entity_id.text!r}; did you mean {suggestion}?",
                 fix=f"szsdlc show {suggestion}",
             )
-        raise BadInput(
+        raise UnknownReference(
             f"no such entity {entity_id.text!r}.",
             fix=f"szsdlc list --type {self.type_of(entity_id).name}",
         )

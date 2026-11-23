@@ -175,3 +175,30 @@ def test_an_explicit_sync_reaches_the_remote_once(configured, bare, workdir,
                         lambda self, reason: calls.append(reason) or real(self, reason))
     assert run("sync") == 0
     assert calls == ["sync"]
+
+
+import pytest  # noqa: E402
+
+
+@pytest.mark.parametrize("in_turn", [False, True], ids=["terminal", "in a turn"])
+def test_a_mutation_renders_once_wherever_it_runs(tmp_path, monkeypatch, capsys, in_turn):
+    """In a turn the operation redraws; at a terminal the sync after the command
+    does, and the operation's own redraw is deferred to it — never both (WI-0060)."""
+    from szsdlc import sync as sync_module
+    from szsdlc.cli import main
+
+    from _cli.test_contract import build_project
+
+    config = build_project(tmp_path)
+    if in_turn:
+        monkeypatch.setenv("CLAUDECODE", "1")
+    else:
+        monkeypatch.delenv("CLAUDECODE", raising=False)
+    calls = []
+    real = sync_module.render
+    monkeypatch.setattr(sync_module, "render", lambda *a, **k: calls.append(k) or real(*a, **k))
+
+    assert main(["-C", str(config.root), "tag", "WI-0001", "dns"]) == 0
+    assert len(calls) == 1
+    # In a turn it is the operation's redraw, which keeps a hand-edited view.
+    assert calls[0].get("keep_hand_edited", False) is in_turn

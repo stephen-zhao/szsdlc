@@ -1,37 +1,31 @@
-"""szsdlc capture: capture an idea from an argument, stdin or $EDITOR."""
+"""szsdlc capture: a thought into the inbox, from an argument, stdin or $EDITOR."""
 
 from __future__ import annotations
 
 import argparse
 
-from ..errors import BadInput
-from ..model import create_entity
+from ..ops import entities
 from . import _session
 from ._input import read_text_input
 from ._output import out
 
 
 def add_parser(subparsers) -> None:
-
     capture = subparsers.add_parser("capture", prog="szsdlc capture")
     capture.add_argument("text", nargs="?", default=None)
     capture.add_argument("--type", dest="type_name", default=None,
                          help="intake type, when a project declares more than one")
-    capture.set_defaults(run=run)
+    capture.set_defaults(run=run, op="capture", to_params=to_params)
+
+
+def to_params(args: argparse.Namespace) -> entities.CaptureParams:
+    return entities.CaptureParams(text=args.text or "", type=args.type_name)
 
 
 def run(args: argparse.Namespace) -> int:
     session = _session.Session(args.project)
-    entity_type = session.intake_type(args.type_name)
-
-    body = read_text_input(args.text).strip()
-    if not body:
-        raise BadInput(
-            "nothing to capture: the input was empty.",
-            fix='szsdlc capture "the thought"',
-        )
-
-    entity = create_entity(session.config, session.ids, entity_type,
-                           body=body + "\n")
-    out(entity.id.text)
+    session.intake_type(args.type_name)  # refused before anything is read
+    args.text = read_text_input(args.text)
+    captured = entities.capture(to_params(args), session)
+    out(captured.id)
     return 0

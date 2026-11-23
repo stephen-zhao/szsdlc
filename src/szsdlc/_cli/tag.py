@@ -1,10 +1,10 @@
-"""szsdlc tag and untag: add or remove tags, normalized on write."""
+"""szsdlc tag / untag: add or remove tags."""
 
 from __future__ import annotations
 
 import argparse
 
-from ..text import add_tags, remove_tags
+from ..ops import entities
 from . import _session
 from ._output import out
 
@@ -14,23 +14,22 @@ def add_parser(subparsers) -> None:
         tagger = subparsers.add_parser(verb, prog=f"szsdlc {verb}")
         tagger.add_argument("ref")
         tagger.add_argument("tags", nargs="+", metavar="tag")
-        tagger.set_defaults(run=runner, adding=(verb == "tag"))
+        tagger.set_defaults(run=runner, adding=(verb == "tag"), op=verb, to_params=to_params)
 
 
-def _apply_tags(args: argparse.Namespace, adding: bool) -> int:
-    session = _session.Session(args.project)
-    entity = session.entity(args.ref)
-    before = entity.tags
-    entity.set_tags(add_tags(before, args.tags) if adding
-                    else remove_tags(before, args.tags))
-    entity.save()
-    out(f"{entity.id.text}: {', '.join(entity.tags) or '(no tags)'}")
+def to_params(args: argparse.Namespace) -> entities.TagParams:
+    return entities.TagParams(ref=args.ref, tags=tuple(args.tags))
+
+
+def _apply(args: argparse.Namespace, operation) -> int:
+    tagged = operation(to_params(args), _session.Session(args.project))
+    out(f"{tagged.id}: {', '.join(tagged.tags) or '(no tags)'}")
     return 0
 
 
 def run_tag(args: argparse.Namespace) -> int:
-    return _apply_tags(args, adding=True)
+    return _apply(args, entities.tag)
 
 
 def run_untag(args: argparse.Namespace) -> int:
-    return _apply_tags(args, adding=False)
+    return _apply(args, entities.untag)

@@ -1,11 +1,12 @@
-"""szsdlc trace: relations both ways, back to the idea."""
+"""szsdlc trace: the relation graph around one entity."""
 
 from __future__ import annotations
 
 import argparse
 
-from . import _queries, _session
-from ._output import emit_json, out, truncate
+from ..ops import queries
+from . import _session
+from ._output import bound_note, emit_json, out
 from ._parser import DEFAULT_LIMIT
 
 
@@ -15,24 +16,24 @@ def add_parser(subparsers) -> None:
     trace.add_argument("--depth", type=int, default=2)
     trace.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     trace.add_argument("--json", action="store_true", dest="as_json")
-    trace.set_defaults(run=run)
+    trace.set_defaults(run=run, op="trace", to_params=to_params)
+
+
+def to_params(args: argparse.Namespace) -> queries.TraceParams:
+    return queries.TraceParams(ref=args.ref, depth=args.depth,
+                               limit=0 if args.as_json else args.limit)
 
 
 def run(args: argparse.Namespace) -> int:
-    session = _session.Session(args.project)
-    graph = _queries.graph(session)
-    entity_id = session.ids.resolve(args.ref)
-
-    edges = graph.trace(entity_id, depth=args.depth)
-
+    params = to_params(args)
+    traced = queries.trace(params, _session.Session(args.project))
     if args.as_json:
-        emit_json([{"source": e.source.text, "relation": e.kind,
-                    "target": e.target.label} for e in edges])
+        emit_json([{"source": r.source, "relation": r.relation, "target": r.target}
+                   for r in traced.rows])
         return 0
-
-    rows, note = truncate(edges, args.limit)
-    for edge in rows:
-        out(f"{edge.source.text} {edge.kind} {edge.target.label}")
+    for row in traced.rows:
+        out(f"{row.source} {row.relation} {row.target}")
+    note = bound_note(traced.total, params.limit)
     if note:
         out(note)
     return 0

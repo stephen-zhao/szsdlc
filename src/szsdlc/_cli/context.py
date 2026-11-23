@@ -1,36 +1,35 @@
-"""szsdlc context: in-flight work and the counters block."""
+"""szsdlc context: the orientation pack an agent reads at session start."""
 
 from __future__ import annotations
 
 import argparse
 
-from . import _queries, _session
+from ..ops import queries
+from . import _session
 from ._output import emit_json, out
 
 
 def add_parser(subparsers) -> None:
     ctx = subparsers.add_parser("context", prog="szsdlc context")
     ctx.add_argument("--json", action="store_true", dest="as_json")
-    ctx.set_defaults(run=run)
+    ctx.set_defaults(run=run, op="context", to_params=to_params)
+
+
+def to_params(args: argparse.Namespace) -> queries.ContextParams:
+    return queries.ContextParams()
 
 
 def run(args: argparse.Namespace) -> int:
-    from .. import context as context_module
-
-    session = _session.Session(args.project)
-    built = context_module.build(session.config, session.store, _queries.graph(session),
-                                 _queries.roadmaps(session))
+    built = queries.context(to_params(args), _session.Session(args.project))
     if args.as_json:
         emit_json({
-            "counters": {label: value for label, value, _ in built.counters.rows()},
-            "in_flight": [{"id": e.id.text, "status": e.status, "title": e.title}
-                          for e in built.in_flight],
+            "counters": built.counters,
+            "in_flight": [{"id": r.id, "status": r.status, "title": r.title}
+                          for r in built.in_flight],
             "current_entity": built.current_entity,
             "current_task": built.current_task,
         })
         return 0
-
-    rendered = context_module.render(built)
-    if rendered:
-        out(rendered)
+    if built.text:
+        out(built.text)
     return 0
