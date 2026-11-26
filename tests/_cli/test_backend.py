@@ -1,6 +1,8 @@
-"""szsdlc backend: where the project is kept, and why."""
+"""szsdlc backend: the sdlc backend in effect, and why."""
 
 from __future__ import annotations
+
+import re
 
 import pytest
 
@@ -19,7 +21,7 @@ def test_dir_shows_where_it_is(user, workdir, tmp_path, capsys):
     write_settings(user, {"SZSDLC_BACKEND": "dir", f"{DIR}PATH": str(tmp_path / "d")})
     assert run("backend") == 0
     out = capsys.readouterr().out
-    assert "backend  dir" in out and "settings.json" in out and "not created yet" in out
+    assert "sdlc backend  dir" in out and "settings.json" in out and "not created yet" in out
 
 
 # ---------------------------------------------------------------------------
@@ -35,7 +37,7 @@ def test_backend_show_and_errors_redact_the_url(user, workdir, tmp_path, capsys)
     assert run("backend") == 0
     assert "ghp_secret" not in capsys.readouterr().out
     with pytest.raises(ConfigError) as caught:
-        backend.project_root(workdir)
+        backend.project_sdlc_root(workdir)
     assert "ghp_secret" not in caught.value.render()
 
 
@@ -47,26 +49,28 @@ def test_backend_show_and_errors_redact_the_url(user, workdir, tmp_path, capsys)
 def test_backend_show_names_every_source(configured, bare, user, workdir, capsys):
     write_settings(workdir / ".claude" / "settings.local.json", {f"{GIT}BRANCH": "main"})
     assert run("backend") == 0
-    rows = {line.split()[0]: line for line in capsys.readouterr().out.splitlines()}
-    assert rows["backend"].endswith(f"({user})")
-    assert rows["url"].endswith(f"{bare}  ({user})")
+    # Keyed by label: a label is the words before the first run of two spaces.
+    rows = {re.split(r"\s{2,}", line.strip())[0]: line
+            for line in capsys.readouterr().out.splitlines()}
+    assert rows["sdlc backend"].endswith(f"({user})")
+    assert rows["project sdlc store repo"].endswith(f"{bare}  ({user})")
     assert rows["branch"].endswith(f"main  ({workdir / '.claude' / 'settings.local.json'})")
     assert rows["subdir"].endswith(".  (default)")
 
 
 def test_backend_show_defaults_to_workdir(workdir, capsys):
     assert run("backend", "show") == 0
-    assert capsys.readouterr().out.strip() == "backend  workdir  (default)"
+    assert capsys.readouterr().out.strip() == "sdlc backend  workdir  (default)"
 
 
 def test_backend_show_inside_a_store_with_nothing_selected(configured, workdir,
                                                            monkeypatch, capsys):
     run("init")
-    monkeypatch.chdir(configured.store)
+    monkeypatch.chdir(configured.project_sdlc_store_dir)
     monkeypatch.setenv("SZSDLC_BACKEND", "workdir")
     capsys.readouterr()
     assert run("backend") == 0
-    assert "inside its store" in capsys.readouterr().out
+    assert "inside its project sdlc store dir" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

@@ -1,11 +1,13 @@
-"""The `git` backend: the project lives in a remote repository.
+"""The `git` sdlc backend: the project sdlc store dir is a clone of the
+project sdlc store repo, a remote repository and branch that hold the
+authoritative copy.
 
     SZSDLC_BACKEND=git
     SZSDLC_BACKEND_GIT_URL         the remote (required)
     SZSDLC_BACKEND_GIT_BRANCH      the branch to track; default: the remote's
                                    default branch. Created by the first push
                                    when the remote lacks it
-    SZSDLC_BACKEND_GIT_SUBDIR      where in the repository the project lives;
+    SZSDLC_BACKEND_GIT_SUBDIR      where in the repository the project sdlc root is;
                                    default: its top. `{project}` allowed
     SZSDLC_BACKEND_GIT_CLONE_ROOT  directory clones are made under; default
                                    `~/.claude/szsdlc/git`
@@ -45,6 +47,7 @@ from ..errors import ConfigError
 from ..settings import Setting
 from . import (
     Context,
+    RetiredNames,
     SyncReport,
     path_setting,
     readable_name,
@@ -123,21 +126,21 @@ class GitError(Exception):
         super().__init__(f"git {args[0]}: {detail}")
 
 
-class GitBackend:
+class GitBackend(RetiredNames):
     type: ClassVar[str] = "git"
     relocates: ClassVar[bool] = True
     keys: ClassVar[frozenset[str]] = frozenset(
         {"URL", "BRANCH", "SUBDIR", "CLONE_ROOT", "CLONE_PATH"})
 
     def __init__(self, url: str, clone: Path, *, branch: str | None = None,
-                 subdir: str = "", working_tree: Path | None = None) -> None:
+                 subdir: str = "", project_asset_root: Path | None = None) -> None:
         self.url = url
         self.branch = branch
         self.subdir = subdir
-        self.store = clone
-        self.root = clone / subdir if subdir else clone
-        #: The tree the project belongs to; the clone must not contain it.
-        self.working_tree = working_tree
+        self.project_sdlc_store_dir = clone
+        self.project_sdlc_root = clone / subdir if subdir else clone
+        #: The project asset root the command ran in; the clone must not contain it.
+        self.project_asset_root = project_asset_root
         #: When the current sync must be done by (time.monotonic()).
         self._deadline: float | None = None
 
@@ -164,7 +167,7 @@ class GitBackend:
             clone = parent / readable_name(url, branch, hint=tail)
         return cls(url, clone, branch=branch or None,
                    subdir=subpath(found.get("SUBDIR"), context),
-                   working_tree=context.directory)
+                   project_asset_root=context.project_asset_root)
 
     @classmethod
     def restore(cls, store: Path, state: dict[str, Any]) -> GitBackend:
@@ -175,19 +178,20 @@ class GitBackend:
         return {"url": self.url, "branch": self.branch, "subdir": self.subdir}
 
     def describe(self) -> list[tuple[str, str, tuple[str, ...]]]:
-        return [("url", redact(self.url), ("URL",)),
+        return [("project sdlc store repo", redact(self.url), ("URL",)),
                 ("branch", self.branch or "(remote default)", ("BRANCH",)),
                 ("subdir", self.subdir or ".", ("SUBDIR",)),
-                ("clone", str(self.store), ("CLONE_PATH", "CLONE_ROOT"))]
+                ("project sdlc store dir", str(self.project_sdlc_store_dir),
+                 ("CLONE_PATH", "CLONE_ROOT"))]
 
     def summary(self) -> str:
-        return f"local clone of {redact(self.url)}, synced automatically"
+        return f"in a clone of the project sdlc store repo {redact(self.url)}, synced automatically"
 
     # -- plumbing -----------------------------------------------------------
 
     def _git(self, *args: str, cwd: Path | None = None, check: bool = True,
              identity: bool = False, timeout: int = TIMEOUT) -> subprocess.CompletedProcess:
-        cwd = self.store if cwd is None else cwd
+        cwd = self.project_sdlc_store_dir if cwd is None else cwd
         # Only the listed transports: `ext::` runs a command, and a `foo::` URL
         # runs whatever `git-remote-foo` is on PATH.
         command = ["git", "-c", "protocol.allow=never"]
@@ -225,7 +229,7 @@ class GitBackend:
         return result
 
     def _config(self, key: str) -> str:
-        cwd = self.store if (self.store / ".git").exists() else None
+        cwd = self.project_sdlc_store_dir if (self.project_sdlc_store_dir / ".git").exists() else None
         command = ["git"] + (["-C", str(cwd)] if cwd else []) + ["config", "--get", key]
         try:
             # An argv list with no shell, reading one fixed key.
@@ -255,7 +259,7 @@ class GitBackend:
     # -- Backend ------------------------------------------------------------
 
     def materialize(self) -> None:
-        local = self.store
+        local = self.project_sdlc_store_dir
         self._refuse_overlap()
         if (local / ".git").exists():
             self._verify_clone()
@@ -306,10 +310,10 @@ class GitBackend:
     def _verify_clone(self) -> None:
         """The clone is of our URL, on our branch — or it is not used at all.
 
-        Checked on reuse and again before every sync, because a store found
-        by path is restored from the registry without settings.
+        Checked on reuse and again before every sync, because a project sdlc
+        store found by path is rebuilt from its recorded entry without settings.
         """
-        local = self.store
+        local = self.project_sdlc_store_dir
         origin = self._config("remote.origin.url")
         pushurl = self._config("remote.origin.pushurl")
         if pushurl and pushurl != self.url:
@@ -330,21 +334,21 @@ class GitBackend:
                     "SZSDLC_BACKEND_GIT_CLONE_PATH elsewhere")
 
     def _refuse_overlap(self) -> None:
-        """A clone holding the working tree would commit and push all of it."""
-        if self.working_tree is None:
+        """A clone holding the project asset root would commit and push all of it."""
+        if self.project_asset_root is None:
             return
-        tree, clone = self.working_tree.resolve(), self.store.resolve()
-        if tree == clone or clone in tree.parents:
-            raise ConfigError(f"the git backend's clone {self.store} contains the working "
-                              f"tree {self.working_tree}.",
-                              fix="point SZSDLC_BACKEND_GIT_CLONE_PATH outside the working tree")
+        assets, clone = self.project_asset_root.resolve(), self.project_sdlc_store_dir.resolve()
+        if assets == clone or clone in assets.parents:
+            raise ConfigError(f"the git backend's clone {self.project_sdlc_store_dir} contains the "
+                              f"project asset root {self.project_asset_root}.",
+                              fix="point SZSDLC_BACKEND_GIT_CLONE_PATH outside the asset root")
 
     def _refuse_escape(self) -> None:
-        """The project root and its `.szsdlc/` may be symlinks in the repository;
+        """The project sdlc root and its `.szsdlc/` may be symlinks in the repository;
         both must stay in the clone, or what is written there is never synced."""
-        clone = self.store.resolve()
-        for path, what in ((self.root, f"SZSDLC_BACKEND_GIT_SUBDIR={self.subdir!r}"),
-                           (self.root / ".szsdlc", "the project's .szsdlc directory")):
+        clone = self.project_sdlc_store_dir.resolve()
+        for path, what in ((self.project_sdlc_root, f"SZSDLC_BACKEND_GIT_SUBDIR={self.subdir!r}"),
+                           (self.project_sdlc_root / ".szsdlc", "the project's .szsdlc directory")):
             resolved = path.resolve()
             if resolved != clone and clone not in resolved.parents:
                 raise ConfigError(f"{what} resolves to {resolved}, outside the clone, where "
@@ -354,8 +358,8 @@ class GitBackend:
     def _redacted(self, exc: Exception) -> str:
         return scrub(str(exc).replace(self.url, redact(self.url)))
 
-    def has_local_changes(self) -> bool:
-        if not (self.store / ".git").exists():
+    def has_unsent_changes(self) -> bool:
+        if not (self.project_sdlc_store_dir / ".git").exists():
             return False
         if self._git("status", "--porcelain", check=False).stdout.strip():
             return True
@@ -372,8 +376,8 @@ class GitBackend:
 
     def sync(self, reason: str) -> SyncReport:
         report = SyncReport()
-        if not (self.store / ".git").exists():
-            report.problem = f"{self.store} is not a git clone."
+        if not (self.project_sdlc_store_dir / ".git").exists():
+            report.problem = f"{self.project_sdlc_store_dir} is not a git clone."
             report.fix = "remove it; the next szsdlc command clones it again"
             return report
         self._deadline = time.monotonic() + SYNC_BUDGET
@@ -400,7 +404,7 @@ class GitBackend:
             self._deadline = None
             self._abort_rebase()
             report.problem = self._redacted(exc)
-            report.fix = f"git -C {self.store} status"
+            report.fix = f"git -C {self.project_sdlc_store_dir} status"
         finally:
             self._deadline = None
         return report
@@ -416,8 +420,8 @@ class GitBackend:
         report's `note` names it, so recovering is one `git log` away.
         """
         report = SyncReport()
-        if not (self.store / ".git").exists():
-            report.problem = f"{self.store} is not a git clone."
+        if not (self.project_sdlc_store_dir / ".git").exists():
+            report.problem = f"{self.project_sdlc_store_dir} is not a git clone."
             report.fix = "remove it; the next szsdlc command clones it again"
             return report
         self._deadline = time.monotonic() + SYNC_BUDGET
@@ -431,7 +435,7 @@ class GitBackend:
             except GitError as exc:
                 report.problem = (f"could not reach {redact(self.url)} ({self._redacted(exc)}); "
                                   "nothing was replaced.")
-                report.fix = f"git -C {self.store} fetch origin"
+                report.fix = f"git -C {self.project_sdlc_store_dir} fetch origin"
                 return report
             upstream = f"refs/remotes/origin/{branch}"
             if not self._ok("rev-parse", "--verify", "--quiet", upstream):
@@ -464,13 +468,13 @@ class GitBackend:
             report.problem, report.fix = exc.problem, exc.fix
         except GitError as exc:
             report.problem = self._redacted(exc)
-            report.fix = f"git -C {self.store} status"
+            report.fix = f"git -C {self.project_sdlc_store_dir} status"
         finally:
             self._deadline = None
         return report
 
     def _abort_rebase(self) -> None:
-        git_dir = self.store / ".git"
+        git_dir = self.project_sdlc_store_dir / ".git"
         if (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists():
             try:
                 self._git("rebase", "--abort", check=False, timeout=LOCAL_TIMEOUT)
@@ -493,7 +497,7 @@ class GitBackend:
                               f"{'are' if count != 1 else 'is'} ignored by the repository "
                               f"and not synced: {ignored[0]}"
                               + (f" and {count - 1} more" if count > 1 else "") + ".")
-            report.fix = f"git -C {self.store} check-ignore -v {ignored[0]}"
+            report.fix = f"git -C {self.project_sdlc_store_dir} check-ignore -v {ignored[0]}"
 
     def _commit(self, reason: str) -> None:
         self._git("add", "--all", timeout=LOCAL_TIMEOUT)
@@ -509,7 +513,7 @@ class GitBackend:
         except GitError as exc:
             report.problem = (f"could not reach {redact(self.url)} ({self._redacted(exc)}); "
                               "changes are kept locally.")
-            report.fix = f"git -C {self.store} fetch origin"
+            report.fix = f"git -C {self.project_sdlc_store_dir} fetch origin"
             return False
         return True
 
@@ -530,7 +534,7 @@ class GitBackend:
             self._git("rebase", "--abort", check=False)
             report.problem = (f"local changes conflict with origin/{branch}; "
                               "they are kept locally and were not pushed.")
-            report.fix = f"git -C {self.store} pull --rebase origin {branch}"
+            report.fix = f"git -C {self.project_sdlc_store_dir} pull --rebase origin {branch}"
             return False
         report.incoming = True
         return True
@@ -553,5 +557,5 @@ class GitBackend:
                                                                       redact(self.url))
                 report.problem = (f"could not push to {redact(self.url)} ({detail}); "
                                   "changes are kept locally.")
-                report.fix = f"git -C {self.store} push origin HEAD:{branch}"
+                report.fix = f"git -C {self.project_sdlc_store_dir} push origin HEAD:{branch}"
             return

@@ -62,7 +62,7 @@ def test_sync_does_what_it_has_always_done(configured, bare, workdir, capsys):
     """
     run("init")
     assert run("capture", "a thought the alias should send") == 0
-    idea = next((configured.store / "ideas").rglob("*.md"))
+    idea = next((configured.project_sdlc_store_dir / "ideas").rglob("*.md"))
     idea.write_text(idea.read_text() + "\nmarker-7a1b\n")
     head = git("--git-dir", str(bare), "rev-parse", "main")
     capsys.readouterr()
@@ -70,7 +70,7 @@ def test_sync_does_what_it_has_always_done(configured, bare, workdir, capsys):
     assert run("sync") == 0
     captured = capsys.readouterr()
     # It renders, and it reaches the remote — both, as it always did.
-    relative = idea.relative_to(configured.store).as_posix()
+    relative = idea.relative_to(configured.project_sdlc_store_dir).as_posix()
     assert git("--git-dir", str(bare), "rev-parse", "main") != head
     assert "marker-7a1b" in git("--git-dir", str(bare), "show", f"main:{relative}")
     inbox = next(p for p in remote_files(bare) if p.endswith("inbox.md"))
@@ -107,7 +107,7 @@ def test_an_explicit_sync_renders_before_it_sends(configured, bare, workdir, cap
     """Sending a stale view records a project as something it is not."""
     run("init")
     assert run("capture", "explicit backend sync") == 0
-    for view in configured.root.rglob("inbox.md"):
+    for view in configured.project_sdlc_root.rglob("inbox.md"):
         view.write_text("stale\n")
 
     assert run("sync") == 0
@@ -124,7 +124,7 @@ def test_an_explicit_sync_pulls_first(configured, bare, workdir, tmp_path, capsy
     git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "theirs", cwd=other)
     git("push", "-q", "origin", "HEAD:main", cwd=other)
     assert run("sync") == 0
-    assert (configured.store / "theirs.md").is_file()
+    assert (configured.project_sdlc_store_dir / "theirs.md").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -136,14 +136,14 @@ def test_an_explicit_sync_inside_a_turn_still_pushes(configured, bare, workdir,
                                                      monkeypatch, capsys):
     run("init")
     monkeypatch.setenv("CLAUDECODE", "1")
-    (configured.store / "note.md").write_text("x")
+    (configured.project_sdlc_store_dir / "note.md").write_text("x")
     assert run("sync") == 0
     assert "note.md" in remote_files(bare)
 
 
 def test_an_explicit_sync_runs_on_demand(configured, bare, workdir, capsys):
     run("init")
-    (configured.store / "note.md").write_text("x")
+    (configured.project_sdlc_store_dir / "note.md").write_text("x")
     assert run("sync") == 0
     assert "note.md" in remote_files(bare)
 
@@ -152,7 +152,7 @@ def test_an_explicit_sync_reports_a_failure(configured, bare, workdir, capsys):
     """Asked for directly, so answered honestly: a failure refuses. The same
     failure under another command is a warning, because that command worked."""
     run("init")
-    (configured.store / "note.md").write_text("x")
+    (configured.project_sdlc_store_dir / "note.md").write_text("x")
     bare.rename(bare.parent / "gone.git")
     assert run("sync") == 3
     assert "could not reach" in capsys.readouterr().err

@@ -1,4 +1,4 @@
-"""szsdlc refresh: take the latest from where the project is kept; send nothing."""
+"""szsdlc refresh: replace local state with the sdlc backend's latest; send nothing."""
 
 from __future__ import annotations
 

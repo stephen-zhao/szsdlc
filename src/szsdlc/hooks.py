@@ -190,16 +190,16 @@ def _unexpected(exc: Exception) -> str:
 
 
 def _backend_line(session) -> str | None:
-    """Where the project's files are, when that is not where Claude is working."""
+    """Where the project sdlc root is, when that is not the asset root Claude is in."""
     from . import backend
 
     try:
-        managed = backend.managed(session.config.root)
+        store = backend.project_sdlc_store_for(session.config.root)
     except Exception:  # pragma: no cover - defensive
         return None
-    if managed is None:
+    if store is None:
         return None
-    return f"szsdlc project files: {session.config.root} ({managed.summary()})"
+    return f"szsdlc project files: {session.config.root} ({store.summary()})"
 
 
 def _emit(event: str, context: str) -> None:
@@ -343,7 +343,7 @@ def post_edit(payload: dict[str, Any], cwd: str | None = None) -> int:
     that touches twelve files is one change to the project, and sending each
     write made the record a transcript of Claude's tool calls instead. The
     turn-end hook is where the boundary actually is. Nothing is at risk in
-    between — the edit is on disk in the store, and `has_local_changes` reads
+    between — the edit is on disk in the project sdlc store dir, and `has_unsent_changes` reads
     it, so the next sync from any entry point sweeps in what is sitting
     there.
 

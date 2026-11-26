@@ -42,12 +42,12 @@ def test_render_never_reaches_the_remote(configured, bare, workdir, capsys):
     head = git("--git-dir", str(bare), "rev-parse", "main")
     # A source written straight into the store, so a redraw is genuinely owed
     # and `render` has something of its own to write.
-    idea = next((configured.store / "ideas").rglob("*.md"))
+    idea = next((configured.project_sdlc_store_dir / "ideas").rglob("*.md"))
     idea.write_text(idea.read_text().replace("something to render a view for",
                                              "a title only render can propagate"))
 
     assert run("render") == 0
-    assert git("status", "--porcelain", cwd=configured.store) != ""  # written, not sent
+    assert git("status", "--porcelain", cwd=configured.project_sdlc_store_dir) != ""  # written, not sent
     assert git("--git-dir", str(bare), "rev-parse", "main") == head
 
     # Not stranded: the next sync sends what render wrote.

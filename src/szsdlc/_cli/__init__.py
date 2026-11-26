@@ -173,7 +173,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             # Nothing is recorded here. The turn-end hook renders, syncs
             # once and validates; a commit per command made a turn's history a
             # list of the tool calls that produced it rather than of what it
-            # changed. Nothing is at risk: `has_local_changes` reads the store,
+            # changed. Nothing is at risk: `has_unsent_changes` reads the store dir,
             # so the next sync picks up whatever is sitting there.
             report = None
         else:

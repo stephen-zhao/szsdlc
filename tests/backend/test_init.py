@@ -1,4 +1,5 @@
-"""szsdlc.backend: settings, selection, the registry, locking and the sync and refresh wrappers."""
+"""szsdlc.backend: settings, selection, recorded project sdlc stores, locking, the sync and
+refresh wrappers, and the names the glossary retired (WI-0066)."""
 
 from __future__ import annotations
 
@@ -79,7 +80,7 @@ def test_only_the_selected_backends_keys_are_read(user, workdir, tmp_path):
     assert backend.resolve(workdir).type == "git"
     write_settings(workdir / ".claude" / "settings.json", {"SZSDLC_BACKEND": "dir"})
     chosen = backend.resolve(workdir)
-    assert chosen.type == "dir" and chosen.root == tmp_path / "d"
+    assert chosen.type == "dir" and chosen.project_sdlc_root == tmp_path / "d"
 
 
 def test_a_project_can_return_to_workdir(user, workdir):
@@ -120,7 +121,7 @@ def test_backends_are_pluggable(user, workdir, monkeypatch):
         keys = frozenset({"WHERE"})
 
         def __init__(self, store):
-            self.store = self.root = store
+            self.project_sdlc_store_dir = self.project_sdlc_root = store
 
         @classmethod
         def from_settings(cls, found, context):
@@ -134,16 +135,16 @@ def test_backends_are_pluggable(user, workdir, monkeypatch):
             return {}
 
         def describe(self):
-            return [("where", str(self.store), ("WHERE",))]
+            return [("where", str(self.project_sdlc_store_dir), ("WHERE",))]
 
         def summary(self):
             return "somewhere fake"
 
         def materialize(self):
-            self.store.mkdir(parents=True, exist_ok=True)
+            self.project_sdlc_store_dir.mkdir(parents=True, exist_ok=True)
             calls.append("materialize")
 
-        def has_local_changes(self):
+        def has_unsent_changes(self):
             return True
 
         def commit(self, reason):
@@ -168,19 +169,19 @@ def test_backends_are_pluggable(user, workdir, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_concurrent_registrations_keep_every_store(user, tmp_path):
+def test_concurrent_records_keep_every_project_sdlc_store(user, tmp_path):
     import threading
 
     from szsdlc.backend.dir import DirBackend
 
     stores = [DirBackend(tmp_path / f"s{i}") for i in range(12)]
-    threads = [threading.Thread(target=backend._register, args=(s,)) for s in stores]
+    threads = [threading.Thread(target=backend._record_project_sdlc_store, args=(s,)) for s in stores]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
-    assert set(backend._read_registry()) == {str(s.store) for s in stores}
-    assert not list(backend._registry_path().parent.glob("*.tmp"))
+    assert set(backend._read_project_sdlc_stores()) == {str(s.project_sdlc_store_dir) for s in stores}
+    assert not list(backend._project_sdlc_stores_path().parent.glob("*.tmp"))
 
 
 # ---------------------------------------------------------------------------
@@ -224,14 +225,14 @@ def test_no_project_and_no_backend_stays_silent(workdir, capsys):
     assert capsys.readouterr().out == ""
 
 
-def test_an_unreadable_registry_is_never_overwritten(user, workdir, tmp_path):
+def test_an_unreadable_stores_file_is_never_overwritten(user, workdir, tmp_path):
     from szsdlc.backend.dir import DirBackend
 
-    path = backend._registry_path()
+    path = backend._project_sdlc_stores_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{broken", encoding="utf-8")
     with pytest.raises(ConfigError, match="cannot be read"):
-        backend._register(DirBackend(tmp_path / "d"))
+        backend._record_project_sdlc_store(DirBackend(tmp_path / "d"))
     assert path.read_text(encoding="utf-8") == "{broken"
 
 
@@ -281,3 +282,58 @@ def test_a_backend_without_refresh_is_a_problem_not_a_crash(tmp_path):
 
     report = backend.refresh(Old())
     assert not report.ok and "the old backend cannot refresh" in report.problem
+
+
+# ---------------------------------------------------------------------------
+# Retired names (WI-0066): each still works, and warns naming its replacement
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def dir_backend(user, workdir, tmp_path):
+    write_settings(user, {"SZSDLC_BACKEND": "dir", f"{DIR}PATH": str(tmp_path / "d")})
+    chosen = backend.resolve(workdir)
+    backend.ensure(chosen)
+    return chosen
+
+
+@pytest.mark.parametrize("old, new", [("root", "project_sdlc_root"),
+                                      ("store", "project_sdlc_store_dir")])
+def test_a_backends_retired_attributes_still_answer(dir_backend, old, new):
+    with pytest.warns(DeprecationWarning, match=f"Backend.{old} is deprecated; use Backend.{new}"):
+        assert getattr(dir_backend, old) == getattr(dir_backend, new)
+
+
+def test_has_local_changes_still_answers(dir_backend):
+    with pytest.warns(DeprecationWarning, match=r"use Backend\.has_unsent_changes\(\)"):
+        assert dir_backend.has_local_changes() is dir_backend.has_unsent_changes() is False
+
+
+def test_context_directory_still_works_both_ways(tmp_path):
+    with pytest.warns(DeprecationWarning, match=r"use Context\(project_asset_root=\.\.\.\)"):
+        context = backend.Context(project="p", home=tmp_path, directory=tmp_path / "a")
+    assert context.project_asset_root == tmp_path / "a"
+    with pytest.warns(DeprecationWarning, match="use Context.project_asset_root"):
+        assert context.directory == tmp_path / "a"
+    assert backend.Context("p", tmp_path) == backend.Context("p", tmp_path, None)
+
+
+@pytest.mark.parametrize("old, new", [
+    ("managed", "project_sdlc_store_for"),
+    ("project_root", "project_sdlc_root"),
+    ("project_directory", "project_asset_root"),
+])
+def test_a_retired_function_still_answers(dir_backend, workdir, old, new):
+    where = dir_backend.project_sdlc_store_dir if old == "managed" else workdir
+    with pytest.warns(DeprecationWarning, match=f"backend.{old}\\(\\) is deprecated; use szsdlc.backend.{new}"):
+        answer = getattr(backend, old)(where)
+    expected = getattr(backend, new)(where)
+    if old == "managed":
+        assert answer.project_sdlc_store_dir == expected.project_sdlc_store_dir
+    else:
+        assert answer == expected
+
+
+def test_the_stores_file_path_keeps_its_old_name_for_the_viewer():
+    with pytest.warns(DeprecationWarning, match="_project_sdlc_stores_path"):
+        assert backend._registry_path() == backend._project_sdlc_stores_path()

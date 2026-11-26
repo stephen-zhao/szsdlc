@@ -62,7 +62,7 @@ def init(params: InitParams, where: str | None) -> InitResult:
 
     # With a backend in effect the project goes wherever it keeps it, never
     # into the directory the command was run from.
-    root = backend_module.project_root(where) or Path(where or Path.cwd()).resolve()
+    root = backend_module.project_sdlc_root(where) or Path(where or Path.cwd()).resolve()
     config_path = config_module.config_path_for(root)
     if config_path.exists():
         raise BadInput(

@@ -131,7 +131,7 @@ def test_config_is_found_by_walking_up(tmp_path):
     write_project(tmp_path)
     deep = tmp_path / "a" / "b" / "c"
     deep.mkdir(parents=True)
-    assert C.find_project_root(deep) == tmp_path.resolve()
+    assert C.find_project_sdlc_root(deep) == tmp_path.resolve()
     assert C.load(deep).root == tmp_path.resolve()
 
 
@@ -541,3 +541,14 @@ def test_roadmap_defaulting_needs_exactly_one(tmp_path):
     with pytest.raises(ConfigError) as excinfo:
         cfg.only_roadmap()
     assert "--roadmap" in excinfo.value.fix
+
+
+
+def test_find_project_root_is_a_retired_name(tmp_path):
+    """WI-0066: it still answers, and warns naming its replacement."""
+    from szsdlc import config as C
+
+    (tmp_path / C.CONFIG_DIRNAME).mkdir()
+    (tmp_path / C.CONFIG_DIRNAME / C.CONFIG_FILENAME).write_text("", encoding="utf-8")
+    with pytest.warns(DeprecationWarning, match="find_project_sdlc_root"):
+        assert C.find_project_root(tmp_path / "sub") == C.find_project_sdlc_root(tmp_path) == tmp_path

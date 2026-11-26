@@ -49,8 +49,8 @@ def test_refresh_takes_what_arrived_and_redraws(configured, bare, workdir, tmp_p
 
     assert run("refresh") == 0
     assert capsys.readouterr().out == "refresh: changes arrived\n"
-    assert (configured.store / "ideas" / "index.md").is_file()
-    inbox = next((configured.store / "views").glob("inbox.md")).read_text()
+    assert (configured.project_sdlc_store_dir / "ideas" / "index.md").is_file()
+    inbox = next((configured.project_sdlc_store_dir / "views").glob("inbox.md")).read_text()
     assert "from elsewhere" in inbox  # rendered after it arrived
     assert git("--git-dir", str(bare), "rev-parse", "main") == head  # nothing sent
 
@@ -60,26 +60,26 @@ def test_refresh_refuses_to_replace_local_state_without_force(configured, bare, 
                                                               tmp_path, capsys, local):
     run("init")
     _push_from_elsewhere(bare, tmp_path, "theirs.md", "theirs")
-    mine = configured.store / "mine.md"
+    mine = configured.project_sdlc_store_dir / "mine.md"
     mine.write_text("mine")
     if local == "unpushed":
-        git("add", ".", cwd=configured.store)
+        git("add", ".", cwd=configured.project_sdlc_store_dir)
         git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "mine",
-            cwd=configured.store)
+            cwd=configured.project_sdlc_store_dir)
     capsys.readouterr()
 
     assert run("refresh") == 3
     err = capsys.readouterr().err
     assert "would replace them" in err and "Fix: szsdlc refresh --force" in err
     assert mine.read_text() == "mine"
-    assert not (configured.store / "theirs.md").exists()
+    assert not (configured.project_sdlc_store_dir / "theirs.md").exists()
 
 
 def test_refresh_force_replaces_and_keeps_what_it_replaced(configured, bare, workdir,
                                                           tmp_path, capsys):
     run("init")
     _push_from_elsewhere(bare, tmp_path, "theirs.md", "theirs")
-    store = configured.store
+    store = configured.project_sdlc_store_dir
     (store / "committed.md").write_text("committed, never pushed")
     git("add", ".", cwd=store)
     git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "local", cwd=store)
@@ -105,7 +105,7 @@ def test_refresh_force_replaces_and_keeps_what_it_replaced(configured, bare, wor
 
 def test_refresh_from_an_unreachable_remote_replaces_nothing(configured, bare, workdir, capsys):
     run("init")
-    mine = configured.store / "mine.md"
+    mine = configured.project_sdlc_store_dir / "mine.md"
     mine.write_text("mine")
     shutil.rmtree(bare)
     capsys.readouterr()

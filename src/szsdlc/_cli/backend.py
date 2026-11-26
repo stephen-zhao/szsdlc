@@ -1,4 +1,4 @@
-"""szsdlc backend: where the project is kept, and why. Inspection only."""
+"""szsdlc backend: the sdlc backend in effect, its project sdlc store dir and root. Inspection only."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def run(args: argparse.Namespace) -> int:
     settings files, beside everything else a user configures there.
     """
     shown = backend.backend(to_params(args), args.project)
-    out(f"backend  {shown.type}  ({shown.source})")
+    out(f"sdlc backend  {shown.type}  ({shown.source})")
     # `workdir` outside a project has neither settings nor a root to report:
     # one line is the whole truth.
     if not shown.rows:

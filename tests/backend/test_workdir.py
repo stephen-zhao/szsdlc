@@ -24,9 +24,9 @@ def test_the_workdir_backend_has_nothing_to_say_and_nothing_to_do(workdir):
     assert run("init") == 0
     chosen = backend.resolve(workdir)
     assert chosen.describe() == []            # no settings, and you are here
-    assert chosen.summary() == "in the working directory"
+    assert chosen.summary() == "in the asset root"
     assert chosen.materialize() is None       # the tree already exists
     assert backend.sync(chosen, "x").ok  # nothing to bring into agreement
 
     restored = backend.backend_class("workdir").restore(workdir, {})
-    assert restored.root == workdir  # the project, not an empty directory
+    assert restored.project_sdlc_root == workdir  # the project, not an empty directory
