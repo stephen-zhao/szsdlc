@@ -312,6 +312,7 @@ internal classes are its own business.)
 | **project sdlc store** | one project's recorded entry: its project sdlc root, its sdlc backend type and that backend's state; loaded, the sdlc backend rebuilt from it | the szsdlc project's entry, kept by `git` |
 | **sdlc backend**, **sdlc backend type**, **sdlc backend state** | the strategy that keeps a project sdlc store; which one (`workdir`, `dir`, `git`); the settings that rebuild it | `git`; `{url, branch, subdir}` |
 | **project sdlc store dir** | the local directory the sdlc backend reads and writes; the project sdlc root is inside it. For `workdir` it is the asset root; for `dir`, a directory elsewhere; for `git`, the clone | `~/.claude/szsdlc/git/szsdlc-szsdlc-…` |
+| **location** | what a person types to name a project: a folder on this computer, or a place an sdlc backend keeps one; `szsdlc.backend.from_location()` asks each backend whether it reads one | `git@github.com:org/tracker.git#main` |
 | **unsent changes** | local changes the sdlc backend has not sent yet; always none for `workdir` and `dir` | an edit before `sync` |
 
 **Backend-specific terms** appear only where one backend has something the
@@ -501,7 +502,16 @@ protocol in [`backend/__init__.py`](../src/szsdlc/backend/__init__.py): its
 `type`, `keys` and `relocates`, its `project_sdlc_store_dir` and
 `project_sdlc_root`, then `from_settings`, `materialize`,
 `has_unsent_changes`, `sync` and `refresh`, plus `state`/`restore` so a
-project sdlc store found on disk can be recognised again. List it in
+project sdlc store found on disk can be recognised again.
+- **Optional, for repository-style locations:** a classmethod
+  `from_location(text, context)`.
+  - **When it recognises `text`:** it returns the backend, built through
+    `from_settings` so every check still applies.
+  - **When it doesn't:** it returns `None`.
+  - **For a form it recognises and refuses:** it raises `ConfigError`.
+
+  `git` reads every URL form git may use, plus `#branch`. `dir` and `workdir`
+  don't define it, because a folder resolves as a folder. List it in
 `BACKENDS`. Mixing in `RetiredNames` gives it the deprecated spellings too. Nothing outside that package knows which
 backend is in use, and nothing in it is shared between implementations —
 [`git.py`](../src/szsdlc/backend/git.py) owns every line about commits and
@@ -563,9 +573,14 @@ ops.call("set", {"ref": "WI-0042", "assignments": ["status=ready"],
   current.
 - **A query that lists** takes `limit` (`0` for all) and always returns
   `total`.
+- **`location`** (HTTP and in-process, not the CLI's) says what a location
+  names: the sdlc backend that claims it, its project sdlc store dir and
+  root, and whether it exists yet. It creates nothing.
+  `szsdlc.backend.redact()` and `project_sdlc_store_dir_name()` give the
+  forms fit to show.
 - **`ops.OPERATIONS`** names every operation with its `params` and `result`
   types, its `kind` (`query` or `mutation`), and the `interfaces` it belongs
-  to. `init` is the CLI's alone.
+  to. `init` is the CLI's alone, and `location` HTTP's.
 
 ### Refusals
 

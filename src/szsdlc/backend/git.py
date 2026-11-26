@@ -41,12 +41,14 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any, ClassVar
-from urllib.parse import urlsplit, urlunsplit
 
 from ..errors import ConfigError
 from ..settings import Setting
-from . import (
+from . import (  # noqa: F401  (redact is re-exported here, where it lived)
+    CONTROL,
+    URL_USERINFO,
     Context,
+    redact,
     RetiredNames,
     SyncReport,
     path_setting,
@@ -75,40 +77,18 @@ SYNC_BUDGET = 50
 #: A `helper::address` URL names a remote helper program to run.
 HELPER_URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*::")
 
-#: Userinfo in any URL inside free text, such as git's own error messages.
-URL_USERINFO = re.compile(r"(\b[A-Za-z][A-Za-z0-9+.-]*://)[^/\s@]+@")
+#: A location git can clone: a URL in a transport git may use, or scp-like
+#: `user@host:path`. A `helper::` URL is not matched here; `from_location`
+#: still hands it to `from_settings`, which refuses it.
+REMOTE = re.compile(r"^(?:(?:https?|ssh|git|file)://\S+|[\w.+-]+@[\w.-]+:[^\s:]\S*)$", re.IGNORECASE)
 
-#: Terminal control characters, never printed from a value someone else wrote.
-CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+#: Where settings built from a location say they came from.
+LOCATION_SOURCE = "a location"
+PREFIX = "SZSDLC_BACKEND_GIT_"
 
 #: Used only when the user has no git identity configured, so a commit in the
 #: hidden clone does not fail on a machine that never needed one before.
 FALLBACK_IDENTITY = ("szsdlc", "szsdlc@localhost")
-
-
-def redact(url: str) -> str:
-    """`url` with any credentials in it replaced, for display.
-
-    `https://token@host/...` and `https://user:secret@host/...` both carry a
-    secret; `ssh://git@host/...` and `git@host:path` carry only a user name,
-    which is kept because it is often the useful part.
-    """
-    url = CONTROL.sub("?", url)
-    try:
-        parts = urlsplit(url)
-    except ValueError:
-        # Unparseable, but may still carry a secret: scrub it the blunt way.
-        return URL_USERINFO.sub(r"\1***@", url).split("?", 1)[0]
-    if parts.query:
-        # `?access_token=...` and the like: a query has no business in a git
-        # remote other than to carry a secret.
-        parts = parts._replace(query="***")
-    if "@" in parts.netloc:
-        userinfo, host = parts.netloc.rsplit("@", 1)
-        if parts.scheme in ("http", "https") or ":" in userinfo:
-            user = "" if parts.scheme in ("http", "https") else userinfo.split(":", 1)[0] + ":"
-            parts = parts._replace(netloc=f"{user}***@{host}")
-    return urlunsplit(parts) if parts != urlsplit(url) else url
 
 
 def scrub(text: str) -> str:
@@ -168,6 +148,21 @@ class GitBackend(RetiredNames):
         return cls(url, clone, branch=branch or None,
                    subdir=subpath(found.get("SUBDIR"), context),
                    project_asset_root=context.project_asset_root)
+
+    @classmethod
+    def from_location(cls, text: str, context: Context) -> GitBackend | None:
+        """`URL[#branch]`, for any URL git may use, as this backend; None for anything else.
+
+        A remote-helper or option-like URL is not "not mine": it goes through
+        `from_settings` like any other, and is refused there as it always is.
+        """
+        url, _, branch = str(text).strip().partition("#")
+        if not (REMOTE.match(url) or HELPER_URL.match(url) or url.startswith("-")):
+            return None
+        found = {"URL": Setting(f"{PREFIX}URL", url, LOCATION_SOURCE, context.home)}
+        if branch:
+            found["BRANCH"] = Setting(f"{PREFIX}BRANCH", branch, LOCATION_SOURCE, context.home)
+        return cls.from_settings(found, context)
 
     @classmethod
     def restore(cls, store: Path, state: dict[str, Any]) -> GitBackend:

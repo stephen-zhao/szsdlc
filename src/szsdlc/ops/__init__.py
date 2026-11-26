@@ -33,7 +33,7 @@ from ._registry import OPERATIONS, Operation, call
 from . import (  # noqa: F401  isort: skip
     capture, refine, inbox, drop, init, new, set_, tag, link, convert, layout, log,
     schedule, next_, show, context, list_, trace, standards, render, sync, refresh,
-    validate, backend,
+    validate, backend, location,
 )
 
 __all__ = [

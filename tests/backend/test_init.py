@@ -337,3 +337,45 @@ def test_a_retired_function_still_answers(dir_backend, workdir, old, new):
 def test_the_stores_file_path_keeps_its_old_name_for_the_viewer():
     with pytest.warns(DeprecationWarning, match="_project_sdlc_stores_path"):
         assert backend._registry_path() == backend._project_sdlc_stores_path()
+
+
+# ---------------------------------------------------------------------------
+# Locations (WI-0071)
+# ---------------------------------------------------------------------------
+
+
+def test_a_backend_without_from_location_never_claims_one(isolated_settings, monkeypatch):
+    class Plain:
+        type = "plain"
+
+    monkeypatch.setitem(backend.BACKENDS, "aaa-plain", Plain)
+    assert backend.from_location("not a url") is None
+    assert backend.from_location("https://host/org/repo.git").type == "git"
+
+
+def test_backends_are_asked_in_a_stable_order(isolated_settings, monkeypatch):
+    seen = []
+
+    def claimer(name):
+        class Claims:
+            type = name
+
+            @classmethod
+            def from_location(cls, text, context):
+                seen.append(name)
+                return cls() if name == "zz" else None
+        return Claims
+
+    monkeypatch.setitem(backend.BACKENDS, "zz", claimer("zz"))
+    monkeypatch.setitem(backend.BACKENDS, "aa", claimer("aa"))
+    assert backend.from_location("something only zz reads").type == "zz"
+    assert seen == ["aa", "zz"]
+
+
+def test_the_display_helpers_are_public():
+    assert backend.redact("https://token@host/org/repo.git?access_token=x") == "https://***@host/org/repo.git?***"
+    assert backend.redact("git@host:org/repo.git") == "git@host:org/repo.git"
+    assert backend.project_sdlc_store_dir_name("/x/tracker-0123456789") == "tracker"
+    assert backend.project_sdlc_store_dir_name("/x/plain") == "plain"
+    from szsdlc.backend import git
+    assert git.redact is backend.redact  # still importable where it lived
