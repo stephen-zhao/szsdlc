@@ -445,6 +445,16 @@ def resolve(start: Path | str | None = None) -> Backend:
                                      project_asset_root=asset_root))
 
 
+def is_folder(text: str) -> bool:
+    """Whether `text` names an existing folder on this computer (`~` expanded). Blank never does."""
+    if not str(text).strip():
+        return False
+    try:
+        return Path(text).expanduser().is_dir()
+    except (RuntimeError, OSError, ValueError):  # `~nosuchuser`, an unreadable path, a NUL
+        return False
+
+
 def from_location(text: str) -> Backend | None:
     """The sdlc backend a *location* names, or None when no backend claims it.
 
@@ -458,7 +468,7 @@ def from_location(text: str) -> Backend | None:
     recognises and refuses, such as a git remote-helper URL.
     """
     text = str(text).strip()
-    if not text or Path(text).expanduser().is_dir():
+    if not text or is_folder(text):
         return None
     _load_builtin_backends()
     context = Context(project="project", home=home(), project_asset_root=None)

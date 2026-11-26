@@ -28,7 +28,7 @@ class LocationResult(Data):
     location: str
     project_sdlc_store_dir: str
     project_sdlc_root: str
-    #: Whether the project sdlc store dir exists on this computer yet.
+    #: Whether the project sdlc store dir exists on this computer yet, as a directory.
     materialized: bool
 
 
@@ -39,7 +39,7 @@ def location(params: LocationParams, where: str | None) -> LocationResult:
     from .. import backend as backend_module
 
     shown = backend_module.redact(params.location.strip())
-    if Path(params.location.strip()).expanduser().is_dir():
+    if params.location.strip() and backend_module.is_folder(params.location.strip()):
         raise BadInput(f"{shown} is a folder on this computer, not a location an sdlc backend keeps.",
                        fix="open the folder itself; its settings say which sdlc backend keeps it")
     found = backend_module.from_location(params.location)
@@ -47,4 +47,4 @@ def location(params: LocationParams, where: str | None) -> LocationResult:
         raise BadInput(f"no sdlc backend reads {shown!r} as a location.",
                        fix="name a repository URL such as https://host/org/repo.git, or a folder on this computer")
     return LocationResult(found.type, shown, str(found.project_sdlc_store_dir),
-                          str(found.project_sdlc_root), Path(found.project_sdlc_store_dir).exists())
+                          str(found.project_sdlc_root), Path(found.project_sdlc_store_dir).is_dir())

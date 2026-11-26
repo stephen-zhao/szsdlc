@@ -40,6 +40,7 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 from typing import Any, ClassVar
 
 from ..errors import ConfigError
@@ -78,9 +79,31 @@ SYNC_BUDGET = 50
 HELPER_URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*::")
 
 #: A location git can clone: a URL in a transport git may use, or scp-like
-#: `user@host:path`. A `helper::` URL is not matched here; `from_location`
-#: still hands it to `from_settings`, which refuses it.
-REMOTE = re.compile(r"^(?:(?:https?|ssh|git|file)://\S+|[\w.+-]+@[\w.-]+:[^\s:]\S*)$", re.IGNORECASE)
+#: `[user@]host:path`, the host a name (two characters or more, so a Windows
+#: drive such as `C:` is never one) or a bracketed IPv6 address. A `helper::`
+#: URL is not matched here; `from_location` still hands it to `from_settings`,
+#: which refuses it.
+REMOTE = re.compile(r"^(?:(?:https?|ssh|git|file)://\S+"
+                    r"|(?:[\w.+-]+@)?(?:[\w.-]{2,}|\[[0-9A-Fa-f:.]+\]):[^\s:]\S*)$", re.IGNORECASE)
+
+
+def clone_hint(url: str) -> str:
+    """The readable part of a clone's directory name: the repository's name.
+
+    Taken from the URL's path only, never its userinfo or query, so a token in
+    `https://tok@host/...` or `...?access_token=...` can never reach a
+    directory name. The full URL still goes into the name's hash.
+    """
+    if "://" in url:
+        try:
+            parts = urlsplit(url)
+            path = parts.path or (parts.hostname or "")
+        except ValueError:
+            path = ""
+    else:  # scp-like: [user@]host:path
+        path = url.split(":", 1)[1] if ":" in url else url
+    tail = path.rstrip("/").rsplit("/", 1)[-1]
+    return re.sub(r"\.git$", "", tail) or "repository"
 
 #: Where settings built from a location say they came from.
 LOCATION_SOURCE = "a location"
@@ -143,8 +166,7 @@ class GitBackend(RetiredNames):
         else:
             parent = (path_setting(found["CLONE_ROOT"], context) if "CLONE_ROOT" in found
                       else context.home / "git")
-            tail = re.sub(r"\.git$", "", url.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1])
-            clone = parent / readable_name(url, branch, hint=tail)
+            clone = parent / readable_name(url, branch, hint=clone_hint(url))
         return cls(url, clone, branch=branch or None,
                    subdir=subpath(found.get("SUBDIR"), context),
                    project_asset_root=context.project_asset_root)
