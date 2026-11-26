@@ -1,4 +1,4 @@
-"""szsdlc refresh: take the latest from where the project is kept; send nothing."""
+"""szsdlc refresh: replace local state with the sdlc backend's latest; send nothing."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class RefreshResult(Data):
 
 @operation("refresh", params=RefreshParams, result=RefreshResult, kind="mutation", loads=False)
 def refresh(params: RefreshParams, where: str | None) -> RefreshResult:
-    """Make the latest state where the project is kept the current one.
+    """Replace local state with the sdlc backend's latest.
 
     Sends nothing and integrates nothing. Renders afterwards, as `sync`
     does, so views match what arrived — the only local write.
@@ -35,14 +35,13 @@ def refresh(params: RefreshParams, where: str | None) -> RefreshResult:
     from .. import backend as backend_module
     from .. import sync as sync_module
 
-    backend_module.project_root(where)  # make the store ready, as any command does
+    backend_module.project_sdlc_root(where)  # make the store dir ready, as any command does
     backend = backend_module.locate(where)
     if backend is None:  # pragma: no cover - project_root just made it
         raise BadInput("refresh: no project here.", fix="szsdlc init")
-    if not params.force and backend.has_local_changes():
+    if not params.force and backend.has_unsent_changes():
         raise Refused(
-            "refresh: local changes differ from where the project is kept, and "
-            "refreshing would replace them.",
+            "refresh: there are unsent changes, and refreshing would replace them.",
             fix="szsdlc refresh --force",
             see="szsdlc sync sends them instead",
         )

@@ -103,9 +103,9 @@ trace <ref> [--depth]   relations both ways, back to the idea
 standards match <path>  conventions governing these paths
 render                  regenerate every view and record; silent, never validates
 validate                every consistency rule; silent when clean
-sync                    render, then put the project in step with where it is kept
-refresh [--force]       make the latest where it is kept current; sends nothing
-backend                 where the project is kept, and why
+sync                    render, then sync the project sdlc store
+refresh [--force]       take the sdlc backend's latest; sends nothing
+backend                 the sdlc backend in effect, and why
 ```
 
 ### Importing existing history
@@ -276,20 +276,66 @@ one release, so a choice already made is not silently dropped.
 Not `.szsdlc/config.yml` keys: that file is the project's model, read by the
 CLI and by CI, which have no turns to render at.
 
-## Backends: where a project is kept
+## Backends
 
-Every project is on a backend. By default it is `workdir`: the project lives
-where `.szsdlc/config.yml` is found above the working directory, and there is
-nothing to keep it in step with. Any other backend keeps it somewhere else —
-another local directory, or a remote — and szsdlc then writes nothing into the
-directory you are working in.
+Every project has an **sdlc backend**. By default it is `workdir`: the
+project's records sit in the asset root you are working in, and there is
+nothing to sync. Any other sdlc backend keeps them elsewhere (another local
+directory, or a clone of a remote repository), and szsdlc then writes nothing
+into the asset root.
 
-A backend has **one** operation, `sync`: bring the store into step with
-wherever this backend keeps it, and report what moved and in which direction.
-How is the implementation's own business and is deliberately not described at
-this level — no caller may assume a commit, a remote or a network.
-`render` is not a backend operation at all; the two are composed one level up,
-which is what `szsdlc sync` and every hook call.
+An sdlc backend has two operations, worded without a destination:
+- **`sync`** sends a project sdlc store's unsent changes and takes in others'
+  changes, as its sdlc backend defines. `workdir` and `dir` have nothing to do.
+- **`refresh`** replaces local state with the sdlc backend's latest, and sends
+  nothing.
+
+How either is done is the implementation's own business, and is deliberately
+not described at this level: no caller may assume a commit, a remote or a
+network. `render` is not a backend operation at all; the two are composed one
+level up, which is what `szsdlc sync` and every hook call.
+
+### Glossary
+
+These words name the backend model everywhere a person or a caller sees it:
+the stores file and its keys, public functions and operations, CLI output,
+docs, and the viewer. Code uses no others. (The names of the implementation's
+internal classes are its own business.)
+
+**Generic terms**, true of every backend; none of them names a remote or a copy:
+
+| Term | Meaning | Example |
+|---|---|---|
+| *project* | one model: one `.szsdlc/config.yml` and its entities | the project `szsdlc` |
+| **project sdlc root** | the directory holding the project's `.szsdlc/` and its SDLC records (entities, roadmaps, views) | `~/.claude/szsdlc/git/szsdlc-szsdlc-…` |
+| **project asset root** | a directory holding the code and other assets the project describes; a project can have several | `~/code/szsdlc-ui-win95` |
+| **project sdlc store** | one project's recorded entry: its project sdlc root, its sdlc backend type and that backend's state; loaded, the sdlc backend rebuilt from it | the szsdlc project's entry, kept by `git` |
+| **sdlc backend**, **sdlc backend type**, **sdlc backend state** | the strategy that keeps a project sdlc store; which one (`workdir`, `dir`, `git`); the settings that rebuild it | `git`; `{url, branch, subdir}` |
+| **project sdlc store dir** | the local directory the sdlc backend reads and writes; the project sdlc root is inside it. For `workdir` it is the asset root; for `dir`, a directory elsewhere; for `git`, the clone | `~/.claude/szsdlc/git/szsdlc-szsdlc-…` |
+| **unsent changes** | local changes the sdlc backend has not sent yet; always none for `workdir` and `dir` | an edit before `sync` |
+
+**Backend-specific terms** appear only where one backend has something the
+others lack, and generic code never uses them:
+
+| sdlc backend type | Term | Meaning |
+|---|---|---|
+| `git` | **project sdlc store repo** | the remote repository and branch holding the authoritative copy; `sync` pushes to it, `refresh` takes from it |
+
+**Retired words:**
+- "where the project is kept": only git has a separate authoritative copy, and
+  it is named as such, the project sdlc store repo;
+- "working tree" as a szsdlc term: it is git's word for a checkout;
+- "relocated", "store" on its own, and "registry".
+
+**Python names:** in `szsdlc.backend`, a backend has `project_sdlc_root`,
+`project_sdlc_store_dir` and `has_unsent_changes()`. The module functions are
+`project_sdlc_store_for(path)`, `project_sdlc_root(start)` and
+`project_asset_root(start)`, `Context.project_asset_root`, and
+`szsdlc.config.find_project_sdlc_root()`. The retired spellings still work,
+with a `DeprecationWarning` naming the replacement, until WI-0068 removes them:
+- `root`, `store`, `has_local_changes()`;
+- `managed()`, `project_root()`, `project_directory()`;
+- `Context.directory`, `find_project_root()`.
 
 ### Configuring one
 
@@ -309,22 +355,22 @@ the CLI reads the same files directly, so it behaves the same from a terminal.
 A variable exported in the shell overrides every file. `CLAUDE_CONFIG_DIR`
 moves the user file, as it does for Claude Code.
 
-`SZSDLC_BACKEND` selects the backend, and each backend reads only its own
+`SZSDLC_BACKEND` selects the sdlc backend, and each one reads only its own
 `SZSDLC_BACKEND_<TYPE>_*` keys. Keys for backends that are not selected are
 ignored, so a git setup can stay configured while one project uses `dir`. An
 unknown key in the selected backend's namespace is an error.
 
-| `SZSDLC_BACKEND` | The project lives |
+| `SZSDLC_BACKEND` | The project sdlc store dir is |
 |---|---|
-| `workdir` (default) | in the working tree. Set it in a project to opt out of a user-wide backend |
-| `dir` | in another local directory |
-| `git` | in a remote git repository, through a clone szsdlc keeps on the side |
+| `workdir` (default) | the asset root. Set it in a project to opt out of a user-wide backend |
+| `dir` | another local directory |
+| `git` | a clone of the project sdlc store repo, a remote git repository |
 
 What a sync is, per backend:
 
 ```
-workdir   nothing. the store is the working tree
-dir       nothing. the directory is the project, not a copy of it
+workdir   nothing. the project sdlc store dir is the asset root
+dir       nothing. the directory is the only copy
 git       commit, fetch, rebase, push        (git's words, and git's alone)
 ```
 
@@ -332,19 +378,19 @@ git       commit, fetch, rebase, push        (git's words, and git's alone)
 
 | Key | Default | Meaning |
 |---|---|---|
-| `SZSDLC_BACKEND_DIR_PATH` | required | the directory the project's files are written to |
+| `SZSDLC_BACKEND_DIR_PATH` | required | the project sdlc store dir: where the project's files are written |
 
 **`git`**
 
 | Key | Default | Meaning |
 |---|---|---|
-| `SZSDLC_BACKEND_GIT_URL` | required | the remote repository |
+| `SZSDLC_BACKEND_GIT_URL` | required | the project sdlc store repo |
 | `SZSDLC_BACKEND_GIT_BRANCH` | the remote's default | the branch to track; the first push creates it if the remote lacks it |
-| `SZSDLC_BACKEND_GIT_SUBDIR` | the top | where in the repository the project lives |
+| `SZSDLC_BACKEND_GIT_SUBDIR` | the top | where in the repository the project sdlc root is |
 | `SZSDLC_BACKEND_GIT_CLONE_ROOT` | `~/.claude/szsdlc/git` | the directory clones are made under |
 | `SZSDLC_BACKEND_GIT_CLONE_PATH` | `<CLONE_ROOT>/<name>-<hash>` | the exact clone, overriding `CLONE_ROOT` |
 
-`{project}` in a path-like value is replaced with the project directory's
+`{project}` in a path-like value is replaced with the project asset root's
 name — the directory holding `.claude/settings*.json`, else the enclosing git
 checkout, so a command run from a subdirectory names the same project — and
 one directory or repository can hold many projects. Relative paths
@@ -361,14 +407,15 @@ for the user file.
 }
 ```
 
-`szsdlc backend` shows the backend in effect and which file each value came
-from; credentials embedded in a URL are redacted there and everywhere else it
-is printed. `szsdlc init` creates the project wherever the backend keeps it.
+`szsdlc backend` shows the sdlc backend in effect, its project sdlc store dir
+and project sdlc root, and which file each value came from; credentials
+embedded in a URL are redacted there and everywhere else it is printed.
+`szsdlc init` creates the project in the sdlc backend's project sdlc root.
 
 An existing clone is used only if it is a clone of `SZSDLC_BACKEND_GIT_URL`
 with `SZSDLC_BACKEND_GIT_BRANCH` (or, when unset, the remote's default branch)
 checked out; otherwise it is refused rather than repurposed. This is checked
-again before every sync. A clone that would contain the working tree, and
+again before every sync. A clone that would contain the project asset root, and
 a `SUBDIR` that resolves outside the clone, are refused too.
 
 ### When a sync happens
@@ -393,8 +440,8 @@ the shells it runs commands in.
 **A turn of its own work is recorded once.** An edit is not a unit of history:
 a turn that touches twelve files is one change to the project, and sending each
 write made the record a transcript of Claude's tool calls rather than of what
-changed. Nothing is at risk in between — the edits are on disk in the store,
-and `has_local_changes` reads it, so the next sync from whichever entry
+changed. Nothing is at risk in between — the edits are on disk in the project
+sdlc store dir, and `has_unsent_changes` reads it, so the next sync from whichever entry
 point reaches it first sweeps in what is sitting there. A session that dies
 mid-turn leaves its work unsent; the next session's start syncs it.
 
@@ -404,14 +451,14 @@ view cannot be drawn from an entity that has not arrived yet.
 ### Taking the latest without sending: `refresh`
 
 `sync` always runs both ways. `szsdlc refresh` runs one way: afterwards the
-current state is the latest where the project is kept, nothing has been sent,
-and nothing has been integrated, so nothing can conflict. It renders afterwards,
+current state is the sdlc backend's latest, nothing has been sent, and nothing
+has been integrated, so nothing can conflict. It renders afterwards,
 which is its only local write.
 
-- On `workdir` and `dir` it does nothing, because the directory *is* where the
-  project is kept.
-- When the store holds something that differs from the latest (unsent changes,
-  or local commits), refreshing would replace it. So the command refuses, with
+- On `workdir` and `dir` it does nothing, because the directory is the only
+  copy.
+- When there are unsent changes (uncommitted edits, or local commits on git),
+  refreshing would replace them. So the command refuses, with
   `szsdlc refresh --force` as the fix. Replace only when you mean to; otherwise
   `szsdlc sync` sends that work instead.
 - The backend operation itself never asks. A caller such as a viewer's Refresh
@@ -449,11 +496,13 @@ held to 50 seconds, so it does not outlast the hook running it. A clone whose
 
 ### Adding a backend
 
-A backend (sftp, http, ...) is a class implementing the `Backend` protocol in
-[`backend/__init__.py`](../src/szsdlc/backend/__init__.py): its `type`, `keys`
-and `relocates`, then `from_settings`, `materialize`, `has_local_changes` and
-`sync`, plus `state`/`restore` so a store found on disk can be recognised
-again. Register it in `BACKENDS`. Nothing outside that package knows which
+An sdlc backend (sftp, http, ...) is a class implementing the `Backend`
+protocol in [`backend/__init__.py`](../src/szsdlc/backend/__init__.py): its
+`type`, `keys` and `relocates`, its `project_sdlc_store_dir` and
+`project_sdlc_root`, then `from_settings`, `materialize`,
+`has_unsent_changes`, `sync` and `refresh`, plus `state`/`restore` so a
+project sdlc store found on disk can be recognised again. List it in
+`BACKENDS`. Mixing in `RetiredNames` gives it the deprecated spellings too. Nothing outside that package knows which
 backend is in use, and nothing in it is shared between implementations —
 [`git.py`](../src/szsdlc/backend/git.py) owns every line about commits and
 remotes. [`dir.py`](../src/szsdlc/backend/dir.py) is the smallest example;

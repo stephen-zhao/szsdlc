@@ -1,4 +1,4 @@
-"""Sync: render, then bring the project into step with where it is kept.
+"""Sync: render, then sync the project sdlc store through its sdlc backend.
 
 The workflow operation, as against :meth:`szsdlc.backend.Backend.sync`,
 which is the mechanism one backend uses. The difference is the render, and this

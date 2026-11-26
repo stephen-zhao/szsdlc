@@ -48,6 +48,9 @@ packages = ["src/szsdlc"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# szsdlc must never use its own retired names (WI-0066): a DeprecationWarning
+# raised from szsdlc's own code is an error. Tests of the aliases use pytest.warns.
+filterwarnings = ["error::DeprecationWarning:szsdlc.*"]
 # Tests import shared constants from one another (`from tests.test_contract
 # import ...`), which needs the repository root importable however pytest is
 # launched — `pytest`, `uv run pytest` or `python -m pytest`.

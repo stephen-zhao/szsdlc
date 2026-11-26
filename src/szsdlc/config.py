@@ -423,8 +423,8 @@ def load_schema() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def find_project_root(start: Path | str | None = None) -> Path | None:
-    """Walk up from `start` looking for `.szsdlc/config.yml`."""
+def find_project_sdlc_root(start: Path | str | None = None) -> Path | None:
+    """The project sdlc root above `start`: walk up looking for `.szsdlc/config.yml`."""
     here = Path(start or Path.cwd()).resolve()
     if here.is_file():
         here = here.parent
@@ -432,6 +432,15 @@ def find_project_root(start: Path | str | None = None) -> Path | None:
         if (candidate / CONFIG_DIRNAME / CONFIG_FILENAME).is_file():
             return candidate
     return None
+
+
+def find_project_root(start: Path | str | None = None) -> Path | None:
+    """Retired name (WI-0066) for :func:`find_project_sdlc_root`; WI-0068 removes it."""
+    import warnings
+
+    warnings.warn("szsdlc.config.find_project_root() is deprecated; use "
+                  "szsdlc.config.find_project_sdlc_root()", DeprecationWarning, stacklevel=2)
+    return find_project_sdlc_root(start)
 
 
 def config_path_for(root: Path) -> Path:
@@ -985,22 +994,22 @@ def load_data(root: Path) -> dict[str, Any]:
 def load(start: Path | str | None = None) -> Config:
     """Locate, merge, validate and resolve the config for the project at `start`.
 
-    A configured backend (see :mod:`szsdlc.backend`) takes precedence over
-    discovery: the project root is then wherever the backend keeps it, created
-    on first use, rather than anything above `start`.
+    A configured sdlc backend (see :mod:`szsdlc.backend`) takes precedence
+    over discovery: the project sdlc root is then inside its project sdlc
+    store dir, created on first use, rather than anything above `start`.
     """
     from . import backend
 
-    root = backend.project_root(start)
+    root = backend.project_sdlc_root(start)
     if root is not None:
         if not config_path_for(root).is_file():
             raise ConfigError(
-                f"no szsdlc project in {root}, where the configured backend keeps it.",
+                f"no szsdlc project in {root}, the configured sdlc backend's project sdlc root.",
                 fix="szsdlc init",
                 see="szsdlc backend",
             )
     else:
-        root = find_project_root(start)
+        root = find_project_sdlc_root(start)
     if root is None:
         here = Path(start or Path.cwd()).resolve()
         raise ConfigError(

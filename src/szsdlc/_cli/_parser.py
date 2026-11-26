@@ -53,9 +53,9 @@ COMMANDS: list[tuple[str, str]] = [
     ("standards match <path>", "conventions governing these paths"),
     ("render", "regenerate every view and record; silent, never validates"),
     ("validate", "every consistency rule; silent when clean"),
-    ("sync", "render, then put the project in step with where it is kept"),
-    ("refresh [--force]", "make the latest where it is kept current; sends nothing"),
-    ("backend", "where the project is kept, and why"),
+    ("sync", "render, then sync the project sdlc store"),
+    ("refresh [--force]", "take the sdlc backend's latest; sends nothing"),
+    ("backend", "the sdlc backend in effect, and why"),
 ]
 
 

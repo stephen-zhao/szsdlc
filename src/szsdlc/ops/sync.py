@@ -1,4 +1,4 @@
-"""szsdlc sync: render, then bring the project into step with where it is kept."""
+"""szsdlc sync: render, then send unsent changes and take in others', as the sdlc backend defines."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def _send(where: str | None, reason: str = "sync"):
 
 @operation("sync", params=SyncParams, result=SyncResult, kind="mutation", loads=False)
 def sync(params: SyncParams, where: str | None) -> SyncResult:
-    """Render, then bring the project into step with where it is kept.
+    """Render, then send unsent changes and take in others', as the sdlc backend defines.
 
     Explicitly asked for, so a failure refuses, where the sync after another
     command only warns: a backend that reports a problem, and one that fails
@@ -58,7 +58,7 @@ def sync(params: SyncParams, where: str | None) -> SyncResult:
     """
     from .. import backend as backend_module
 
-    backend_module.project_root(where)  # create the store if needed
+    backend_module.project_sdlc_root(where)  # create the store dir if needed
     rendered = render(RenderParams(), Project(where))
     try:
         report = _send(where)

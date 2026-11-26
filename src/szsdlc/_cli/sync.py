@@ -1,4 +1,4 @@
-"""szsdlc sync: render, then bring the project into step with where it is kept."""
+"""szsdlc sync: render, then sync the project sdlc store."""
 
 from __future__ import annotations
 

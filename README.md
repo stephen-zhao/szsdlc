@@ -45,7 +45,7 @@ research that chose this design, the measured token costs, the architectural
 decisions and the delivered implementation plan live there as entities — not as
 prose in this repo, because a plan kept as prose beside the code it describes
 is the exact drift this framework exists to remove. Run `szsdlc backend` to see
-where it is kept.
+its sdlc backend and where its project sdlc root is.
 
 ## License
 

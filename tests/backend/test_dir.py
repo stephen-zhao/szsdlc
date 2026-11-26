@@ -31,11 +31,11 @@ def test_dir_writes_straight_into_another_directory(user, workdir, tmp_path, cap
 def test_a_relative_dir_path_resolves_against_the_project(workdir):
     write_settings(workdir / ".claude" / "settings.json",
                    {"SZSDLC_BACKEND": "dir", f"{DIR}PATH": "../tracking"})
-    assert backend.resolve(workdir).root == workdir.parent / "tracking"
+    assert backend.resolve(workdir).project_sdlc_root == workdir.parent / "tracking"
 
 
 def test_dir_refuses_a_file(user, workdir, tmp_path):
     (tmp_path / "f").write_text("x")
     write_settings(user, {"SZSDLC_BACKEND": "dir", f"{DIR}PATH": str(tmp_path / "f")})
     with pytest.raises(ConfigError, match="not a directory"):
-        backend.project_root(workdir)
+        backend.project_sdlc_root(workdir)
