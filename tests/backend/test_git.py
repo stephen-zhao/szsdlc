@@ -795,3 +795,62 @@ def test_a_redraw_that_fails_after_a_pull_is_said(configured, bare, workdir, tmp
     hooks.stop({"cwd": str(workdir)})
     assert "redrawing after the sync failed: RuntimeError: template missing" in \
         capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Locations (WI-0071): the git backend reads a location itself
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("text, url, branch", [
+    ("https://github.com/org/tracker.git", "https://github.com/org/tracker.git", None),
+    ("http://host/org/tracker", "http://host/org/tracker", None),
+    ("ssh://git@host/org/tracker.git", "ssh://git@host/org/tracker.git", None),
+    ("git://host/org/tracker.git", "git://host/org/tracker.git", None),
+    ("file:///srv/git/tracker.git", "file:///srv/git/tracker.git", None),
+    ("git@github.com:org/tracker.git", "git@github.com:org/tracker.git", None),
+    ("git@github.com:org/tracker.git#main", "git@github.com:org/tracker.git", "main"),
+    ("  https://host/org/tracker.git#release/2  ", "https://host/org/tracker.git", "release/2"),
+    ("host.example:org/tracker.git", "host.example:org/tracker.git", None),
+    ("[::1]:org/tracker.git", "[::1]:org/tracker.git", None),
+    ("git@[2001:db8::1]:org/tracker.git#dev", "git@[2001:db8::1]:org/tracker.git", "dev"),
+])
+def test_every_url_form_git_may_use_is_claimed(isolated_settings, text, url, branch):
+    from szsdlc.backend.git import GitBackend
+
+    found = backend.from_location(text)
+    assert isinstance(found, GitBackend) and (found.url, found.branch) == (url, branch)
+    # Built through from_settings: the clone path and its readable name are the usual ones.
+    assert found.project_sdlc_store_dir.parent == isolated_settings / "szsdlc" / "git"
+    assert backend.project_sdlc_store_dir_name(found.project_sdlc_store_dir) == "tracker"
+    assert not found.project_sdlc_store_dir.exists()  # nothing is created
+
+
+@pytest.mark.parametrize("text", ["ext::sh -c touch%20/tmp/x", "fd::17", "--upload-pack=touch x"])
+def test_a_helper_or_option_like_location_is_refused_not_ignored(isolated_settings, text):
+    with pytest.raises(ConfigError):
+        backend.from_location(text)
+
+
+@pytest.mark.parametrize("text", ["tracker", "C:\\\\work\\\\tracker", "C:/work/tracker", "host:path with spaces", "",
+                                  "~no_such_user_szsdlc/repo"])
+def test_anything_else_is_not_claimed(isolated_settings, text):
+    assert backend.from_location(text) is None
+
+
+def test_a_folder_is_never_a_location(isolated_settings, tmp_path):
+    assert backend.from_location(str(tmp_path)) is None
+
+
+
+@pytest.mark.parametrize("url, hint", [
+    ("https://host/org/tracker.git", "tracker"),
+    ("https://host/org/tracker.git?access_token=s3cret", "tracker"),
+    ("https://user:s3cret@host", "host"),
+    ("git@host:org/tracker.git", "tracker"),
+    ("file:///srv/git/tracker/", "tracker"),
+])
+def test_a_clone_is_named_from_the_url_path_never_its_secrets(url, hint):
+    from szsdlc.backend.git import clone_hint
+
+    assert clone_hint(url) == hint

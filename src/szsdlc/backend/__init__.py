@@ -82,6 +82,7 @@ import warnings
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
+from urllib.parse import urlsplit, urlunsplit
 from typing import Any, ClassVar, Protocol
 
 from .. import settings as settings_module
@@ -185,6 +186,13 @@ class Backend(Protocol):
 
         Raises ConfigError when one is missing or invalid.
         """
+
+    # Optional: `from_location(cls, text, context) -> Backend | None`. A backend
+    # that can read a *location* (what a person types to name a project, such
+    # as a repository URL) returns itself, built through `from_settings` so
+    # every check applies, or None when `text` is not one of its locations; it
+    # raises ConfigError for one it recognises and refuses. A backend without
+    # it never claims a location. See `from_location` below.
 
     @classmethod
     def restore(cls, store: Path, state: dict[str, Any]) -> Backend:
@@ -343,6 +351,55 @@ def readable_name(*identity: Any, hint: str) -> str:
     return f"{slug}-{digest[:10]}"
 
 
+#: The suffix `readable_name` adds: `-` and ten hex digits.
+READABLE_SUFFIX = re.compile(r"-[0-9a-f]{10}$")
+
+
+def project_sdlc_store_dir_name(path: Path | str) -> str:
+    """A project sdlc store dir's name for people: without `readable_name`'s hash suffix.
+
+    So no caller has to know how szsdlc names the directories it makes.
+    """
+    name = Path(path).name
+    return READABLE_SUFFIX.sub("", name) or name
+
+
+# ---------------------------------------------------------------------------
+# Display
+# ---------------------------------------------------------------------------
+
+#: Userinfo in any URL inside free text, such as git's own error messages.
+URL_USERINFO = re.compile(r"(\b[A-Za-z][A-Za-z0-9+.-]*://)[^/\s@]+@")
+
+#: Terminal control characters, never printed from a value someone else wrote.
+CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def redact(url: str) -> str:
+    """`url` with any credentials in it replaced, for display.
+
+    `https://token@host/...` and `https://user:secret@host/...` both carry a
+    secret; `ssh://git@host/...` and `git@host:path` carry only a user name,
+    which is kept because it is often the useful part.
+    """
+    url = CONTROL.sub("?", url)
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        # Unparseable, but may still carry a secret: scrub it the blunt way.
+        return URL_USERINFO.sub(r"\1***@", url).split("?", 1)[0]
+    if parts.query:
+        # `?access_token=...` and the like: a query has no business in a git
+        # remote other than to carry a secret.
+        parts = parts._replace(query="***")
+    if "@" in parts.netloc:
+        userinfo, host = parts.netloc.rsplit("@", 1)
+        if parts.scheme in ("http", "https") or ":" in userinfo:
+            user = "" if parts.scheme in ("http", "https") else userinfo.split(":", 1)[0] + ":"
+            parts = parts._replace(netloc=f"{user}***@{host}")
+    return urlunsplit(parts) if parts != urlsplit(url) else url
+
+
 # ---------------------------------------------------------------------------
 # Resolution
 # ---------------------------------------------------------------------------
@@ -386,6 +443,43 @@ def resolve(start: Path | str | None = None) -> Backend:
     return cls.from_settings(selection.found,
                              Context(project=asset_root.name, home=home(),
                                      project_asset_root=asset_root))
+
+
+def is_folder(text: str) -> bool:
+    """Whether `text` names an existing folder on this computer (`~` expanded). Blank never does."""
+    if not str(text).strip():
+        return False
+    try:
+        return Path(text).expanduser().is_dir()
+    except (RuntimeError, OSError, ValueError):  # `~nosuchuser`, an unreadable path, a NUL
+        return False
+
+
+def from_location(text: str) -> Backend | None:
+    """The sdlc backend a *location* names, or None when no backend claims it.
+
+    A location is what a person types to name a project: a folder on this
+    computer, or a place an sdlc backend keeps one, such as a repository URL.
+    A folder that exists is never claimed here (resolve it as a folder, with
+    `project_sdlc_store_for` or `resolve`); anything else is offered to each
+    backend in turn, in a stable order, and the first that claims it wins. Its
+    settings come from the location alone. Nothing is created: `ensure` is
+    the caller's to call. Raises ConfigError for a location a backend
+    recognises and refuses, such as a git remote-helper URL.
+    """
+    text = str(text).strip()
+    if not text or is_folder(text):
+        return None
+    _load_builtin_backends()
+    context = Context(project="project", home=home(), project_asset_root=None)
+    for type_name in sorted(BACKENDS):
+        reader = getattr(BACKENDS[type_name], "from_location", None)
+        if reader is None:
+            continue
+        found = reader(text, context)
+        if found is not None:
+            return found
+    return None
 
 
 def project_asset_root(start: Path | str | None = None) -> Path:

@@ -16,24 +16,26 @@ def test_every_operation_is_registered_with_its_shapes():
         "capture", "new", "set", "tag", "untag", "link", "unlink", "convert", "layout",
         "log", "schedule", "unschedule", "refine", "drop", "show", "list", "next",
         "inbox", "trace", "context", "standards", "validate", "render", "sync",
-        "refresh", "backend", "init"}
+        "refresh", "backend", "init", "location"}
     for op in ops.OPERATIONS.values():
         assert dataclasses.is_dataclass(op.params) and dataclasses.is_dataclass(op.result)
         assert op.kind in ("query", "mutation")
-        assert op.interfaces <= {"cli", "http"} and "cli" in op.interfaces
+        assert op.interfaces and op.interfaces <= {"cli", "http"}
         assert op.schema() is not None
 
 
-def test_init_is_the_clis_alone():
+def test_init_is_the_clis_alone_and_location_is_https():
+    """`init` needs no project to attach to; `location` serves an interface where a person types one."""
     assert ops.OPERATIONS["init"].interfaces == {"cli"}
+    assert ops.OPERATIONS["location"].interfaces == {"http"}
     assert all(op.interfaces == {"cli", "http"}
-               for name, op in ops.OPERATIONS.items() if name != "init")
+               for name, op in ops.OPERATIONS.items() if name not in ("init", "location"))
 
 
 def test_queries_are_queries_and_mutations_are_mutations():
     queries = {n for n, op in ops.OPERATIONS.items() if op.kind == "query"}
     assert queries == {"show", "list", "next", "inbox", "trace", "context", "standards",
-                       "validate", "backend"}
+                       "validate", "backend", "location"}
 
 
 def test_a_mutation_that_changes_an_entity_takes_a_precondition():
