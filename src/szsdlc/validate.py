@@ -431,7 +431,7 @@ def stale_generated(config: Config, store: EntityStore, graph: Graph,
             ))
             continue
 
-        text = item.path.read_bytes().decode("utf-8", "replace")
+        text = render_module.read_generated(item.path)  # LF, whatever the checkout did
         if render_module.hand_edited(text):
             # Distinguished from staleness on purpose: this one loses work.
             findings.append(Finding(

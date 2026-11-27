@@ -359,6 +359,46 @@ def test_a_hand_edited_generated_file_is_distinguished_from_staleness(clean):
     assert "stale-generated" not in kinds
 
 
+def _to_crlf(config) -> list:
+    """Every generated file as git for Windows checks it out (core.autocrlf=true)."""
+    converted = []
+    for path in [*config.views_dir.rglob("*.md"), *config.records_dir.rglob("*.md")]:
+        data = path.read_bytes()
+        if b"\r\n" not in data:
+            path.write_bytes(data.replace(b"\n", b"\r\n"))
+            converted.append(path)
+    return converted
+
+
+def test_generated_files_checked_out_with_crlf_are_neither_hand_edited_nor_stale(clean):
+    """WI-0074: a CRLF checkout is not a hand edit; the hash is over the LF body."""
+    from szsdlc import render as R
+
+    converted = _to_crlf(clean)
+    assert converted
+    assert findings(clean) == []
+    ids = IdSpace(clean)
+    store = load_all(clean, ids)
+    assert R.render(clean, store, Graph(clean, store, ids)) == []  # nothing to rewrite
+    assert all(b"\r\n" in path.read_bytes() for path in converted)
+
+
+def test_a_hand_edit_in_a_crlf_file_is_still_caught(clean):
+    _to_crlf(clean)
+    board = clean.views_dir / "board.md"
+    board.write_bytes(board.read_bytes() + b"\r\nI typed this.\r\n")
+    kinds = {f.kind for f in findings(clean)}
+    assert "hand-edited" in kinds and "stale-generated" not in kinds
+
+
+def test_a_crlf_file_whose_sources_moved_on_is_still_stale(clean, write_entity):
+    _to_crlf(clean)
+    write_entity("decision", 9, "title: New decision\nstatus: proposed\n"
+                                "opened: 2026-08-01\n", slug="new")
+    assert findings(clean, "stale-generated")
+    assert not findings(clean, "hand-edited")
+
+
 def test_a_never_generated_view_is_reported(project, write_entity):
     write_entity("epic", 1, "title: E\nstatus: open\nopened: 2026-08-01\n")
     found = findings(project, "missing-generated")
