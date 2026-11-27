@@ -60,8 +60,11 @@ class Rendered:
         sources moved on. A hash of the inputs could only ever tell you the
         second thing.
         """
-        digest = hashlib.sha256(self.body.encode("utf-8")).hexdigest()[:16]
-        return f"{BANNER}\n{HASH_PREFIX}sha256:{digest}{HASH_SUFFIX}\n\n{self.body}"
+        # LF, like everything read back to be compared: a template or data
+        # value carrying \r must not make a file it just wrote read as edited.
+        body = normalize_newlines(self.body)
+        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+        return f"{BANNER}\n{HASH_PREFIX}sha256:{digest}{HASH_SUFFIX}\n\n{body}"
 
     def matches_disk(self) -> bool:
         if not self.path.is_file():

@@ -360,6 +360,7 @@ def test_a_project_template_checked_out_with_crlf_still_renders_lf(world):
     override.parent.mkdir(parents=True, exist_ok=True)
     override.write_bytes(b"# Ours\r\n\r\n{{ of_type('decision') | length }} decisions\r\n")
     item = renderer(world).view("decisions")
+    assert "# Ours" in item.content and "1 decisions" in item.content  # the override, not the default
     assert "\r" not in item.content
     item.write()
     assert not item.has_been_hand_edited() and item.matches_disk()
@@ -594,3 +595,11 @@ def test_newlines_are_normalised_before_any_comparison():
     assert not R.hand_edited(crlf)
     assert R.stored_hash(crlf) == f"sha256:{digest}"
     assert R.hand_edited(crlf.replace("row", "typed"))
+
+
+def test_a_body_carrying_carriage_returns_is_written_and_hashed_as_lf(tmp_path):
+    """A data value with \r must not make a file szsdlc just wrote read as edited."""
+    item = R.Rendered(name="x", path=tmp_path / "x.md", body="a\r\nb\rc\n")
+    assert "\r" not in item.content
+    item.write()
+    assert item.matches_disk() and not item.has_been_hand_edited()
