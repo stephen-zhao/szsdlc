@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,53 +47,90 @@ def attribute_pattern(path: str) -> str:
     return literal
 
 
+def _nameable(rel: str) -> bool:
+    """Whether a relative path can be written as one `.gitattributes` line at all."""
+    return rel not in ("", ".") and not any(ord(ch) < 32 or ord(ch) == 127 for ch in rel)
+
+
 def gitattributes_lines(config) -> list[str]:
     """What keeps a project's generated files LF on every checkout (WI-0074).
 
     Git for Windows converts LF to CRLF on checkout by default
     (`core.autocrlf=true`). szsdlc compares generated files as LF text either
     way; this keeps the files themselves byte-identical to what was rendered.
+
+    The views and records directories each get a `<dir>/**` line, which also
+    covers outputs configured after `init`. A directory that is the project
+    sdlc root itself cannot be globbed without claiming every file there, so
+    its outputs get a line each, as does an output outside its directory.
     Paths are relative to the project sdlc root, where the file goes; config
-    already refuses an output that escapes it.
+    already refuses one that escapes it. A path with a control character
+    cannot be written as a line, so it gets none.
     """
-    root = config.root
-    lines = [f"{attribute_pattern(relative(root, config.views_dir))}/** text eol=lf"]
-    lines += [f"{attribute_pattern(relative(root, config.record_path(name)))} text eol=lf"
-              for name in config.records]
+    root = config.root.resolve()
+    lines: list[str] = []
+    globbed: list[Path] = []
+    for directory in (config.views_dir, config.records_dir):
+        rel = relative(root, directory.resolve())
+        if _nameable(rel) and directory.resolve() not in globbed:
+            lines.append(f"{attribute_pattern(rel)}/** text eol=lf")
+            globbed.append(directory.resolve())
+    outputs = [config.view_path(name) for name in config.views]
+    outputs += [config.record_path(name) for name in config.records]
+    for output in outputs:
+        output = output.resolve()
+        if any(output.is_relative_to(directory) for directory in globbed):
+            continue
+        rel = relative(root, output)
+        if _nameable(rel):
+            lines.append(f"{attribute_pattern(rel)} text eol=lf")
     return lines
 
 
 def write_gitattributes(config) -> Path | None:
-    """Add the lines `.gitattributes` lacks; never replace what is there.
+    """Append the lines `.gitattributes` lacks; never rewrite what is there.
 
-    Returns the file when it was written, None when nothing was. Best effort:
-    a `.gitattributes` that is a symlink is left alone (it may point outside
-    the project), and one that cannot be read or written is skipped, because
-    the lines are a convenience and a failed `init` cannot be rerun. The
-    replacement is written beside it and moved into place, so a crash never
-    leaves it half-written.
+    Returns the file when it was written, None when nothing was. The file is
+    opened once, without following a symlink, read through that descriptor
+    and appended to through it: nothing is staged or renamed, so another
+    writer's edits, the file's mode and its existing line endings all stay,
+    and the appended lines use the endings it already has. Best effort: a
+    symlink, or a file that cannot be opened, read as UTF-8 or written, is
+    left as it is, because the lines are a convenience and a failed `init`
+    cannot be rerun.
     """
     path = config.root / ".gitattributes"
-    if path.is_symlink():
+    if path.is_symlink():  # O_NOFOLLOW refuses one too, where the platform has it
         return None
+    existed = path.exists()
+    flags = (os.O_RDWR | os.O_CREAT | os.O_APPEND
+             | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
     try:
-        existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+        fd = os.open(path, flags, 0o644)
+    except OSError:
+        return None
+    wrote = False
+    try:
+        chunks = []
+        while chunk := os.read(fd, 65536):
+            chunks.append(chunk)
+        existing = b"".join(chunks)
+        have = set(existing.decode("utf-8").splitlines())
+        missing = [line for line in gitattributes_lines(config) if line not in have]
+        if missing:
+            newline = "\r\n" if b"\r\n" in existing else "\n"
+            lead = newline if existing and not existing.endswith(b"\n") else ""
+            note = [] if GITATTRIBUTES_NOTE in have else [GITATTRIBUTES_NOTE]
+            os.write(fd, (lead + newline.join(note + missing) + newline).encode("utf-8"))
+            wrote = True
     except (OSError, UnicodeDecodeError):
         return None
-    have = set(existing.splitlines())
-    missing = [line for line in gitattributes_lines(config) if line not in have]
-    if not missing:
-        return None
-    head = existing if not existing or existing.endswith("\n") else existing + "\n"
-    note = [] if GITATTRIBUTES_NOTE in have else [GITATTRIBUTES_NOTE]
-    staged = path.with_name(".gitattributes.szsdlc-tmp")
-    try:
-        staged.write_bytes((head + "\n".join(note + missing) + "\n").encode("utf-8"))
-        os.replace(staged, path)
-    except OSError:
-        staged.unlink(missing_ok=True)
-        return None
-    return path
+    finally:
+        os.close(fd)
+        if not existed and not wrote:
+            with contextlib.suppress(OSError):  # opened to create, then nothing to put in it
+                path.unlink()
+    return path if wrote else None
 
 
 @dataclass(frozen=True)

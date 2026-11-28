@@ -260,15 +260,16 @@ over the LF body, and a file read back for `validate`, `render` or a hook has
 `\r\n` and a lone `\r` read as `\n`. A checkout that converted it to CRLF
 (git for Windows does by default, with `core.autocrlf=true`) is therefore
 neither hand-edited nor stale, and `render` leaves it as it is. `init` also
-writes a `.gitattributes` that keeps generated files LF in the first place,
-adding only the lines it lacks (best effort: a symlinked or unwritable one is
-left alone, and never fails `init`). For
-a project made before that, add the same lines to `.gitattributes` in the
-project sdlc root, one per configured record output:
+writes a `.gitattributes` that keeps generated files LF in the first place: a
+line for the views directory and one for the records directory, which also
+cover outputs configured later. It appends only the lines the file lacks, in
+the file's own line endings, and never rewrites it (best effort: a symlinked or
+unwritable one is left alone, and never fails `init`). For a project made
+before that, add the same lines to `.gitattributes` in the project sdlc root:
 
 ```
 views/** text eol=lf
-records/<output> text eol=lf
+records/** text eol=lf
 ```
 
 Every hook is a silent no-op in a project without `.szsdlc/config.yml`, so the

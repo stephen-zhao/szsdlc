@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import stat
+
 import pytest
 
 from szsdlc import config as config_module
@@ -21,25 +24,32 @@ def test_init_makes_a_project_and_refuses_a_second(tmp_path):
 def test_init_keeps_generated_files_lf_with_gitattributes(tmp_path):
     """WI-0074: git for Windows converts to CRLF on checkout unless told not to."""
     made = ops.call("init", {"name": "demo"}, str(tmp_path))
-    attributes = (tmp_path / ".gitattributes").read_text(encoding="utf-8")
-    assert ".gitattributes" in made.created
-    assert "views/** text eol=lf" in attributes.splitlines()
-    config = config_module.load(tmp_path)
-    for name in config.records:
-        record = config.record_path(name).relative_to(tmp_path).as_posix()
-        assert f"{record} text eol=lf" in attributes.splitlines()
-
-
-def test_init_extends_an_existing_gitattributes_and_keeps_its_lines(tmp_path):
-    (tmp_path / ".gitattributes").write_text("*.png binary\nviews/** text eol=lf\n", encoding="utf-8")
-    ops.call("init", {}, str(tmp_path))
     lines = (tmp_path / ".gitattributes").read_text(encoding="utf-8").splitlines()
-    assert lines[:2] == ["*.png binary", "views/** text eol=lf"]
-    assert lines.count("views/** text eol=lf") == 1  # nothing written twice
-    config = config_module.load(tmp_path)
-    for name in config.records:  # and the record lines it lacked were added
-        record = config.record_path(name).relative_to(tmp_path).as_posix()
-        assert lines.count(f"{record} text eol=lf") == 1
+    assert ".gitattributes" in made.created
+    # A directory each: outputs configured after init are covered too.
+    assert "views/** text eol=lf" in lines and "records/** text eol=lf" in lines
+
+
+def test_init_appends_to_an_existing_gitattributes_and_never_rewrites_it(tmp_path):
+    original = b"*.png binary\nviews/** text eol=lf\n"
+    (tmp_path / ".gitattributes").write_bytes(original)
+    ops.call("init", {}, str(tmp_path))
+    data = (tmp_path / ".gitattributes").read_bytes()
+    assert data.startswith(original)  # appended to, byte for byte
+    lines = data.decode("utf-8").splitlines()
+    assert lines.count("views/** text eol=lf") == 1 and lines.count("records/** text eol=lf") == 1
+
+
+def test_appending_keeps_the_files_line_endings_and_mode(tmp_path):
+    attributes = tmp_path / ".gitattributes"
+    attributes.write_bytes(b"*.png binary\r\n*.jpg binary")  # CRLF, and no final newline
+    attributes.chmod(0o600)
+    ops.call("init", {}, str(tmp_path))
+    data = attributes.read_bytes()
+    assert data.startswith(b"*.png binary\r\n*.jpg binary\r\n")
+    assert b"\n" not in data.replace(b"\r\n", b"")  # every line ends CRLF, as the file did
+    if os.name == "posix":
+        assert stat.S_IMODE(attributes.stat().st_mode) == 0o600
 
 
 def test_an_existing_gitattributes_with_every_line_is_not_reported_as_created(tmp_path):
@@ -54,7 +64,7 @@ def test_an_existing_gitattributes_with_every_line_is_not_reported_as_created(tm
 
 
 def test_a_gitattributes_symlink_is_left_alone(tmp_path):
-    """It may point outside the project: init never writes through it."""
+    """It may point outside the project: init never reads or writes through it."""
     outside = tmp_path / "outside.txt"
     outside.write_text("theirs\n", encoding="utf-8")
     project = tmp_path / "proj"
@@ -68,25 +78,38 @@ def test_a_gitattributes_symlink_is_left_alone(tmp_path):
     assert outside.read_text(encoding="utf-8") == "theirs\n"
 
 
-def test_a_gitattributes_that_cannot_be_written_never_fails_init(tmp_path, monkeypatch):
+def test_a_gitattributes_that_cannot_be_opened_never_fails_init(tmp_path, monkeypatch):
     """A failed init cannot be rerun (its config exists), so the lines are best effort."""
-    def refuse(*_args):
-        raise PermissionError("read-only")
+    real_open = os.open
 
-    monkeypatch.setattr(init_module.os, "replace", refuse)
+    def refuse(path, *args, **kwargs):
+        if str(path).endswith(".gitattributes"):
+            raise PermissionError("read-only")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(init_module.os, "open", refuse)
     made = ops.call("init", {}, str(tmp_path))
     assert ".gitattributes" not in made.created
     assert not (tmp_path / ".gitattributes").exists()
-    assert not (tmp_path / ".gitattributes.szsdlc-tmp").exists()  # nothing left behind
 
 
-def test_record_outputs_are_quoted_or_escaped_as_git_needs(make_project):
-    config = make_project({"records": {
-        "spaced": {"title": "S", "data": "records/s.yml", "template": "records/s.md.j2",
-                   "output": "my hosts.md"},
-        "starred": {"title": "W", "data": "records/w.yml", "template": "records/w.md.j2",
-                    "output": "a*b.md"},
-    }})
+def test_attribute_patterns_are_quoted_or_escaped_as_git_needs():
+    assert init_module.attribute_pattern("records/hosts.md") == "records/hosts.md"
+    assert init_module.attribute_pattern("my hosts.md") == '"my hosts.md"'
+    assert init_module.attribute_pattern("a*b.md") == "a\\*b.md"
+    assert init_module.attribute_pattern("#x.md") == '"#x.md"'
+
+
+def test_views_kept_at_the_root_get_a_line_each(make_project):
+    """`./**` matches nothing in git, and `**` would claim every file at the root."""
+    config = make_project({"paths": {"views": "."}})
     lines = init_module.gitattributes_lines(config)
-    assert '"records/my hosts.md" text eol=lf' in lines
-    assert "records/a\\*b.md text eol=lf" in lines
+    assert not any(line.startswith(("./", "**")) for line in lines)
+    for name in config.views:
+        assert f"{config.view_path(name).name} text eol=lf" in lines
+    assert "records/** text eol=lf" in lines
+
+
+def test_a_path_that_cannot_be_one_line_gets_none():
+    assert not init_module._nameable("records/a\nb.md")
+    assert not init_module._nameable(".") and init_module._nameable("views")
