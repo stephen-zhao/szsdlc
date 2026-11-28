@@ -6,7 +6,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..backend import ProjectSdlcStore
 from ..errors import ConfigError
+from ._listing import DEFAULT_LIMIT, bounded
 from ._registry import operation
 from ._types import Data
 
@@ -97,14 +99,19 @@ def backend_prune(params: BackendPruneParams, where: str | None) -> BackendPrune
 
 @dataclass(frozen=True)
 class ProjectSdlcStoresParams(Data):
-    pass
+    #: Bounded like every listing (C6); 0 lists them all.
+    limit: int = DEFAULT_LIMIT
 
 
 @dataclass(frozen=True)
 class ProjectSdlcStoresResult(Data):
-    #: Every recorded project sdlc store, sorted by project sdlc root
-    #: (`szsdlc.backend.ProjectSdlcStore`).
-    stores: tuple
+    #: The recorded project sdlc stores, sorted by project sdlc root.
+    stores: tuple[ProjectSdlcStore, ...]
+    #: How many are recorded, shown or not.
+    total: int
+    #: Why the record could not be read in full, and its fix; empty when it
+    #: could. The record is left as it is, and lists only what lookups see.
+    problem: str = ""
 
 
 @operation("project_sdlc_stores", params=ProjectSdlcStoresParams, result=ProjectSdlcStoresResult,
@@ -113,4 +120,10 @@ def project_sdlc_stores(params: ProjectSdlcStoresParams, where: str | None) -> P
     """Every project sdlc store szsdlc has recorded, whatever its backend type (WI-0063). Reads only."""
     from .. import backend as backend_module
 
-    return ProjectSdlcStoresResult(tuple(backend_module.project_sdlc_stores()))
+    problem = ""
+    try:
+        backend_module._read_record(strict=True)
+    except ConfigError as exc:
+        problem = f"{exc.problem} Fix: {exc.fix}"
+    shown, total = bounded(backend_module.project_sdlc_stores(), params.limit)
+    return ProjectSdlcStoresResult(shown, total, problem)

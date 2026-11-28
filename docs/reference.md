@@ -466,9 +466,12 @@ szsdlc records every project it runs on, whatever its sdlc backend type, in
   recorded store, sorted by project sdlc root, as a `ProjectSdlcStore`: its
   `project_sdlc_root`, `project_sdlc_store_dir`, `asset_roots`, `backend_type`
   and whether it still `exists` (its project sdlc root and dir are both still
-  there). It only reads: a record that cannot be read lists nothing, a store
-  that is gone is listed as gone until it is pruned, and backend state (a URL
-  may carry credentials) is not listed.
+  there). It only reads: a store that is gone is listed as gone until it is
+  pruned, and backend state (a URL may carry credentials) is not listed. A
+  record that cannot be read in full lists only what lookups see; the
+  operation's `problem` (and the CLI's first line) says why, with the fix,
+  and the file is left as it is. Like every listing, the operation and the
+  CLI are bounded (`limit`, 20 by default, 0 for all) and say so when cut.
 - **From older versions:** the record used to be `stores.json`, keyed by
   project sdlc store dir, for `dir` and `git` only. Each read converts it in
   memory (real projects only) until the next write saves the new file, under

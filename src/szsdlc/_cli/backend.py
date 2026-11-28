@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 
 from ..ops import backend
-from ._output import out
+from ._output import bound_note, out
+from ._parser import DEFAULT_LIMIT
 
 
 def add_parser(subparsers) -> None:
@@ -14,8 +15,9 @@ def add_parser(subparsers) -> None:
     actions = parser.add_subparsers(dest="subcommand", metavar="{show,list,prune}")
     actions.add_parser("show", prog="szsdlc backend show").set_defaults(
         run=run, op="backend", to_params=to_params)
-    actions.add_parser("list", prog="szsdlc backend list").set_defaults(
-        run=run_list, op="project_sdlc_stores", to_params=list_params)
+    listing = actions.add_parser("list", prog="szsdlc backend list")
+    listing.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
+    listing.set_defaults(run=run_list, op="project_sdlc_stores", to_params=list_params)
     actions.add_parser("prune", prog="szsdlc backend prune").set_defaults(
         run=run_prune, op="backend_prune", to_params=prune_params)
 
@@ -29,16 +31,27 @@ def prune_params(args: argparse.Namespace) -> backend.BackendPruneParams:
 
 
 def list_params(args: argparse.Namespace) -> backend.ProjectSdlcStoresParams:
-    return backend.ProjectSdlcStoresParams()
+    return backend.ProjectSdlcStoresParams(limit=args.limit)
 
 
 def run_list(args: argparse.Namespace) -> int:
-    """Each recorded store, then its asset roots; silent when none is recorded."""
-    for store in backend.project_sdlc_stores(list_params(args), args.project).stores:
+    """Each recorded store, then its asset roots; silent when none is recorded.
+
+    A record that cannot be read in full is said first, with its fix, so an
+    empty or short listing is never mistaken for an empty record.
+    """
+    params = list_params(args)
+    listed = backend.project_sdlc_stores(params, args.project)
+    if listed.problem:
+        out(backend._printable(f"record  {listed.problem}"))
+    for store in listed.stores:
         gone = "" if store.exists else "  (gone)"
         out(backend._printable(f"{store.project_sdlc_root}  {store.backend_type}{gone}"))
         for asset in store.asset_roots:
             out(backend._printable(f"  asset root  {asset}"))
+    note = bound_note(listed.total, params.limit)
+    if note:
+        out(note)
     return 0
 
 

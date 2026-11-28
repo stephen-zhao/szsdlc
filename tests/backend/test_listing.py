@@ -77,10 +77,13 @@ def test_every_store_is_listed_with_its_type_and_whether_it_exists(home, tmp_pat
     assert by_type["git"].project_sdlc_store_dir != kept  # a clone kept elsewhere
     assert all(s.exists for s in stores)
     # The operation's mapping form, as another interface would send it, holds no backend state.
-    listed = ops.call("project_sdlc_stores", {}, None).to_dict()["stores"]
-    assert {s["backend_type"] for s in listed} == {"workdir", "git"}
-    assert all(set(s) == {"project_sdlc_root", "project_sdlc_store_dir", "asset_roots", "backend_type",
-                          "exists"} for s in listed)
+    result = ops.call("project_sdlc_stores", {}, None)
+    assert result.stores == tuple(stores) and result.total == 2 and result.problem == ""
+    listed = result.to_dict()["stores"]
+    assert listed == [{"project_sdlc_root": s.project_sdlc_root.as_posix(),
+                       "project_sdlc_store_dir": s.project_sdlc_store_dir.as_posix(),
+                       "asset_roots": [a.as_posix() for a in s.asset_roots],
+                       "backend_type": s.backend_type, "exists": s.exists} for s in stores]
     assert str(remote) not in json.dumps(listed)
     # A store that is gone is still listed, as gone, until it is pruned.
     shutil.rmtree(plain)
@@ -91,7 +94,9 @@ def test_every_store_is_listed_with_its_type_and_whether_it_exists(home, tmp_pat
     assert run("backend", "list") == 0
     out = capsys.readouterr().out.splitlines()
     assert f"{plain}  workdir  (gone)" in out and f"  asset root  {plain}" in out
-    assert f"  asset root  {kept}" in out
+    git_root = by_type["git"].project_sdlc_root
+    assert out.index(f"{git_root}  git") + 1 == out.index(f"  asset root  {kept}")
+    assert out.index(f"{plain}  workdir  (gone)") + 1 == out.index(f"  asset root  {plain}")
     assert path.read_bytes() == before  # listing never writes
 
 
@@ -104,12 +109,18 @@ def test_a_project_with_two_asset_roots_lists_both(home, tmp_path, remote, monke
     assert store.asset_roots == (first, second)
 
 
-@pytest.mark.parametrize("text", ["not json", "[]", '{"project_sdlc_stores": []}'])
-def test_a_damaged_record_lists_nothing_and_never_raises(home, tmp_path, monkeypatch, capsys, text):
+@pytest.mark.parametrize("text", ["not json", "[]", '{"project_sdlc_stores": []}', "[" * 100_000],
+                         ids=["not-json", "a-list", "wrong-shape", "nested-too-deep"])
+def test_a_damaged_record_lists_nothing_says_so_and_never_raises(home, tmp_path, monkeypatch, capsys, text):
     path = write_record(text)
     assert backend.project_sdlc_stores() == []
+    result = ops.call("project_sdlc_stores", {}, None)
+    assert result.stores == () and str(path) in result.problem and "Fix: " in result.problem
     monkeypatch.chdir(tmp_path)
+    capsys.readouterr()
     assert run("backend", "list") == 0
+    (line,) = capsys.readouterr().out.splitlines()
+    assert line.startswith("record  ") and "Fix: " in line  # never mistaken for an empty record
     assert path.read_text(encoding="utf-8") == text  # left exactly as it is
 
 
@@ -118,8 +129,24 @@ def test_an_entry_of_the_wrong_shape_is_skipped_and_the_rest_listed(home, tmp_pa
     init(monkeypatch, project)
     data = json.loads(backend._project_sdlc_stores_path().read_text(encoding="utf-8"))
     data["project_sdlc_stores"]["/broken"] = {"dir": 3}
+    data["project_sdlc_stores"]["/nul\0root"] = {"dir": "/nul\0dir", "backend_type": "dir",
+                                                  "backend_state": {}, "asset_roots": []}
+    data["asset_roots"]["/nul\0asset"] = str(project)
     write_record(json.dumps(data))
     assert [s.project_sdlc_root for s in backend.project_sdlc_stores()] == [project]
+    assert "holds an entry" in ops.call("project_sdlc_stores", {}, None).problem
+
+
+def test_the_cli_listing_is_bounded_and_says_so(home, tmp_path, monkeypatch, capsys):
+    for name in ("a", "b", "c"):
+        init(monkeypatch, asset_root(tmp_path, name))
+    assert ops.call("project_sdlc_stores", {"limit": 2}, None).total == 3
+    assert len(ops.call("project_sdlc_stores", {"limit": 0}, None).stores) == 3
+    capsys.readouterr()
+    assert run("backend", "list", "--limit", "2") == 0
+    out = capsys.readouterr().out.splitlines()
+    assert len([line for line in out if not line.startswith(" ")]) == 3  # two stores and the note
+    assert out[-1] == "showing 2 of 3 — rerun with --limit 0"
 
 
 def test_an_old_stores_file_is_listed_without_writing_the_new_one(home, tmp_path):
