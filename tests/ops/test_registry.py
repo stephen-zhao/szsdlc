@@ -16,7 +16,7 @@ def test_every_operation_is_registered_with_its_shapes():
         "capture", "new", "set", "tag", "untag", "link", "unlink", "convert", "layout",
         "log", "schedule", "unschedule", "refine", "drop", "show", "list", "next",
         "inbox", "trace", "context", "standards", "validate", "render", "sync",
-        "refresh", "backend", "init", "location"}
+        "refresh", "backend", "backend_prune", "init", "location"}
     for op in ops.OPERATIONS.values():
         assert dataclasses.is_dataclass(op.params) and dataclasses.is_dataclass(op.result)
         assert op.kind in ("query", "mutation")

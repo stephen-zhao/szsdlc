@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..errors import ConfigError
 from ._registry import operation
 from ._types import Data
 
@@ -24,6 +25,9 @@ class BackendResult(Data):
     inside: bool
     #: (label, value) for each setting in effect, and the project sdlc root.
     rows: tuple[tuple[str, str], ...]
+    #: What in the record of project sdlc stores no longer holds (WI-0067);
+    #: `szsdlc backend prune` removes it.
+    stale: tuple[str, ...] = ()
 
 
 def _printable(text: str) -> str:
@@ -39,8 +43,9 @@ def backend(params: BackendParams, where: str | None) -> BackendResult:
 
     selection = backend_module.select(where)
     # Asked first, not as a fallback: standing inside a project sdlc store
-    # dir is a fact about where you are.
-    inside = backend_module.project_sdlc_store_for(where or Path.cwd())
+    # dir kept away from its asset roots is a fact about where you are.
+    # Anywhere else (a `workdir` project, an asset root) the settings answer.
+    inside = backend_module._record_decides(where or Path.cwd())
     if inside is not None:
         current = inside
         source = "this directory is inside its project sdlc store dir"
@@ -54,5 +59,37 @@ def backend(params: BackendParams, where: str | None) -> BackendResult:
     if current.project_sdlc_root is not None:
         rows.append(("project sdlc root", str(current.project_sdlc_root)
                      + ("" if current.project_sdlc_store_dir.exists() else "  (not created yet)")))
+    try:
+        backend_module._read_record(strict=True)
+    except ConfigError as exc:  # recording skips it rather than block work; here it is said
+        rows.append(("record", f"{exc.problem} Fix: {exc.fix}"))
+    stale = tuple(_printable(problem) for _, _, problem in backend_module.stale_project_sdlc_stores())
+    if stale:
+        rows.append(("stale records", f"{len(stale)} (szsdlc backend prune)"))
     return BackendResult(_printable(current.type), _printable(source), inside is not None,
-                         tuple((_printable(label), _printable(value)) for label, value in rows))
+                         tuple((_printable(label), _printable(value)) for label, value in rows), stale)
+
+
+@dataclass(frozen=True)
+class BackendPruneParams(Data):
+    pass
+
+
+@dataclass(frozen=True)
+class BackendPruneResult(Data):
+    #: One line per entry removed from the record of project sdlc stores.
+    removed: tuple[str, ...]
+
+
+@operation("backend_prune", params=BackendPruneParams, result=BackendPruneResult, kind="mutation",
+           loads=False)
+def backend_prune(params: BackendPruneParams, where: str | None) -> BackendPruneResult:
+    """Remove what no longer holds from the record of project sdlc stores (WI-0067).
+
+    Only on request, never silently: a drive that is not mounted must not lose
+    its entry. Removes stores whose project sdlc root or dir is gone, asset
+    roots that are gone, and lists and links that disagree.
+    """
+    from .. import backend as backend_module
+
+    return BackendPruneResult(tuple(_printable(line) for line in backend_module.prune_project_sdlc_stores()))

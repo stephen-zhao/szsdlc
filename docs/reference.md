@@ -309,7 +309,7 @@ internal classes are its own business.)
 | *project* | one model: one `.szsdlc/config.yml` and its entities | the project `szsdlc` |
 | **project sdlc root** | the directory holding the project's `.szsdlc/` and its SDLC records (entities, roadmaps, views) | `~/.claude/szsdlc/git/szsdlc-szsdlc-…` |
 | **project asset root** | a directory holding the code and other assets the project describes; a project can have several | `~/code/szsdlc-ui-win95` |
-| **project sdlc store** | one project's recorded entry: its project sdlc root, its sdlc backend type and that backend's state; loaded, the sdlc backend rebuilt from it | the szsdlc project's entry, kept by `git` |
+| **project sdlc store** | one project's recorded entry, keyed by its project sdlc root: its project sdlc store dir, its sdlc backend type and that backend's state, and the asset roots that use it; loaded, the sdlc backend rebuilt from it (see "The record of project sdlc stores") | the szsdlc project's entry, kept by `git`, with two asset roots |
 | **sdlc backend**, **sdlc backend type**, **sdlc backend state** | the strategy that keeps a project sdlc store; which one (`workdir`, `dir`, `git`); the settings that rebuild it | `git`; `{url, branch, subdir}` |
 | **project sdlc store dir** | the local directory the sdlc backend reads and writes; the project sdlc root is inside it. For `workdir` it is the asset root; for `dir`, a directory elsewhere; for `git`, the clone | `~/.claude/szsdlc/git/szsdlc-szsdlc-…` |
 | **location** | what a person types to name a project: a folder on this computer, or a place an sdlc backend keeps one; `szsdlc.backend.from_location()` asks each backend whether it reads one | `git@github.com:org/tracker.git#main` |
@@ -330,7 +330,9 @@ others lack, and generic code never uses them:
 
 **Python names:** in `szsdlc.backend`, a backend has `project_sdlc_root`,
 `project_sdlc_store_dir` and `has_unsent_changes()`. The module functions are
-`project_sdlc_store_for(path)`, `project_sdlc_root(start)` and
+`project_sdlc_store_for(path)` (the record's answer), `project_sdlc_root(start)`,
+`ensure(backend, asset_root=None)`, `stale_project_sdlc_stores()`,
+`prune_project_sdlc_stores()` and
 `project_asset_root(start)`, `Context.project_asset_root`, and
 `szsdlc.config.find_project_sdlc_root()`. The retired spellings still work,
 with a `DeprecationWarning` naming the replacement, until WI-0068 removes them:
@@ -413,6 +415,58 @@ and project sdlc root, and which file each value came from; credentials
 embedded in a URL are redacted there and everywhere else it is printed.
 `szsdlc init` creates the project in the sdlc backend's project sdlc root.
 
+### The record of project sdlc stores
+
+szsdlc records every project it runs on, whatever its sdlc backend type, in
+`project_sdlc_stores.json` in its home (`~/.claude/szsdlc/`):
+
+```json
+{
+  "project_sdlc_stores": {
+    "<project sdlc root>": {"asset_roots": ["<project asset root>"], "dir": "<project sdlc store dir>",
+                            "backend_type": "git", "backend_state": {"url": "...", "branch": null, "subdir": ""}}
+  },
+  "asset_roots": {"<project asset root>": "<project sdlc root>"}
+}
+```
+
+- **One entry per project sdlc store,** keyed by its project sdlc root, so two
+  projects in subdirectories of one clone have two entries with the same `dir`.
+- **Asset roots both ways:** a store lists every asset root that has used it,
+  and each asset root links to exactly one project sdlc root. The two are
+  always written together, under one lock, in one atomic replace; an asset root
+  whose settings start naming another project moves its link and leaves the
+  old list in the same write.
+- **Only real projects:** a store is recorded once its project sdlc root holds
+  `.szsdlc/config.yml` (by `szsdlc init`, or the first command after), never for
+  a scratch folder. Each command run from an asset root links it, writing only
+  when that changes anything.
+- **Settings decide, the record follows.** Wherever settings select a backend,
+  they decide which one serves the project, and that run rewrites the record to
+  match: a project switched from `workdir` to `git` is recorded as `git` the next
+  time it runs. The record is consulted only where settings cannot answer:
+  inside a project sdlc store dir kept away from its asset roots (Claude editing
+  a file inside a clone, where settings would take the clone itself for an
+  asset root). A store nested inside one of its asset roots is reached by that
+  root's settings, and a `workdir` store is its asset root. Readers that list
+  projects read it too.
+- **Best effort:** recording never blocks a command. A record that cannot be
+  read is left exactly as it is (never overwritten), and `szsdlc backend` says
+  so, with the fix.
+- **Stale entries are reported, never removed silently:** `szsdlc backend` says
+  how many entries no longer hold (a project sdlc root or dir that is gone, an
+  asset root that is gone, a list and a link that disagree), `validate` warns
+  about those of its own project (`stale-record`), and `szsdlc backend prune`
+  removes them, one line per entry. A drive that is not mounted keeps its
+  entries until you prune.
+- **From older versions:** the record used to be `stores.json`, keyed by
+  project sdlc store dir, for `dir` and `git` only. Each read converts it in
+  memory (real projects only) until the next write saves the new file, under
+  the lock, so a read such as `validate` never writes; `stores.json` is left as
+  it is for older szsdlc versions and never read again once the new file
+  exists. A `stores.json` that cannot be read stops that write rather than lose
+  its projects.
+
 An existing clone is used only if it is a clone of `SZSDLC_BACKEND_GIT_URL`
 with `SZSDLC_BACKEND_GIT_BRANCH` (or, when unset, the remote's default branch)
 checked out; otherwise it is refused rather than repurposed. This is checked
@@ -429,6 +483,7 @@ szsdlc sync                              sync, on demand
 szsdlc refresh                           take the latest; never sends
 szsdlc render                            render only — local by definition
 szsdlc backend                           nothing; it only reports
+szsdlc backend prune                     nothing; it edits only the record
 after each edit                          render only
 each command Claude runs mid-turn        nothing — the turn end does it
 each command typed in a terminal         render, then sync if it changed
