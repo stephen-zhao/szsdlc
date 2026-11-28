@@ -331,7 +331,8 @@ others lack, and generic code never uses them:
 **Python names:** in `szsdlc.backend`, a backend has `project_sdlc_root`,
 `project_sdlc_store_dir` and `has_unsent_changes()`. The module functions are
 `project_sdlc_store_for(path)` (the record's answer), `project_sdlc_root(start)`,
-`ensure(backend, asset_root=None)`, `stale_project_sdlc_stores()`,
+`ensure(backend, asset_root=None)`, `project_sdlc_stores()` (the public listing,
+of `ProjectSdlcStore`s), `stale_project_sdlc_stores()`,
 `prune_project_sdlc_stores()` and
 `project_asset_root(start)`, `Context.project_asset_root`, and
 `szsdlc.config.find_project_sdlc_root()`. The retired spellings still work,
@@ -459,6 +460,18 @@ szsdlc records every project it runs on, whatever its sdlc backend type, in
   about those of its own project (`stale-record`), and `szsdlc backend prune`
   removes them, one line per entry. A drive that is not mounted keeps its
   entries until you prune.
+- **Listing it:** `szsdlc.backend.project_sdlc_stores()` is the public way to
+  read the record, for tools such as a viewer (the operation
+  `project_sdlc_stores`; `szsdlc backend list` on the CLI). It returns every
+  recorded store, sorted by project sdlc root, as a `ProjectSdlcStore`: its
+  `project_sdlc_root`, `project_sdlc_store_dir`, `asset_roots`, `backend_type`
+  and whether it still `exists` (its project sdlc root and dir are both still
+  there). It only reads: a store that is gone is listed as gone until it is
+  pruned, and backend state (a URL may carry credentials) is not listed. A
+  record that cannot be read in full lists only what lookups see; the
+  operation's `problem` (and the CLI's first line) says why, with the fix,
+  and the file is left as it is. Like every listing, the operation and the
+  CLI are bounded (`limit`, 20 by default, 0 for all) and say so when cut.
 - **From older versions:** the record used to be `stores.json`, keyed by
   project sdlc store dir, for `dir` and `git` only. Each read converts it in
   memory (real projects only) until the next write saves the new file, under
@@ -483,6 +496,7 @@ szsdlc sync                              sync, on demand
 szsdlc refresh                           take the latest; never sends
 szsdlc render                            render only — local by definition
 szsdlc backend                           nothing; it only reports
+szsdlc backend list                      nothing; it only reads the record
 szsdlc backend prune                     nothing; it edits only the record
 after each edit                          render only
 each command Claude runs mid-turn        nothing — the turn end does it

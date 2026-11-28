@@ -16,7 +16,7 @@ def test_every_operation_is_registered_with_its_shapes():
         "capture", "new", "set", "tag", "untag", "link", "unlink", "convert", "layout",
         "log", "schedule", "unschedule", "refine", "drop", "show", "list", "next",
         "inbox", "trace", "context", "standards", "validate", "render", "sync",
-        "refresh", "backend", "backend_prune", "init", "location"}
+        "refresh", "backend", "backend_prune", "project_sdlc_stores", "init", "location"}
     for op in ops.OPERATIONS.values():
         assert dataclasses.is_dataclass(op.params) and dataclasses.is_dataclass(op.result)
         assert op.kind in ("query", "mutation")
@@ -35,7 +35,7 @@ def test_init_is_the_clis_alone_and_location_is_https():
 def test_queries_are_queries_and_mutations_are_mutations():
     queries = {n for n, op in ops.OPERATIONS.items() if op.kind == "query"}
     assert queries == {"show", "list", "next", "inbox", "trace", "context", "standards",
-                       "validate", "backend", "location"}
+                       "validate", "backend", "project_sdlc_stores", "location"}
 
 
 def test_a_mutation_that_changes_an_entity_takes_a_precondition():

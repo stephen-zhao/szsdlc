@@ -547,7 +547,7 @@ def _read_record(*, strict: bool = False) -> dict[str, dict]:
         loaded = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return _migrated_record(strict=strict)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:  # nested past the decoder's depth
         if strict:
             raise _refuse_record(path, f"cannot be read ({exc})") from None
         return _empty_record()
@@ -565,16 +565,19 @@ def _read_record(*, strict: bool = False) -> dict[str, dict]:
 
 def _well_formed(loaded: dict) -> dict[str, dict]:
     """Only the entries of the right shape: every path a string, every list a list of them."""
+    def is_path(value: Any) -> bool:  # a NUL byte is no path: `Path.is_dir()` raises on it
+        return isinstance(value, str) and "\0" not in value
+
     def is_store(entry: Any) -> bool:
-        return (isinstance(entry, dict) and isinstance(entry.get("dir"), str)
+        return (isinstance(entry, dict) and is_path(entry.get("dir"))
                 and isinstance(entry.get("backend_type"), str)
                 and isinstance(entry.get("backend_state"), dict)
                 and isinstance(entry.get("asset_roots"), list)
-                and all(isinstance(a, str) for a in entry["asset_roots"]))
+                and all(is_path(a) for a in entry["asset_roots"]))
     return {"project_sdlc_stores": {root: entry for root, entry in loaded["project_sdlc_stores"].items()
-                                    if isinstance(root, str) and is_store(entry)},
+                                    if is_path(root) and is_store(entry)},
             "asset_roots": {asset: root for asset, root in loaded["asset_roots"].items()
-                            if isinstance(asset, str) and isinstance(root, str)}}
+                            if is_path(asset) and is_path(root)}}
 
 
 def _migrated_record(*, strict: bool) -> dict[str, dict]:
@@ -592,7 +595,7 @@ def _migrated_record(*, strict: bool) -> dict[str, dict]:
         old = json.loads(legacy.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return _empty_record()
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:  # nested past the decoder's depth
         if strict:
             raise _refuse_record(legacy, f"cannot be read to migrate it ({exc})") from None
         return _empty_record()
@@ -805,6 +808,41 @@ def prune_project_sdlc_stores() -> list[str]:
             removed.append(f"removed: {problem}")
         _write_record({"project_sdlc_stores": stores, "asset_roots": links})
         return removed
+
+
+@dataclass(frozen=True)
+class ProjectSdlcStore:
+    """One recorded project sdlc store, as `project_sdlc_stores()` lists it (WI-0063)."""
+
+    project_sdlc_root: Path
+    project_sdlc_store_dir: Path
+    #: Every asset root that has used it, sorted.
+    asset_roots: tuple[Path, ...]
+    backend_type: str
+    #: Its project sdlc root and dir are both still directories: the same test
+    #: `stale_project_sdlc_stores` reports a gone store by.
+    exists: bool
+
+
+def project_sdlc_stores() -> list[ProjectSdlcStore]:
+    """Every recorded project sdlc store, sorted by project sdlc root. Public; reads only.
+
+    Read through szsdlc's own reader: a record that cannot be read, or an
+    entry of the wrong shape, lists nothing for it, as lookups see it, and a
+    `stores.json` from before WI-0067 is listed through its in-memory
+    migration. Never writes. Backend state (a URL may carry credentials) is
+    not listed; `szsdlc backend` shows it, redacted, for one project.
+    """
+    stores = _read_record()["project_sdlc_stores"]
+    listed = []
+    for root, entry in sorted(stores.items()):
+        store_dir = Path(entry["dir"] or root)
+        listed.append(ProjectSdlcStore(
+            project_sdlc_root=Path(root), project_sdlc_store_dir=store_dir,
+            asset_roots=tuple(Path(a) for a in sorted(set(entry["asset_roots"]))),
+            backend_type=entry["backend_type"],
+            exists=Path(root).is_dir() and store_dir.is_dir()))
+    return listed
 
 
 @contextlib.contextmanager
