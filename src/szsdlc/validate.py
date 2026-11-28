@@ -493,6 +493,30 @@ def _collapse_by_kind(findings: list[Finding]) -> list[Finding]:
 
 #: Most severe first, and within a level, in the order declared here — so two
 #: runs against the same project always report in the same order.
+def stale_records(config: Config) -> list[Finding]:
+    """What in the record of project sdlc stores no longer holds, for this project only (WI-0067).
+
+    The record is per user and this is a project's check, so another project's
+    entry (an unmounted drive, a deleted checkout) is not a finding here;
+    `szsdlc backend` lists them all. Warnings: the record never blocks work,
+    and nothing is pruned without `szsdlc backend prune`.
+    """
+    from . import backend as backend_module
+
+    root = str(config.root)
+    try:
+        record = backend_module._read_record()
+    except Exception:  # noqa: BLE001 - an unreadable record is szsdlc backend's to report
+        return []
+    entry = record["project_sdlc_stores"].get(root)
+    ours = set((entry or {}).get("asset_roots") or []) | {asset for asset, linked in record["asset_roots"].items()
+                                                         if linked == root}
+    return [Finding(kind="stale-record", ref=config.root.name, message=problem,
+                    fix="szsdlc backend prune", level="warning")
+            for _, key, problem in backend_module.stale_project_sdlc_stores(record)
+            if key == root or key in ours]
+
+
 def run(config: Config, store: EntityStore, graph: Graph,
         roadmaps: dict[str, Roadmap] | None = None) -> list[Finding]:
     roadmaps = roadmaps if roadmaps is not None else load_roadmaps(config)
@@ -515,6 +539,7 @@ def run(config: Config, store: EntityStore, graph: Graph,
     findings += broken_links(config, store, graph)
     findings += name_mismatches(store)
     findings += stale_generated(config, store, graph, roadmaps)
+    findings += stale_records(config)
 
     return sorted(findings, key=lambda f: (0 if f.is_error else 1,))
 

@@ -43,6 +43,7 @@ SAMPLES = {
     "refresh": (["refresh", "--force"], "refresh"),
     "validate": (["validate", "--verbose", "--limit", "5"], "validate"),
     "backend": (["backend", "show"], "backend"),
+    "backend prune": (["backend", "prune"], "backend_prune"),
 }
 
 
@@ -51,7 +52,8 @@ def commands() -> set[str]:
 
 
 def test_every_command_but_hook_is_sampled():
-    assert set(SAMPLES) == commands() - HIDDEN_COMMANDS
+    # A subcommand that runs its own operation is sampled as "command subcommand".
+    assert {name.split()[0] for name in SAMPLES} == commands() - HIDDEN_COMMANDS
 
 
 def test_every_cli_operation_has_a_command_and_every_command_an_operation():

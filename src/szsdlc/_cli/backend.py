@@ -9,13 +9,28 @@ from ._output import out
 
 
 def add_parser(subparsers) -> None:
-    backend = subparsers.add_parser("backend", prog="szsdlc backend")
-    backend.add_argument("subcommand", nargs="?", choices=["show"], default="show")
-    backend.set_defaults(run=run, op="backend", to_params=to_params)
+    parser = subparsers.add_parser("backend", prog="szsdlc backend")
+    parser.set_defaults(run=run, op="backend", to_params=to_params)
+    actions = parser.add_subparsers(dest="subcommand", metavar="{show,prune}")
+    actions.add_parser("show", prog="szsdlc backend show").set_defaults(
+        run=run, op="backend", to_params=to_params)
+    actions.add_parser("prune", prog="szsdlc backend prune").set_defaults(
+        run=run_prune, op="backend_prune", to_params=prune_params)
 
 
 def to_params(args: argparse.Namespace) -> backend.BackendParams:
     return backend.BackendParams()
+
+
+def prune_params(args: argparse.Namespace) -> backend.BackendPruneParams:
+    return backend.BackendPruneParams()
+
+
+def run_prune(args: argparse.Namespace) -> int:
+    """One line per entry removed; silent when the record already holds."""
+    for line in backend.backend_prune(prune_params(args), args.project).removed:
+        out(line)
+    return 0
 
 
 def run(args: argparse.Namespace) -> int:

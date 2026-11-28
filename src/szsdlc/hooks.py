@@ -194,7 +194,9 @@ def _backend_line(session) -> str | None:
     from . import backend
 
     try:
-        store = backend.project_sdlc_store_for(session.config.root)
+        # Only a store kept elsewhere: since WI-0067 every project is recorded,
+        # and a `workdir` one is just the asset root Claude is in.
+        store = backend._record_decides(session.config.root)
     except Exception:  # pragma: no cover - defensive
         return None
     if store is None:

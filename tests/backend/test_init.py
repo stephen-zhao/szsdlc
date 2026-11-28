@@ -175,12 +175,15 @@ def test_concurrent_records_keep_every_project_sdlc_store(user, tmp_path):
     from szsdlc.backend.dir import DirBackend
 
     stores = [DirBackend(tmp_path / f"s{i}") for i in range(12)]
+    for store in stores:  # only a real project is recorded (WI-0067)
+        (store.project_sdlc_root / ".szsdlc").mkdir(parents=True)
+        (store.project_sdlc_root / ".szsdlc" / "config.yml").write_text("{}\n", encoding="utf-8")
     threads = [threading.Thread(target=backend._record_project_sdlc_store, args=(s,)) for s in stores]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
-    assert set(backend._read_project_sdlc_stores()) == {str(s.project_sdlc_store_dir) for s in stores}
+    assert set(backend._read_project_sdlc_stores()) == {str(s.project_sdlc_root) for s in stores}
     assert not list(backend._project_sdlc_stores_path().parent.glob("*.tmp"))
 
 
@@ -231,8 +234,11 @@ def test_an_unreadable_stores_file_is_never_overwritten(user, workdir, tmp_path)
     path = backend._project_sdlc_stores_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("{broken", encoding="utf-8")
+    store = DirBackend(tmp_path / "d")
+    (store.project_sdlc_root / ".szsdlc").mkdir(parents=True)
+    (store.project_sdlc_root / ".szsdlc" / "config.yml").write_text("{}\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="cannot be read"):
-        backend._record_project_sdlc_store(DirBackend(tmp_path / "d"))
+        backend._record_project_sdlc_store(store)
     assert path.read_text(encoding="utf-8") == "{broken"
 
 
@@ -293,7 +299,7 @@ def test_a_backend_without_refresh_is_a_problem_not_a_crash(tmp_path):
 def dir_backend(user, workdir, tmp_path):
     write_settings(user, {"SZSDLC_BACKEND": "dir", f"{DIR}PATH": str(tmp_path / "d")})
     chosen = backend.resolve(workdir)
-    backend.ensure(chosen)
+    assert run("init") == 0  # a real project, so it is recorded (WI-0067)
     return chosen
 
 
