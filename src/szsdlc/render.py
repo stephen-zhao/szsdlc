@@ -60,13 +60,16 @@ class Rendered:
         sources moved on. A hash of the inputs could only ever tell you the
         second thing.
         """
-        digest = hashlib.sha256(self.body.encode("utf-8")).hexdigest()[:16]
-        return f"{BANNER}\n{HASH_PREFIX}sha256:{digest}{HASH_SUFFIX}\n\n{self.body}"
+        # LF, like everything read back to be compared: a template or data
+        # value carrying \r must not make a file it just wrote read as edited.
+        body = normalize_newlines(self.body)
+        digest = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+        return f"{BANNER}\n{HASH_PREFIX}sha256:{digest}{HASH_SUFFIX}\n\n{body}"
 
     def matches_disk(self) -> bool:
         if not self.path.is_file():
             return False
-        return self.path.read_bytes().decode("utf-8", "replace") == self.content
+        return read_generated(self.path) == self.content
 
     def has_been_hand_edited(self) -> bool:
         """Whether the file this would overwrite no longer matches its own hash.
@@ -76,11 +79,27 @@ class Rendered:
         """
         if not self.path.is_file():
             return False
-        return hand_edited(self.path.read_bytes().decode("utf-8", "replace"))
+        return hand_edited(read_generated(self.path))
 
     def write(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_bytes(self.content.encode("utf-8"))
+
+
+def normalize_newlines(text: str) -> str:
+    r"""`\r\n` and a lone `\r` as `\n`.
+
+    A generated file is always compared as LF text: git for Windows checks
+    files out with CRLF by default (`core.autocrlf=true`), and a checkout is
+    not an edit. The content hash is defined over the LF body, so a file keeps
+    matching whichever platform rendered or checked it out (WI-0074).
+    """
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def read_generated(path: Path) -> str:
+    """A generated file as text to compare: decoded, with its line endings normalised."""
+    return normalize_newlines(path.read_bytes().decode("utf-8", "replace"))
 
 
 def is_generated(text: str) -> bool:
@@ -89,7 +108,7 @@ def is_generated(text: str) -> bool:
 
 
 def stored_hash(text: str) -> str | None:
-    for line in text.splitlines()[:5]:
+    for line in normalize_newlines(text).split("\n")[:5]:
         if line.startswith(HASH_PREFIX) and line.endswith(HASH_SUFFIX):
             return line[len(HASH_PREFIX):-len(HASH_SUFFIX)]
     return None
@@ -97,6 +116,7 @@ def stored_hash(text: str) -> str | None:
 
 def hand_edited(text: str) -> bool:
     """True when a generated file's body no longer matches its own hash."""
+    text = normalize_newlines(text)
     declared = stored_hash(text)
     if declared is None:
         return False

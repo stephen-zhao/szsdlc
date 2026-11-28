@@ -354,6 +354,18 @@ def test_a_project_template_overrides_the_bundled_default(world):
     assert "# Ours" in body and "1 decisions" in body
 
 
+def test_a_project_template_checked_out_with_crlf_still_renders_lf(world):
+    """WI-0074: the hash is over LF text, so a CRLF template must not leak \r into a view."""
+    override = world.templates_dir / "views" / "decisions.md.j2"
+    override.parent.mkdir(parents=True, exist_ok=True)
+    override.write_bytes(b"# Ours\r\n\r\n{{ of_type('decision') | length }} decisions\r\n")
+    item = renderer(world).view("decisions")
+    assert "# Ours" in item.content and "1 decisions" in item.content  # the override, not the default
+    assert "\r" not in item.content
+    item.write()
+    assert not item.has_been_hand_edited() and item.matches_disk()
+
+
 # ---------------------------------------------------------------------------
 # Records — the generic project-specific mechanism
 # ---------------------------------------------------------------------------
@@ -571,3 +583,23 @@ def test_a_fault_in_a_bundled_template_is_still_a_framework_bug(project, capsys,
     monkeypatch.setattr(jinja2.Template, "render", explode)
     assert main(["-C", str(project.root), "render"]) == 1
     assert "internal error" in capsys.readouterr().err
+
+
+def test_newlines_are_normalised_before_any_comparison():
+    """WI-0074: \r\n and a lone \r both read as \n; the hash is over LF text."""
+    assert R.normalize_newlines("a\r\nb\rc\n") == "a\nb\nc\n"
+    body = "# Board\n\nrow\n"
+    digest = hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+    text = f"{R.BANNER}\n{R.HASH_PREFIX}sha256:{digest}{R.HASH_SUFFIX}\n\n{body}"
+    crlf = text.replace("\n", "\r\n")
+    assert not R.hand_edited(crlf)
+    assert R.stored_hash(crlf) == f"sha256:{digest}"
+    assert R.hand_edited(crlf.replace("row", "typed"))
+
+
+def test_a_body_carrying_carriage_returns_is_written_and_hashed_as_lf(tmp_path):
+    """A data value with \r must not make a file szsdlc just wrote read as edited."""
+    item = R.Rendered(name="x", path=tmp_path / "x.md", body="a\r\nb\rc\n")
+    assert "\r" not in item.content
+    item.write()
+    assert item.matches_disk() and not item.has_been_hand_edited()
