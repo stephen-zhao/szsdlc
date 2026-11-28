@@ -8,6 +8,7 @@ the developer's own record.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -154,8 +155,24 @@ def test_an_old_stores_file_is_migrated_and_left_alone(home, tmp_path):
     legacy.write_text(old, encoding="utf-8")
     found = backend.project_sdlc_store_for(store.project_sdlc_root / ".szsdlc")
     assert found is not None and found.type == "dir"
+    assert not backend._project_sdlc_stores_path().exists()  # a read never writes (validate included)
+    backend.ensure(store)  # the next write, under the lock, saves the migration
     assert record()["project_sdlc_stores"][str(store.project_sdlc_root)]["asset_roots"] == []
     assert legacy.read_text(encoding="utf-8") == old  # untouched, for older szsdlc versions
+
+
+def test_migration_skips_a_store_with_no_project_and_refuses_an_unreadable_legacy_file(home, tmp_path):
+    scratch = DirBackend(tmp_path / "scratch")
+    scratch.project_sdlc_store_dir.mkdir()
+    legacy = home / "szsdlc" / backend.LEGACY_STORES_FILE
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(json.dumps({str(scratch.project_sdlc_store_dir): {"type": "dir", "state": {}}}),
+                      encoding="utf-8")
+    assert backend._read_record()["project_sdlc_stores"] == {}  # no .szsdlc/config.yml: not a project
+    legacy.write_text("{broken", encoding="utf-8")
+    assert backend._read_record()["project_sdlc_stores"] == {}  # lookups carry on
+    with pytest.raises(backend.ConfigError, match="cannot be read to migrate it"):
+        backend._read_record(strict=True)  # a write never drops what it could not read
 
 
 def test_stale_entries_are_reported_never_removed_until_pruned(home, tmp_path, monkeypatch, capsys):
@@ -175,7 +192,7 @@ def test_stale_entries_are_reported_never_removed_until_pruned(home, tmp_path, m
     monkeypatch.chdir(kept)
     capsys.readouterr()
     assert run("backend") == 0
-    assert "stale records" in capsys.readouterr().out
+    assert re.search(rf"stale records +{len(stale)} \(szsdlc backend prune\)", capsys.readouterr().out)
     assert str(gone) in record()["project_sdlc_stores"]
     # validate names only this project's own: its asset root that is gone.
     from szsdlc import ops
@@ -212,3 +229,64 @@ def test_a_link_and_a_list_that_disagree_are_reported_and_pruned(home, tmp_path,
     assert sorted(kind for kind, _, _ in backend.stale_project_sdlc_stores()) == ["link", "link"]
     assert len(backend.prune_project_sdlc_stores()) == 2
     assert record()["asset_roots"] == {str(project): str(project)}
+
+
+def test_entries_of_the_wrong_shape_are_skipped_for_lookups_and_refuse_a_write(home, tmp_path, monkeypatch):
+    project = asset_root(tmp_path, "proj")
+    monkeypatch.chdir(project)
+    assert run("init") == 0
+    data = record()
+    data["project_sdlc_stores"]["/broken"] = {"dir": 3}
+    data["asset_roots"]["/also"] = ["not", "a", "path"]
+    backend._project_sdlc_stores_path().write_text(json.dumps(data), encoding="utf-8")
+    assert "/broken" not in backend._read_record()["project_sdlc_stores"]
+    assert backend.stale_project_sdlc_stores() == []  # nothing crashes on them
+    with pytest.raises(backend.ConfigError, match="holds an entry"):
+        backend._read_record(strict=True)
+
+
+def test_pruning_a_stale_listing_keeps_the_store_it_is_linked_to(home, tmp_path, monkeypatch):
+    first, second = asset_root(tmp_path, "first"), asset_root(tmp_path, "second")
+    for project in (first, second):
+        monkeypatch.chdir(project)
+        assert run("init") == 0
+    data = record()
+    data["project_sdlc_stores"][str(first)]["asset_roots"].append(str(second))  # listed, linked elsewhere
+    backend._project_sdlc_stores_path().write_text(json.dumps(data), encoding="utf-8")
+    assert [kind for kind, _, _ in backend.stale_project_sdlc_stores()] == ["listed"]
+    backend.prune_project_sdlc_stores()
+    assert record()["project_sdlc_stores"][str(first)]["asset_roots"] == [str(first)]
+    assert record()["project_sdlc_stores"][str(second)]["asset_roots"] == [str(second)]
+    assert record()["asset_roots"][str(second)] == str(second)
+
+
+def test_a_link_to_an_asset_root_that_is_gone_is_still_reported(home, tmp_path, monkeypatch):
+    project = asset_root(tmp_path, "proj")
+    monkeypatch.chdir(project)
+    assert run("init") == 0
+    data = record()
+    data["asset_roots"][str(tmp_path / "gone")] = str(project)  # linked, unlisted, and not on disk
+    backend._project_sdlc_stores_path().write_text(json.dumps(data), encoding="utf-8")
+    assert [kind for kind, _, _ in backend.stale_project_sdlc_stores()] == ["link"]
+
+
+def test_settings_still_decide_inside_a_store_nested_in_its_asset_root(home, tmp_path, monkeypatch):
+    code = asset_root(tmp_path, "code", {"SZSDLC_BACKEND": "dir", f"{DIR}PATH": str(tmp_path / "code" / "sdlc")})
+    monkeypatch.chdir(code)
+    assert run("init") == 0
+    assert backend._record_decides(code / "sdlc" / ".szsdlc") is None  # the asset root's settings reach it
+
+
+def test_a_record_that_cannot_be_written_never_fails_init(home, tmp_path, monkeypatch, capsys):
+    path = backend._project_sdlc_stores_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{broken", encoding="utf-8")
+    project = asset_root(tmp_path, "proj")
+    monkeypatch.chdir(project)
+    assert run("init") == 0  # the project is made; the record is the next command's to report
+    assert (project / ".szsdlc" / "config.yml").is_file()
+    assert path.read_text(encoding="utf-8") == "{broken"  # and never overwritten
+    capsys.readouterr()
+    assert run("backend") == 0
+    out = capsys.readouterr().out
+    assert re.search(r"^  record +.*cannot be read", out, re.MULTILINE)  # said by szsdlc backend

@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..errors import ConfigError
 from ._registry import operation
 from ._types import Data
 
@@ -42,12 +43,9 @@ def backend(params: BackendParams, where: str | None) -> BackendResult:
 
     selection = backend_module.select(where)
     # Asked first, not as a fallback: standing inside a project sdlc store
-    # dir is a fact about where you are. A store recorded under the type the
-    # settings select anyway (every `workdir` project, since WI-0067) is just
-    # the settings' answer, and is reported as that.
-    inside = backend_module.project_sdlc_store_for(where or Path.cwd())
-    if inside is not None and inside.type == selection.type:
-        inside = None
+    # dir kept away from its asset roots is a fact about where you are.
+    # Anywhere else (a `workdir` project, an asset root) the settings answer.
+    inside = backend_module._record_decides(where or Path.cwd())
     if inside is not None:
         current = inside
         source = "this directory is inside its project sdlc store dir"
@@ -61,6 +59,10 @@ def backend(params: BackendParams, where: str | None) -> BackendResult:
     if current.project_sdlc_root is not None:
         rows.append(("project sdlc root", str(current.project_sdlc_root)
                      + ("" if current.project_sdlc_store_dir.exists() else "  (not created yet)")))
+    try:
+        backend_module._read_record(strict=True)
+    except ConfigError as exc:  # recording skips it rather than block work; here it is said
+        rows.append(("record", f"{exc.problem} Fix: {exc.fix}"))
     stale = tuple(_printable(problem) for _, _, problem in backend_module.stale_project_sdlc_stores())
     if stale:
         rows.append(("stale records", f"{len(stale)} (szsdlc backend prune)"))

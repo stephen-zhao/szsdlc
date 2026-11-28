@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .. import config as config_module
-from ..errors import BadInput
+from ..errors import BadInput, ConfigError
 from ._paths import relative
 from ._registry import operation
 from ._types import Data
@@ -75,7 +75,10 @@ def init(params: InitParams, where: str | None) -> InitResult:
     # Recorded now, before anything reads the project: a store is recorded
     # once it holds a real project (WI-0067), and from inside it the record
     # is what finds it.
-    backend_module.project_sdlc_root(where)
+    try:
+        backend_module.project_sdlc_root(where)
+    except (ConfigError, OSError):
+        pass  # the config exists now: the next command records it, and reports the record
 
     config = config_module.load(root)
     created = [config_path]

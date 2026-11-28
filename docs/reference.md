@@ -446,8 +446,13 @@ szsdlc records every project it runs on, whatever its sdlc backend type, in
   match: a project switched from `workdir` to `git` is recorded as `git` the next
   time it runs. The record is consulted only where settings cannot answer:
   inside a project sdlc store dir kept away from its asset roots (Claude editing
-  a file inside a clone), or where nothing selects a backend and the record
-  names another type than the default. Readers that list projects read it too.
+  a file inside a clone, where settings would take the clone itself for an
+  asset root). A store nested inside one of its asset roots is reached by that
+  root's settings, and a `workdir` store is its asset root. Readers that list
+  projects read it too.
+- **Best effort:** recording never blocks a command. A record that cannot be
+  read is left exactly as it is (never overwritten), and `szsdlc backend` says
+  so, with the fix.
 - **Stale entries are reported, never removed silently:** `szsdlc backend` says
   how many entries no longer hold (a project sdlc root or dir that is gone, an
   asset root that is gone, a list and a link that disagree), `validate` warns
@@ -455,8 +460,12 @@ szsdlc records every project it runs on, whatever its sdlc backend type, in
   removes them, one line per entry. A drive that is not mounted keeps its
   entries until you prune.
 - **From older versions:** the record used to be `stores.json`, keyed by
-  project sdlc store dir, for `dir` and `git` only. The first read converts it;
-  `stores.json` is left as it is for older szsdlc versions and never read again.
+  project sdlc store dir, for `dir` and `git` only. Each read converts it in
+  memory (real projects only) until the next write saves the new file, under
+  the lock, so a read such as `validate` never writes; `stores.json` is left as
+  it is for older szsdlc versions and never read again once the new file
+  exists. A `stores.json` that cannot be read stops that write rather than lose
+  its projects.
 
 An existing clone is used only if it is a clone of `SZSDLC_BACKEND_GIT_URL`
 with `SZSDLC_BACKEND_GIT_BRANCH` (or, when unset, the remote's default branch)

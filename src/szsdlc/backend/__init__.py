@@ -534,10 +534,13 @@ def _refuse_record(path: Path, problem: str) -> ConfigError:
 def _read_record(*, strict: bool = False) -> dict[str, dict]:
     """The record: `{"project_sdlc_stores": {...}, "asset_roots": {...}}`.
 
-    Empty when there is none. A file that exists but cannot be read is empty
-    for lookups, but `strict` raises instead, so a write never replaces other
-    stores' entries with just its own. With no file yet but a `stores.json`
-    from before WI-0067, that is migrated (and left as it is).
+    Empty when there is none. A file that exists but cannot be read, or holds
+    an entry of the wrong shape, is empty (or loses that entry) for lookups,
+    but `strict` raises instead, so a write never replaces other stores'
+    entries with just its own. With no file yet but a `stores.json` from before
+    WI-0067, that is migrated, in memory only: the migration is saved by the
+    next write, which holds the lock, so a read (`validate` included) never
+    writes.
     """
     path = _project_sdlc_stores_path()
     try:
@@ -553,15 +556,45 @@ def _read_record(*, strict: bool = False) -> dict[str, dict]:
         if strict:
             raise _refuse_record(path, "is not a record of project sdlc stores")
         return _empty_record()
-    return loaded
+    record = _well_formed(loaded)
+    if strict and record != {"project_sdlc_stores": loaded["project_sdlc_stores"],
+                             "asset_roots": loaded["asset_roots"]}:
+        raise _refuse_record(path, "holds an entry that is not a project sdlc store or an asset root link")
+    return record
+
+
+def _well_formed(loaded: dict) -> dict[str, dict]:
+    """Only the entries of the right shape: every path a string, every list a list of them."""
+    def is_store(entry: Any) -> bool:
+        return (isinstance(entry, dict) and isinstance(entry.get("dir"), str)
+                and isinstance(entry.get("backend_type"), str)
+                and isinstance(entry.get("backend_state"), dict)
+                and isinstance(entry.get("asset_roots"), list)
+                and all(isinstance(a, str) for a in entry["asset_roots"]))
+    return {"project_sdlc_stores": {root: entry for root, entry in loaded["project_sdlc_stores"].items()
+                                    if isinstance(root, str) and is_store(entry)},
+            "asset_roots": {asset: root for asset, root in loaded["asset_roots"].items()
+                            if isinstance(asset, str) and isinstance(root, str)}}
 
 
 def _migrated_record(*, strict: bool) -> dict[str, dict]:
-    """`stores.json` (keyed by project sdlc store dir) as the new record; empty without one."""
+    """`stores.json` (keyed by project sdlc store dir) as the new record, in memory; empty without one.
+
+    Only real projects carry over: a store whose project sdlc root holds
+    `.szsdlc/config.yml`. A `stores.json` that exists but cannot be read
+    refuses a `strict` (writing) read, so its projects are never dropped by a
+    record written without them.
+    """
+    from .. import config as config_module
+
     legacy = home() / LEGACY_STORES_FILE
     try:
         old = json.loads(legacy.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except FileNotFoundError:
+        return _empty_record()
+    except (OSError, ValueError) as exc:
+        if strict:
+            raise _refuse_record(legacy, f"cannot be read to migrate it ({exc})") from None
         return _empty_record()
     record = _empty_record()
     for store_dir, entry in (old.items() if isinstance(old, dict) else ()):
@@ -571,12 +604,10 @@ def _migrated_record(*, strict: bool) -> dict[str, dict]:
             backend = backend_class(entry.get("type", "")).restore(Path(store_dir), entry.get("state") or {})
         except (ConfigError, KeyError, TypeError):
             continue
-        if backend.project_sdlc_root is None:
+        root = backend.project_sdlc_root
+        if root is None or not config_module.config_path_for(Path(root)).is_file():
             continue
-        record["project_sdlc_stores"][str(backend.project_sdlc_root)] = _entry_for(backend, [])
-    if record["project_sdlc_stores"]:
-        with contextlib.suppress(ConfigError, OSError):
-            _write_record(record)
+        record["project_sdlc_stores"][str(root)] = _entry_for(backend, [])
     return record
 
 
@@ -628,15 +659,13 @@ def _record_project_sdlc_store(backend: Backend, asset_root: Path | None = None)
     root = backend.project_sdlc_root
     if root is None or not config_module.config_path_for(Path(root)).is_file():
         return
-    current = _read_record()
-    if _with_store(current, backend, asset_root) == current:  # a read every time, a write only on change
-        return
     path = _project_sdlc_stores_path()
-    # Read again under the lock: another process may have recorded one since.
+    # Compared under the lock, so a prune running at the same time is never
+    # undone by a stale "nothing changed": a write only on change.
     with _locked(path):
         record = _read_record(strict=True)
         updated = _with_store(record, backend, asset_root)
-        if updated != record:
+        if updated != record or not path.is_file():  # an in-memory migration is saved here
             _write_record(updated)
 
 
@@ -693,17 +722,16 @@ def project_sdlc_store_for(path: Path | str | None) -> Backend | None:
 
 
 def _record_decides(path: Path | str | None) -> Backend | None:
-    """The recorded store that serves `path` instead of what settings give; None when settings decide.
+    """The recorded store `path` is inside, when that store is kept away from its asset roots.
 
-    The record decides in two places only. Inside a project sdlc store dir
-    kept somewhere other than its asset roots (a clone, a `dir` store), no
-    settings can answer: they would treat the store dir itself as an asset
-    root. And where nothing selects a backend, the default would apply, so a
-    store recorded under a different type overrides it. Everywhere else the
-    settings decide, so a project switched to another backend type in its
-    settings is served by that type, and its next `ensure` rewrites the
-    record; a project recorded under the default type behaves exactly as it
-    would unrecorded.
+    There no settings can answer: they would treat the project sdlc store dir
+    itself (a clone, a `dir` store elsewhere) as an asset root. Everywhere else
+    the settings decide, so a project switched to another backend type in its
+    settings is served by that type, and its next `ensure` rewrites the record.
+    A store nested inside one of its asset roots is reached by that root's
+    settings, and a `workdir` store *is* its asset root, so neither is kept
+    away. A store with no asset roots recorded yet (migrated, or recorded by a
+    caller outside szsdlc) is taken to be kept away: nothing says otherwise.
     """
     here = Path(os.path.abspath(path or Path.cwd()))
     found = _recorded_entry(here)
@@ -711,16 +739,12 @@ def _record_decides(path: Path | str | None) -> Backend | None:
         return None
     root, entry = found
     store_dir = Path(entry.get("dir") or root)
-    kept_elsewhere = str(store_dir) not in (entry.get("asset_roots") or [])
-    if kept_elsewhere and (here == store_dir or store_dir in here.parents):
-        return _restore(root, entry)
-    try:
-        selection = select(here)
-    except ConfigError:
+    if not (here == store_dir or store_dir in here.parents):
         return None
-    if selection.source is None and entry.get("backend_type") != selection.type:
-        return _restore(root, entry)
-    return None
+    assets = [Path(a) for a in entry.get("asset_roots") or []]
+    if any(store_dir == a or a in store_dir.parents for a in assets):
+        return None
+    return _restore(root, entry)
 
 
 def stale_project_sdlc_stores(record: dict[str, dict] | None = None) -> list[tuple[str, str, str]]:
@@ -747,7 +771,7 @@ def stale_project_sdlc_stores(record: dict[str, dict] | None = None) -> list[tup
     for asset, root in sorted(links.items()):
         if root not in stores:
             found.append(("link", asset, f"asset root {asset} is linked to {root}, which is not recorded"))
-        elif asset not in (stores[root].get("asset_roots") or []) and Path(asset).is_dir():
+        elif asset not in (stores[root].get("asset_roots") or []):
             found.append(("link", asset, f"asset root {asset} is linked to {root}, which does not list it"))
     return found
 
@@ -768,11 +792,14 @@ def prune_project_sdlc_stores() -> list[str]:
                 stores.pop(key, None)
                 for asset in [a for a, r in links.items() if r == key]:
                     links.pop(asset)
-            elif kind in ("asset_root", "listed"):
+            elif kind == "asset_root":  # gone: from every list, and its link
                 for entry in stores.values():
                     entry["asset_roots"] = [a for a in entry.get("asset_roots", []) if a != key]
-                if kind == "asset_root":
-                    links.pop(key, None)
+                links.pop(key, None)
+            elif kind == "listed":  # only from the lists of stores it is not linked to
+                for store_root, entry in stores.items():
+                    if links.get(key) != store_root:
+                        entry["asset_roots"] = [a for a in entry.get("asset_roots", []) if a != key]
             else:  # a link to nothing, or to a store that does not list it
                 links.pop(key, None)
             removed.append(f"removed: {problem}")
@@ -812,15 +839,15 @@ def _locked(path: Path) -> Iterator[None]:
 def project_sdlc_root(start: Path | str | None = None) -> Path | None:
     """The project sdlc root the sdlc backend puts in effect for `start`, made ready.
 
-    None when `start` is inside a recorded project sdlc store that serves it
-    instead of the settings (see `_record_decides`) — ordinary discovery finds
+    None when `start` is inside a recorded project sdlc store dir kept away
+    from its asset roots (see `_record_decides`) — ordinary discovery finds
     the root from there — and None when there is no
     project at all, which the `workdir` backend reports by having no root.
     Otherwise the project sdlc store dir is created if needed, which may reach
     the network.
     """
     if _record_decides(start or Path.cwd()) is not None:
-        return None
+        return None  # inside a store kept elsewhere: discovery finds the root from here
     backend = resolve(start)
     ensure(backend, asset_root=project_asset_root(start))
     return backend.project_sdlc_root
@@ -840,11 +867,16 @@ def ensure(backend: Backend, asset_root: Path | str | None = None) -> None:
     """Make `backend`'s project sdlc store dir ready, then record it (a real project only).
 
     `asset_root`, when given, is linked to the store, and leaves the list of
-    any project it used before.
+    any project it used before. Recording is best effort: a record that cannot
+    be read is left as it is, and `szsdlc backend` reports it.
     """
     with _locked(backend.project_sdlc_store_dir):
         backend.materialize()
-    _record_project_sdlc_store(backend, Path(asset_root) if asset_root is not None else None)
+    # Best effort: the record is per user, and a damaged one must never block
+    # a project's work. It is left as it is (never overwritten), and
+    # `szsdlc backend` says it cannot be read.
+    with contextlib.suppress(ConfigError, OSError):
+        _record_project_sdlc_store(backend, Path(asset_root) if asset_root is not None else None)
 
 
 def locate(start: Path | str | None = None) -> Backend | None:
