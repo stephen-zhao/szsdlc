@@ -43,6 +43,7 @@ SAMPLES = {
     "refresh": (["refresh", "--force"], "refresh"),
     "validate": (["validate", "--verbose", "--limit", "5"], "validate"),
     "backend": (["backend", "show"], "backend"),
+    "backend list": (["backend", "list"], "project_sdlc_stores"),
     "backend prune": (["backend", "prune"], "backend_prune"),
 }
 

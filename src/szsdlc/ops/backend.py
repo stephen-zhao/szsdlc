@@ -93,3 +93,24 @@ def backend_prune(params: BackendPruneParams, where: str | None) -> BackendPrune
     from .. import backend as backend_module
 
     return BackendPruneResult(tuple(_printable(line) for line in backend_module.prune_project_sdlc_stores()))
+
+
+@dataclass(frozen=True)
+class ProjectSdlcStoresParams(Data):
+    pass
+
+
+@dataclass(frozen=True)
+class ProjectSdlcStoresResult(Data):
+    #: Every recorded project sdlc store, sorted by project sdlc root
+    #: (`szsdlc.backend.ProjectSdlcStore`).
+    stores: tuple
+
+
+@operation("project_sdlc_stores", params=ProjectSdlcStoresParams, result=ProjectSdlcStoresResult,
+           kind="query", loads=False)
+def project_sdlc_stores(params: ProjectSdlcStoresParams, where: str | None) -> ProjectSdlcStoresResult:
+    """Every project sdlc store szsdlc has recorded, whatever its backend type (WI-0063). Reads only."""
+    from .. import backend as backend_module
+
+    return ProjectSdlcStoresResult(tuple(backend_module.project_sdlc_stores()))

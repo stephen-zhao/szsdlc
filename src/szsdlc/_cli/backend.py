@@ -11,9 +11,11 @@ from ._output import out
 def add_parser(subparsers) -> None:
     parser = subparsers.add_parser("backend", prog="szsdlc backend")
     parser.set_defaults(run=run, op="backend", to_params=to_params)
-    actions = parser.add_subparsers(dest="subcommand", metavar="{show,prune}")
+    actions = parser.add_subparsers(dest="subcommand", metavar="{show,list,prune}")
     actions.add_parser("show", prog="szsdlc backend show").set_defaults(
         run=run, op="backend", to_params=to_params)
+    actions.add_parser("list", prog="szsdlc backend list").set_defaults(
+        run=run_list, op="project_sdlc_stores", to_params=list_params)
     actions.add_parser("prune", prog="szsdlc backend prune").set_defaults(
         run=run_prune, op="backend_prune", to_params=prune_params)
 
@@ -24,6 +26,20 @@ def to_params(args: argparse.Namespace) -> backend.BackendParams:
 
 def prune_params(args: argparse.Namespace) -> backend.BackendPruneParams:
     return backend.BackendPruneParams()
+
+
+def list_params(args: argparse.Namespace) -> backend.ProjectSdlcStoresParams:
+    return backend.ProjectSdlcStoresParams()
+
+
+def run_list(args: argparse.Namespace) -> int:
+    """Each recorded store, then its asset roots; silent when none is recorded."""
+    for store in backend.project_sdlc_stores(list_params(args), args.project).stores:
+        gone = "" if store.exists else "  (gone)"
+        out(backend._printable(f"{store.project_sdlc_root}  {store.backend_type}{gone}"))
+        for asset in store.asset_roots:
+            out(backend._printable(f"  asset root  {asset}"))
+    return 0
 
 
 def run_prune(args: argparse.Namespace) -> int:

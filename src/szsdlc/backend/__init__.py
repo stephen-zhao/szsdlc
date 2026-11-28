@@ -807,6 +807,41 @@ def prune_project_sdlc_stores() -> list[str]:
         return removed
 
 
+@dataclass(frozen=True)
+class ProjectSdlcStore:
+    """One recorded project sdlc store, as `project_sdlc_stores()` lists it (WI-0063)."""
+
+    project_sdlc_root: Path
+    project_sdlc_store_dir: Path
+    #: Every asset root that has used it, sorted.
+    asset_roots: tuple[Path, ...]
+    backend_type: str
+    #: Its project sdlc root and dir are both still directories: the same test
+    #: `stale_project_sdlc_stores` reports a gone store by.
+    exists: bool
+
+
+def project_sdlc_stores() -> list[ProjectSdlcStore]:
+    """Every recorded project sdlc store, sorted by project sdlc root. Public; reads only.
+
+    Read through szsdlc's own reader: a record that cannot be read, or an
+    entry of the wrong shape, lists nothing for it, as lookups see it, and a
+    `stores.json` from before WI-0067 is listed through its in-memory
+    migration. Never writes. Backend state (a URL may carry credentials) is
+    not listed; `szsdlc backend` shows it, redacted, for one project.
+    """
+    stores = _read_record()["project_sdlc_stores"]
+    listed = []
+    for root, entry in sorted(stores.items()):
+        store_dir = Path(entry["dir"] or root)
+        listed.append(ProjectSdlcStore(
+            project_sdlc_root=Path(root), project_sdlc_store_dir=store_dir,
+            asset_roots=tuple(Path(a) for a in sorted(set(entry["asset_roots"]))),
+            backend_type=entry["backend_type"],
+            exists=Path(root).is_dir() and store_dir.is_dir()))
+    return listed
+
+
 @contextlib.contextmanager
 def _locked(path: Path) -> Iterator[None]:
     """One writer at a time per path: a hook and a command can overlap.
